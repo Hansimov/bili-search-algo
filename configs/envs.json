@@ -1,0 +1,6 @@
+{
+    "logs": {
+        "mongo": "mongo.log",
+        "elastic": "elastic.log"
+    }
+}
