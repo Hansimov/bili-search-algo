@@ -1,4 +1,6 @@
-from copy import deepcopy
+import argparse
+import sys
+
 from gensim.models import FastText, KeyedVectors
 from pathlib import Path
 from tclogger import logger, logstr
@@ -11,10 +13,14 @@ class FasttextModelTrainer:
     def __init__(self):
         pass
 
-    def load_data(self):
-        logger.note("> Loading data:")
-        self.data_loader: VideosTagsDataLoader = VideosTagsDataLoader()
-        # self.data_loader = DemoDataLoader()
+    def load_data(self, max_count: int = None):
+        logger.note(f"> Loading data: [{logstr.mesg(max_count)}]")
+        self.data_loader = VideosTagsDataLoader(
+            collection="videos_tags",
+            max_count=max_count,
+            iter_val="tag_list",
+            iter_log=True,
+        )
         logger.file(f"  * from class {self.data_loader.__class__.__name__}")
         logger.success(f"  ✓ data loaded")
 
@@ -44,7 +50,7 @@ class FasttextModelTrainer:
             logger.file("  * model already trained, skip build_vocab()")
         else:
             self.model.build_vocab(corpus_iterable=self.data_loader)
-            self.model_total_words = self.model.corpus_total_words
+            # self.model_total_words = self.model.corpus_total_words
             logger.success("  ✓ vocab built")
 
     def train(
@@ -86,12 +92,13 @@ class FasttextModelTrainer:
     def run(
         self,
         model_path: Union[str, Path],
+        max_count: int = 10000,
         epochs: int = 5,
         use_local: bool = True,
         skip_trained: bool = True,
         overwrite: bool = True,
     ):
-        self.load_data()
+        self.load_data(max_count=max_count)
         self.load_model(model_path, use_local=use_local)
         self.build_vocab(skip_trained=skip_trained)
         self.train(epochs=epochs, skip_trained=skip_trained, overwrite=overwrite)
