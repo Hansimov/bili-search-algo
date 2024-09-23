@@ -104,25 +104,45 @@ class FasttextModelTrainer:
         self.train(epochs=epochs, skip_trained=skip_trained, overwrite=overwrite)
 
 
+class ArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("-t", "--test-only", action="store_true")
+        self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
+
+
 if __name__ == "__main__":
+    args = ArgParser().args
+
     trainer = FasttextModelTrainer()
     model_path = Path(__file__).parent / "fasttext.model"
-    test_words = ["香港", "搞笑", "萌宠", "GTA"]
 
-    # trainer.run(
-    #     model_path,
-    #     epochs=5,
-    #     use_local=False,
-    #     skip_trained=False,
-    #     overwrite=True,
-    # )
+    trainer_params = {
+        "model_path": model_path,
+        "max_count": 1000000,
+        "epochs": 5,
+    }
+
+    if args.test_only:
+        extra_params = {
+            "use_local": True,
+            "skip_trained": True,
+            "overwrite": False,
+        }
+    else:
+        extra_params = {
+            "use_local": False,
+            "skip_trained": False,
+            "overwrite": True,
+        }
+
     trainer.run(
-        model_path,
-        epochs=5,
-        use_local=True,
-        skip_trained=True,
-        overwrite=False,
+        **trainer_params,
+        **extra_params,
     )
+
+    test_words = ["香港", "搞笑", "萌宠", "GTA"]
     trainer.test(test_words)
 
     # python -m models.fasttext.train
+    # python -m models.fasttext.train -t
