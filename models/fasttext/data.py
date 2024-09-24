@@ -38,12 +38,15 @@ class VideosTagsDataLoader:
         max_count: int = None,
         iter_val: Literal["doc", "tag_list"] = "tag_list",
         iter_log: bool = False,
+        iter_epochs: int = None,
     ):
         self.collection = collection
         self.init_mongo()
         self.max_count = max_count
         self.iter_val = iter_val
         self.iter_log = iter_log
+        self.iter_epochs = iter_epochs
+        self.iter_epoch = 0
         if iter_log:
             self.progress_bar = DataProgressBar(total=max_count)
 
@@ -60,6 +63,8 @@ class VideosTagsDataLoader:
 
     def restore_cursor(self):
         self.cursor = self.cursor_unevaluated.clone()
+        if self.iter_epochs is not None:
+            self.iter_epoch += 1
         self.progress_bar.reset()
 
     def get_tag_list(self, doc):
@@ -76,7 +81,11 @@ class VideosTagsDataLoader:
                     res = doc
 
                 if self.iter_log and self.progress_bar:
-                    desc = f"{doc['bvid']}"
+                    if self.iter_epochs is not None:
+                        epoch_str = f"[{logstr.file(self.iter_epoch+1)}/{logstr.mesg(self.iter_epochs)}] "
+                    else:
+                        epoch_str = ""
+                    desc = f"* {epoch_str}{doc['bvid']}"
                     self.progress_bar.update(desc=desc, count=1)
 
                 yield res
