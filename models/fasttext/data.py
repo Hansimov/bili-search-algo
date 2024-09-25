@@ -1,6 +1,5 @@
 from sedb import MongoOperator
-from tclogger import logger, logstr, ts_to_str
-from tqdm import tqdm
+from tclogger import logger, logstr, TCLogbar, ts_to_str
 from typing import Literal
 
 from configs.envs import MONGO_ENVS
@@ -12,23 +11,18 @@ class DataProgressBar:
         self.init_bar()
 
     def init_bar(self):
-        self.bar = tqdm(
-            total=self.total,
-            bar_format="  {desc}{percentage:3.0f}%|{bar:25}{r_bar}",
-        )
-        print()
+        self.bar = TCLogbar(total=self.total)
 
-    def update(self, desc: str = None, count: int = None):
+    def update(self, increment: int = None, head: str = None, desc: str = None):
+        if increment is not None:
+            self.bar.update(increment)
+        if head is not None:
+            self.bar.set_head(head)
         if desc is not None:
-            self.bar.set_description(desc)
-        if count is not None:
-            self.bar.update(count)
+            self.bar.set_desc(desc)
 
     def reset(self):
-        self.bar.refresh()
-        print()
-        self.bar.n = 0
-        self.bar.total = self.total
+        self.bar.reset()
 
 
 class VideosTagsDataLoader:
@@ -82,12 +76,12 @@ class VideosTagsDataLoader:
 
                 if self.iter_log and self.progress_bar:
                     if self.iter_epochs is not None:
-                        epoch_str = f"[{logstr.file(self.iter_epoch+1)}/{logstr.mesg(self.iter_epochs)}] "
+                        epoch_str = f"[{logstr.file(self.iter_epoch+1)}/{logstr.mesg(self.iter_epochs)}]"
                     else:
                         epoch_str = ""
-                    desc = f"* {epoch_str}{doc['bvid']}"
-                    self.progress_bar.update(desc=desc, count=1)
-
+                    head = f"* {epoch_str}"
+                    desc = f"{doc['bvid']}"
+                    self.progress_bar.update(increment=1, head=head, desc=desc)
                 yield res
         self.restore_cursor()
 
