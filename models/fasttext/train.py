@@ -21,6 +21,7 @@ class FasttextModelTrainer:
         window: int = 5,
         min_count: int = 5,
         workers: int = 8,
+        epochs: int = 5,
         hs: int = 0,
         sg: int = 0,
         use_local_model: bool = True,
@@ -45,12 +46,14 @@ class FasttextModelTrainer:
                 "window": window,
                 "min_count": min_count,
                 "workers": workers,
+                "epochs": epochs,
                 "hs": hs,
                 "sg": sg,
             }
             self.model = FastText(**self.model_params)
             self.is_model_trained = False
             logger.success("  ✓ new model created")
+            logger.mesg(dict_to_str(self.model_params), indent=4)
 
     def load_data(self, max_count: int = None):
         logger.note(f"> Loading data: [{logstr.mesg(max_count)}]")
@@ -73,20 +76,19 @@ class FasttextModelTrainer:
             logger.file("  * model already trained, skip build_vocab()")
         else:
             self.model.build_vocab(corpus_iterable=self.data_loader)
-            # self.model_total_words = self.model.corpus_total_words
             logger.success(f"  ✓ vocab built")
 
-    def train(self, epochs: int = 5, skip_trained: bool = True, save: bool = False):
+    def train(self, skip_trained: bool = True, save: bool = False):
         logger.note("> Training model:")
         if self.is_model_trained and skip_trained:
             logger.file("  * model already trained, skip train()")
         else:
-            self.data_loader.iter_epochs = epochs
+            self.data_loader.iter_epochs = self.model_params["epochs"]
             self.model.train(
                 corpus_iterable=self.data_loader,
                 total_examples=self.data_loader.max_count,
-                # total_words=self.model_total_words,
-                epochs=epochs,
+                epochs=self.model.epochs,
+                # total_words=self.self.model.corpus_total_words,
             )
             logger.success(f"  ✓ model trained")
 
@@ -135,8 +137,9 @@ class ArgParser(argparse.ArgumentParser):
 if __name__ == "__main__":
     args = ArgParser().args
 
+    max_count = 1000000
     trainer = FasttextModelTrainer()
-    model_path = Path(__file__).parent / "fasttext.model"
+    model_path = Path(__file__).parent / "checkpoints" / f"fasttext_{max_count}.model"
 
     model_params = {
         "model_path": model_path,
@@ -144,14 +147,13 @@ if __name__ == "__main__":
         "window": 5,
         "min_count": 5,
         "workers": 16,
+        "epochs": 5,
     }
     data_params = {
-        "max_count": 10000000,
+        "max_count": max_count,
     }
     vocab_params = {}
-    train_params = {
-        "epochs": 10,
-    }
+    train_params = {}
 
     if args.test_only:
         model_params["use_local_model"] = True
