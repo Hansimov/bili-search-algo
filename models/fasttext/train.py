@@ -19,11 +19,15 @@ class FasttextModelTrainer:
         model_path: Union[str, Path],
         vector_size: int = 128,
         window: int = 5,
+        shrink_windows: bool = False,
         min_count: int = 5,
         workers: int = 8,
         epochs: int = 5,
+        min_alpha: float = 0.0001,
         hs: int = 0,
         sg: int = 0,
+        min_n: int = 3,
+        max_n: int = 6,
         use_local_model: bool = True,
     ):
         self.model_path = Path(model_path)
@@ -44,11 +48,15 @@ class FasttextModelTrainer:
             self.model_params = {
                 "vector_size": vector_size,
                 "window": window,
+                "shrink_windows": shrink_windows,
                 "min_count": min_count,
                 "workers": workers,
                 "epochs": epochs,
+                "min_alpha": min_alpha,
                 "hs": hs,
                 "sg": sg,
+                "min_n": min_n,
+                "max_n": max_n,
             }
             self.model = FastText(**self.model_params)
             self.is_model_trained = False
@@ -102,13 +110,15 @@ class FasttextModelTrainer:
                 self.model.save(str(self.model_path))
                 logger.success(f"  * [{self.model_path}]")
 
-    def test(self, test_words: list[str] = None):
+    def test(self, test_words: list[str] = None, restrict_vocab: int = 10000):
         logger.note("> Testing model:")
         if not test_words:
             logger.warn("  × No test words provided")
         else:
             for word in test_words:
-                results = self.model.wv.most_similar(word, restrict_vocab=10000)[:6]
+                results = self.model.wv.most_similar(
+                    word, restrict_vocab=restrict_vocab
+                )[:6]
                 logger.mesg(f"  * [{logstr.file(word)}]:")
                 for result in results:
                     res_word, res_score = result
@@ -120,11 +130,13 @@ class FasttextModelTrainer:
         data_params: dict = {},
         vocab_params: dict = {},
         train_params: dict = {},
+        test_params: dict = {},
     ):
         self.load_model(**model_params)
         self.load_data(**data_params)
         self.build_vocab(**vocab_params)
         self.train(**train_params)
+        self.test(**test_params)
 
 
 class ArgParser(argparse.ArgumentParser):
@@ -137,23 +149,35 @@ class ArgParser(argparse.ArgumentParser):
 if __name__ == "__main__":
     args = ArgParser().args
 
-    max_count = 1000000
+    max_count = 450000000
     trainer = FasttextModelTrainer()
     model_path = Path(__file__).parent / "checkpoints" / f"fasttext_{max_count}.model"
 
     model_params = {
         "model_path": model_path,
-        "vector_size": 128,
+        "vector_size": 256,
         "window": 5,
-        "min_count": 5,
-        "workers": 16,
+        "shrink_windows": False,
+        "min_count": 20,
+        "workers": 32,
         "epochs": 5,
+        "hs": 0,
+        "min_n": 2,
+        "max_n": 8,
     }
     data_params = {
         "max_count": max_count,
     }
     vocab_params = {}
     train_params = {}
+    test_params = {
+        "test_words": [
+            *["东方之珠", "上海", "香港", "北京", "魔都", "帝都"],
+            *["搞笑", "萌宠", "GTA", "高数", "线代", "上海交大", "交大"],
+            *["界徐盛", "影视飓风", "雷军"],
+        ],
+        "restrict_vocab": 50000,
+    }
 
     if args.test_only:
         model_params["use_local_model"] = True
@@ -171,10 +195,8 @@ if __name__ == "__main__":
         data_params=data_params,
         vocab_params=vocab_params,
         train_params=train_params,
+        test_params=test_params,
     )
-
-    test_words = ["上海", "北京", "魔都", "帝都", "搞笑", "萌宠", "GTA", "高数"]
-    trainer.test(test_words)
 
     # python -m models.fasttext.train
     # python -m models.fasttext.train -t

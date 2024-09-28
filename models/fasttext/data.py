@@ -11,7 +11,7 @@ class DataProgressBar:
         self.init_bar()
 
     def init_bar(self):
-        self.bar = TCLogbar(total=self.total)
+        self.bar = TCLogbar(total=self.total, flush_interval=0.25)
 
     def update(self, increment: int = None, head: str = None, desc: str = None):
         if increment is not None:
@@ -46,8 +46,7 @@ class VideosTagsDataLoader:
 
     def init_mongo(self):
         self.mongo = MongoOperator(
-            MONGO_ENVS,
-            connect_msg=f"from {self.__class__.__name__}",
+            MONGO_ENVS, connect_msg=f"from {self.__class__.__name__}", indent=2
         )
         self.cursor = self.mongo.get_cursor(self.collection)
         self.store_cursor()
