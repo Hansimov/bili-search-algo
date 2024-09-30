@@ -96,6 +96,80 @@ class VideoStatsCounter:
         result["percentiles"] = deepcopy(self.PERCENTILES)
         logger.mesg(dict_to_str(result), indent=2)
 
+    def construct_stat_ratio_agg_dict(self, stat_fields: list) -> dict:
+        ratio_agg_dict = {}
+        for stat_field in stat_fields:
+            field = stat_field.replace("stat.", "")
+            field_view_ratio_dict = {
+                f"{field}_vr": {
+                    "$cond": {
+                        "if": {"$eq": ["$stat.view", 0]},
+                        "then": 0,
+                        "else": {"$divide": [f"${stat_field}", "$stat.view"]},
+                    }
+                }
+            }
+            ratio_agg_dict.update(field_view_ratio_dict)
+        project_agg_dict = {"$project": {"stat.view": 1, **ratio_agg_dict}}
+        return project_agg_dict
+
+    def construct_stat_ratio_bucket_dict(
+        self, stat_fields: list, buckets: int = 10
+    ) -> dict:
+        range_dict = {
+            "count": {"$sum": 1},
+            "min_view": {"$min": "$stat.view"},
+            "max_view": {"$max": "$stat.view"},
+        }
+        bucket_output_dict = {}
+        bucket_output_dict.update(range_dict)
+
+        ratio_bucket_agg_dict = {}
+        for stat_field in stat_fields:
+            field = stat_field.replace("stat.", "")
+            field_ratio_agg_dict = {
+                f"{field}_vr_avg": {"$avg": f"${field}_vr"},
+                f"{field}_vr_std": {"$stdDevPop": f"${field}_vr"},
+                f"{field}_vr_median": {
+                    "$median": {"input": f"${field}_vr", "method": "approximate"}
+                },
+                f"{field}_vr_percentile": {
+                    "$percentile": {
+                        "input": f"${field}_vr",
+                        "method": "approximate",
+                        "p": deepcopy(self.PERCENTILES),
+                    },
+                },
+            }
+            ratio_bucket_agg_dict.update(field_ratio_agg_dict)
+        bucket_output_dict.update(ratio_bucket_agg_dict)
+
+        bucket_dict = {
+            "$bucketAuto": {
+                "groupBy": "$stat.view",
+                "buckets": buckets,
+                "output": bucket_output_dict,
+            }
+        }
+        return bucket_dict
+
+    def count_stat_ratios(
+        self, filter_params: dict, stat_fields: list, buckets: int = 10
+    ):
+        logger.note("> Counting ratios:")
+        filter_dict = self.mongo.format_filter(**filter_params)
+        pipeline = [
+            {"$match": filter_dict},
+            self.construct_stat_ratio_agg_dict(stat_fields),
+            self.construct_stat_ratio_bucket_dict(stat_fields, buckets=buckets),
+        ]
+        result = self.collect.aggregate(pipeline)
+        for idx, bucket in enumerate(result):
+            bucket = self.round_agg_result(bucket, ndigits=6)
+            bucket["percentiles"] = deepcopy(self.PERCENTILES)
+            logger.note(f"* Bucket {(idx+1)}:", indent=2)
+            logger.mesg(dict_to_str(bucket), indent=4)
+
 
 if __name__ == "__main__":
     counter = VideoStatsCounter(collection="videos")
@@ -114,6 +188,11 @@ if __name__ == "__main__":
     counter.count_stats(
         filter_params=filter_params,
         stat_fields=["stat.view", "stat.coin", "stat.danmaku"],
+    )
+    counter.count_stat_ratios(
+        filter_params=filter_params,
+        stat_fields=["stat.coin", "stat.danmaku"],
+        buckets=10,
     )
 
     # python -m stats.count
