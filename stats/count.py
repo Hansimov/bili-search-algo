@@ -7,7 +7,7 @@ from configs.envs import MONGO_ENVS
 
 
 class VideoStatsCounter:
-    PERCENTILES = [0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 1.0]
+    PERCENTILES = [0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0]
 
     def __init__(self, collection: str):
         self.collection = collection
@@ -36,11 +36,14 @@ class VideoStatsCounter:
             sort_order=sort_order,
         )
 
-    def construct_stat_agg_dict(
-        self, stat_fields: list, percentiles: list[float] = PERCENTILES
-    ):
+    def construct_stat_agg_dict(self, stat_fields: list) -> dict:
         agg_dict = {}
-        max_n = 10
+        range_dict = {
+            "count": {"$sum": 1},
+        }
+        agg_dict.update(range_dict)
+
+        max_n = len(self.PERCENTILES) - 1  # avoid conflicts of align list
         for stat_field in stat_fields:
             field = stat_field.replace("stat.", "")
             field_agg_dict = {
@@ -54,17 +57,16 @@ class VideoStatsCounter:
                     "$percentile": {
                         "input": f"${stat_field}",
                         "method": "approximate",
-                        "p": percentiles,
+                        "p": deepcopy(self.PERCENTILES),
                     },
                 },
             }
             agg_dict.update(field_agg_dict)
         return agg_dict
 
-    def round_agg_result(self, result: dict, ndigits: int = 0):
+    def round_agg_result(self, result: dict, ndigits: int = 0) -> dict:
         new_result = deepcopy(result)
         round_func = round if ndigits == 0 else lambda x: round(x, ndigits=ndigits)
-
         for key in result:
             if isinstance(result[key], float):
                 new_result[key] = round_func(result[key])
@@ -77,7 +79,7 @@ class VideoStatsCounter:
                 pass
         return new_result
 
-    def count(self, filter_params: dict, stat_fields: list):
+    def count_stats(self, filter_params: dict, stat_fields: list):
         logger.note("> Counting stats:")
         filter_dict = self.mongo.format_filter(**filter_params)
         pipeline = [
@@ -91,8 +93,8 @@ class VideoStatsCounter:
         ]
         result = self.collect.aggregate(pipeline).next()
         result = self.round_agg_result(result)
-        result["percentiles"] = self.PERCENTILES
-        logger.mesg(dict_to_str(result))
+        result["percentiles"] = deepcopy(self.PERCENTILES)
+        logger.mesg(dict_to_str(result), indent=2)
 
 
 if __name__ == "__main__":
@@ -102,7 +104,14 @@ if __name__ == "__main__":
         "filter_op": "lte",
         "filter_range": "2013-01-01",
     }
-    counter.count(
+    filter_params = {
+        "filter_index": "pubdate",
+        "filter_op": "range",
+        "filter_range": ["2020-01-01", "2020-01-15"],
+    }
+    logger.note("> Filter params:")
+    logger.mesg(dict_to_str(filter_params))
+    counter.count_stats(
         filter_params=filter_params,
         stat_fields=["stat.view", "stat.coin", "stat.danmaku"],
     )
