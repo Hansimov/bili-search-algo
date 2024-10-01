@@ -1,5 +1,7 @@
+import json
 from copy import deepcopy
 from datetime import datetime
+from pathlib import Path
 from sedb import MongoOperator
 from tclogger import logger, logstr, TCLogbar, ts_to_str, str_to_ts, dict_to_str
 from typing import Literal, Union, Iterable
@@ -46,6 +48,8 @@ class VideoStatsCounter:
 
     def __init__(self, collection: str):
         self.collection = collection
+        self.stats_json = Path(__file__).parent / "stats.json"
+        self.stat_ratios_json = Path(__file__).parent / "stat_ratios.json"
         self.init_mongo()
 
     def init_mongo(self):
@@ -125,7 +129,10 @@ class VideoStatsCounter:
                 }
             },
         ]
-        result = self.collect.aggregate(pipeline).next()
+        result = {
+            "date_range": list(filter_params["filter_range"]),
+        }
+        result.update(self.collect.aggregate(pipeline).next())
         result = self.round_agg_result(result)
         result["percentiles"] = deepcopy(self.PERCENTILES)
         return result
@@ -137,9 +144,14 @@ class VideoStatsCounter:
             field_view_ratio_dict = {
                 f"{field}_vr": {
                     "$cond": {
-                        "if": {"$eq": ["$stat.view", 0]},
+                        "if": {"$lte": ["$stat.view", 0]},
                         "then": 0,
-                        "else": {"$divide": [f"${stat_field}", "$stat.view"]},
+                        "else": {
+                            "$divide": [
+                                {"$multiply": [f"${stat_field}", 100]},
+                                "$stat.view",
+                            ]
+                        },
                     }
                 }
             }
@@ -186,20 +198,45 @@ class VideoStatsCounter:
         }
         return bucket_dict
 
-    def count_stat_ratios(self, filter_params: dict, stat_fields: list) -> list:
+    def count_stat_ratios(self, filter_params: dict, stat_fields: list) -> dict:
         filter_dict = self.mongo.format_filter(**filter_params)
         pipeline = [
             {"$match": filter_dict},
             self.construct_stat_ratio_agg_dict(stat_fields),
             self.construct_stat_ratio_bucket_dict(stat_fields),
         ]
-        agg_result = list(self.collect.aggregate(pipeline))
-        result = []
+        agg_result = self.collect.aggregate(pipeline)
+        result = {
+            "date_range": list(filter_params["filter_range"]),
+            "percentiles": deepcopy(self.PERCENTILES),
+            "buckets": {},
+        }
         for idx, bucket in enumerate(agg_result):
-            bucket = self.round_agg_result(bucket, ndigits=6)
-            bucket["percentiles"] = deepcopy(self.PERCENTILES)
-            result.append(bucket)
+            bucket = self.round_agg_result(bucket, ndigits=4)
+            bucket["bucket_idx"] = idx
+            result["buckets"][bucket["_id"]] = bucket
         return result
+
+    def save(self, stat_res: dict = None, stat_ratio_res: dict = None):
+        if stat_res:
+            if not self.stats_json.exists():
+                stats_data = {}
+            else:
+                with open(self.stats_json, "r") as rf:
+                    stats_data = json.load(rf)
+            stats_data.update(stat_res)
+            with open(self.stats_json, "w") as wf:
+                json.dump(stats_data, wf, indent=4)
+
+        if stat_ratio_res:
+            if not self.stat_ratios_json.exists():
+                stat_ratios_data = {}
+            else:
+                with open(self.stat_ratios_json, "r") as rf:
+                    stat_ratios_data = json.load(rf)
+            stat_ratios_data.update(stat_ratio_res)
+            with open(self.stat_ratios_json, "w") as wf:
+                json.dump(stat_ratios_data, wf, indent=4)
 
     def count_by_years(self):
         date_ranges = DateRanger().get_ranges()
@@ -207,7 +244,7 @@ class VideoStatsCounter:
         for date_range in date_ranges:
             logger.mesg(f"* {date_range}", indent=2)
 
-        for date_range in date_ranges[:3]:
+        for date_range in date_ranges[:]:
             logger.note(f"> {date_range}:")
             filter_params = {
                 "filter_index": "pubdate",
@@ -219,16 +256,24 @@ class VideoStatsCounter:
                 filter_params=filter_params,
                 stat_fields=["stat.view", "stat.coin", "stat.danmaku"],
             )
-            logger.mesg(dict_to_str(stat_result), indent=2)
+            stat_res = {date_range[0]: stat_result}
+            self.save(stat_res=stat_res)
+            logger.success(f"✓ Updated stats for: {logstr.file(date_range)}", indent=4)
+            logger.mesg(dict_to_str(stat_result), indent=4)
 
             logger.note("> Counting stat ratios:", indent=2)
             stat_raio_result = counter.count_stat_ratios(
                 filter_params=filter_params,
                 stat_fields=["stat.coin", "stat.danmaku"],
             )
-            for idx, bucket in enumerate(stat_raio_result):
+            stat_ratio_res = {date_range[0]: stat_raio_result}
+            self.save(stat_ratio_res=stat_ratio_res)
+            logger.success(
+                f"✓ Updated stat ratios for: {logstr.file(date_range)} ", indent=4
+            )
+            for idx, v in enumerate(stat_raio_result["buckets"].values()):
                 logger.note(f"* Bucket {(idx+1)}:", indent=4)
-                logger.mesg(dict_to_str(bucket), indent=6)
+                logger.mesg(dict_to_str(v), indent=6)
 
 
 if __name__ == "__main__":
