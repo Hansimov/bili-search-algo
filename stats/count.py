@@ -1,13 +1,48 @@
 from copy import deepcopy
+from datetime import datetime
 from sedb import MongoOperator
-from tclogger import logger, logstr, TCLogbar, ts_to_str, dict_to_str
+from tclogger import logger, logstr, TCLogbar, ts_to_str, str_to_ts, dict_to_str
 from typing import Literal, Union, Iterable
 
 from configs.envs import MONGO_ENVS
 
 
+class DateRanger:
+    def get_seps(self) -> list[str]:
+        date_seps = ["2009-06-01"]
+        now = datetime.now()
+        for year in range(2016, now.year + 1):
+            if year < 2019:
+                sep_num = 1
+            elif year < 2021:
+                sep_num = 2
+            else:
+                sep_num = 4
+            if year == now.year:
+                max_month = now.month
+            else:
+                max_month = 12
+            this_year_seps = [
+                f"{year}-{month:02}-01" for month in range(1, max_month, 12 // sep_num)
+            ]
+            date_seps.extend(this_year_seps)
+        date_seps[-1] = f"{now.year}-{now.month:02}-{now.day:02}"
+        return date_seps
+
+    def seps_to_ranges(self, seps: list[str]) -> list[tuple[str, str]]:
+        ranges = []
+        for idx, sep in enumerate(seps[:-1]):
+            ranges.append((sep, seps[idx + 1]))
+        return ranges
+
+    def get_ranges(self) -> list[tuple[str, str]]:
+        return self.seps_to_ranges(self.get_seps())
+
+
 class VideoStatsCounter:
     PERCENTILES = [0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0]
+    EXPS = range(2, 8)
+    VIEW_BOUNDARIES = [0, *[10**exp for exp in EXPS], 1e10]
 
     def __init__(self, collection: str):
         self.collection = collection
@@ -79,8 +114,7 @@ class VideoStatsCounter:
                 pass
         return new_result
 
-    def count_stats(self, filter_params: dict, stat_fields: list):
-        logger.note("> Counting stats:")
+    def count_stats(self, filter_params: dict, stat_fields: list) -> dict:
         filter_dict = self.mongo.format_filter(**filter_params)
         pipeline = [
             {"$match": filter_dict},
@@ -94,7 +128,7 @@ class VideoStatsCounter:
         result = self.collect.aggregate(pipeline).next()
         result = self.round_agg_result(result)
         result["percentiles"] = deepcopy(self.PERCENTILES)
-        logger.mesg(dict_to_str(result), indent=2)
+        return result
 
     def construct_stat_ratio_agg_dict(self, stat_fields: list) -> dict:
         ratio_agg_dict = {}
@@ -113,9 +147,7 @@ class VideoStatsCounter:
         project_agg_dict = {"$project": {"stat.view": 1, **ratio_agg_dict}}
         return project_agg_dict
 
-    def construct_stat_ratio_bucket_dict(
-        self, stat_fields: list, exps: Iterable = range(2, 8)
-    ) -> dict:
+    def construct_stat_ratio_bucket_dict(self, stat_fields: list) -> dict:
         range_dict = {
             "min_view": {"$min": "$stat.view"},
             "max_view": {"$max": "$stat.view"},
@@ -144,54 +176,63 @@ class VideoStatsCounter:
             ratio_bucket_agg_dict.update(field_ratio_agg_dict)
         bucket_output_dict.update(ratio_bucket_agg_dict)
 
-        boundaries = [0, *[10**exp for exp in exps], 1e10]
         bucket_dict = {
             "$bucket": {
                 "groupBy": "$stat.view",
-                "boundaries": boundaries,
+                "boundaries": deepcopy(self.VIEW_BOUNDARIES),
                 "default": "others",
                 "output": bucket_output_dict,
             }
         }
         return bucket_dict
 
-    def count_stat_ratios(self, filter_params: dict, stat_fields: list):
-        logger.note("> Counting ratios:")
+    def count_stat_ratios(self, filter_params: dict, stat_fields: list) -> list:
         filter_dict = self.mongo.format_filter(**filter_params)
         pipeline = [
             {"$match": filter_dict},
             self.construct_stat_ratio_agg_dict(stat_fields),
             self.construct_stat_ratio_bucket_dict(stat_fields),
         ]
-        result = self.collect.aggregate(pipeline)
-        for idx, bucket in enumerate(result):
+        agg_result = list(self.collect.aggregate(pipeline))
+        result = []
+        for idx, bucket in enumerate(agg_result):
             bucket = self.round_agg_result(bucket, ndigits=6)
             bucket["percentiles"] = deepcopy(self.PERCENTILES)
-            logger.note(f"* Bucket {(idx+1)}:", indent=2)
-            logger.mesg(dict_to_str(bucket), indent=4)
+            result.append(bucket)
+        return result
+
+    def count_by_years(self):
+        date_ranges = DateRanger().get_ranges()
+        logger.note("> Date ranges:")
+        for date_range in date_ranges:
+            logger.mesg(f"* {date_range}", indent=2)
+
+        for date_range in date_ranges[:3]:
+            logger.note(f"> {date_range}:")
+            filter_params = {
+                "filter_index": "pubdate",
+                "filter_op": "range",
+                "filter_range": date_range,
+            }
+            logger.note("> Counting stats:", indent=2)
+            stat_result = counter.count_stats(
+                filter_params=filter_params,
+                stat_fields=["stat.view", "stat.coin", "stat.danmaku"],
+            )
+            logger.mesg(dict_to_str(stat_result), indent=2)
+
+            logger.note("> Counting stat ratios:", indent=2)
+            stat_raio_result = counter.count_stat_ratios(
+                filter_params=filter_params,
+                stat_fields=["stat.coin", "stat.danmaku"],
+            )
+            for idx, bucket in enumerate(stat_raio_result):
+                logger.note(f"* Bucket {(idx+1)}:", indent=4)
+                logger.mesg(dict_to_str(bucket), indent=6)
 
 
 if __name__ == "__main__":
     counter = VideoStatsCounter(collection="videos")
-    filter_params = {
-        "filter_index": "pubdate",
-        "filter_op": "lte",
-        "filter_range": "2013-01-01",
-    }
-    filter_params = {
-        "filter_index": "pubdate",
-        "filter_op": "range",
-        "filter_range": ["2020-01-01", "2020-07-01"],
-    }
-    logger.note("> Filter params:")
-    logger.mesg(dict_to_str(filter_params))
-    counter.count_stats(
-        filter_params=filter_params,
-        stat_fields=["stat.view", "stat.coin", "stat.danmaku"],
-    )
-    counter.count_stat_ratios(
-        filter_params=filter_params,
-        stat_fields=["stat.coin", "stat.danmaku"],
-    )
+    counter.count_by_years()
 
     # python -m stats.count
