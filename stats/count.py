@@ -1,7 +1,7 @@
 from copy import deepcopy
 from sedb import MongoOperator
 from tclogger import logger, logstr, TCLogbar, ts_to_str, dict_to_str
-from typing import Literal, Union
+from typing import Literal, Union, Iterable
 
 from configs.envs import MONGO_ENVS
 
@@ -114,12 +114,12 @@ class VideoStatsCounter:
         return project_agg_dict
 
     def construct_stat_ratio_bucket_dict(
-        self, stat_fields: list, buckets: int = 10
+        self, stat_fields: list, exps: Iterable = range(2, 8)
     ) -> dict:
         range_dict = {
-            "count": {"$sum": 1},
             "min_view": {"$min": "$stat.view"},
             "max_view": {"$max": "$stat.view"},
+            "count": {"$sum": 1},
         }
         bucket_output_dict = {}
         bucket_output_dict.update(range_dict)
@@ -144,24 +144,24 @@ class VideoStatsCounter:
             ratio_bucket_agg_dict.update(field_ratio_agg_dict)
         bucket_output_dict.update(ratio_bucket_agg_dict)
 
+        boundaries = [0, *[10**exp for exp in exps], 1e10]
         bucket_dict = {
-            "$bucketAuto": {
+            "$bucket": {
                 "groupBy": "$stat.view",
-                "buckets": buckets,
+                "boundaries": boundaries,
+                "default": "others",
                 "output": bucket_output_dict,
             }
         }
         return bucket_dict
 
-    def count_stat_ratios(
-        self, filter_params: dict, stat_fields: list, buckets: int = 10
-    ):
+    def count_stat_ratios(self, filter_params: dict, stat_fields: list):
         logger.note("> Counting ratios:")
         filter_dict = self.mongo.format_filter(**filter_params)
         pipeline = [
             {"$match": filter_dict},
             self.construct_stat_ratio_agg_dict(stat_fields),
-            self.construct_stat_ratio_bucket_dict(stat_fields, buckets=buckets),
+            self.construct_stat_ratio_bucket_dict(stat_fields),
         ]
         result = self.collect.aggregate(pipeline)
         for idx, bucket in enumerate(result):
@@ -181,7 +181,7 @@ if __name__ == "__main__":
     filter_params = {
         "filter_index": "pubdate",
         "filter_op": "range",
-        "filter_range": ["2020-01-01", "2020-01-15"],
+        "filter_range": ["2020-01-01", "2020-07-01"],
     }
     logger.note("> Filter params:")
     logger.mesg(dict_to_str(filter_params))
@@ -192,7 +192,6 @@ if __name__ == "__main__":
     counter.count_stat_ratios(
         filter_params=filter_params,
         stat_fields=["stat.coin", "stat.danmaku"],
-        buckets=10,
     )
 
     # python -m stats.count
