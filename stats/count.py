@@ -13,7 +13,7 @@ class DateRanger:
     def get_seps(self) -> list[str]:
         date_seps = ["2009-06-01"]
         now = datetime.now()
-        for year in range(2016, now.year + 1):
+        for year in range(2017, now.year + 1):
             if year < 2019:
                 sep_num = 1
             elif year < 2021:

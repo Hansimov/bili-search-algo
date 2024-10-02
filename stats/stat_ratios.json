@@ -1,0 +1,3364 @@
+{
+  "2009-06-01": {
+    "date_range": ["2009-06-01", "2017-01-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 142047,
+        "coin_vr_avg": 1.6832,
+        "coin_vr_std": 3.5804,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 3.0303, 5.4525, 8.1633, 15.3846, 30.4018, 68.3333,
+          200.0
+        ],
+        "danmaku_vr_avg": 1.4218,
+        "danmaku_vr_std": 7.3971,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 1.4925, 3.3263, 5.8824, 19.9532, 87.0323,
+          246.4286, 850.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 1076632,
+        "coin_vr_avg": 0.9179,
+        "coin_vr_std": 2.6073,
+        "coin_vr_median": 0.3941,
+        "coin_vr_percentile": [
+          0.0, 0.2182, 0.3941, 0.6099, 1.4014, 2.4149, 3.6703, 7.4353, 14.4938,
+          25.265, 1433.8926
+        ],
+        "danmaku_vr_avg": 1.8429,
+        "danmaku_vr_std": 6.7248,
+        "danmaku_vr_median": 0.7286,
+        "danmaku_vr_percentile": [
+          0.0, 0.4863, 0.7286, 1.0352, 2.2309, 3.9499, 6.7002, 17.702, 58.2827,
+          252.6837, 1339.5349
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 1249436,
+        "coin_vr_avg": 0.5442,
+        "coin_vr_std": 0.9142,
+        "coin_vr_median": 0.256,
+        "coin_vr_percentile": [
+          0.0645, 0.1756, 0.256, 0.364, 0.7808, 1.3441, 2.0561, 4.2663, 8.5326,
+          14.3376, 179.8034
+        ],
+        "danmaku_vr_avg": 2.4109,
+        "danmaku_vr_std": 17.3675,
+        "danmaku_vr_median": 1.0725,
+        "danmaku_vr_percentile": [
+          0.3534, 0.7894, 1.0725, 1.4361, 2.7588, 4.4863, 6.7595, 15.9436,
+          112.5817, 770.9862, 4281.9512
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99997,
+        "count": 386187,
+        "coin_vr_avg": 0.5428,
+        "coin_vr_std": 0.8822,
+        "coin_vr_median": 0.2398,
+        "coin_vr_percentile": [
+          0.0683, 0.1654, 0.2398, 0.3446, 0.7732, 1.3577, 2.101, 4.2564, 8.4474,
+          13.8261, 37.9537
+        ],
+        "danmaku_vr_avg": 2.385,
+        "danmaku_vr_std": 51.2414,
+        "danmaku_vr_median": 1.0681,
+        "danmaku_vr_percentile": [
+          0.3945, 0.8021, 1.0681, 1.4167, 2.756, 4.5101, 6.7824, 16.3697,
+          103.9533, 447.6233, 31294.9117
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999946,
+        "count": 71846,
+        "coin_vr_avg": 0.6843,
+        "coin_vr_std": 1.0644,
+        "coin_vr_median": 0.2925,
+        "coin_vr_percentile": [
+          0.0751, 0.1953, 0.2925, 0.4333, 1.0194, 1.7999, 2.7182, 5.0841, 9.482,
+          15.3307, 26.4006
+        ],
+        "danmaku_vr_avg": 1.867,
+        "danmaku_vr_std": 6.4273,
+        "danmaku_vr_median": 0.8549,
+        "danmaku_vr_percentile": [
+          0.2702, 0.6117, 0.8549, 1.1959, 2.4198, 3.9856, 6.0846, 14.5308,
+          58.3362, 143.2846, 1181.1203
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000035,
+        "max_view": 9999444,
+        "count": 7355,
+        "coin_vr_avg": 0.6583,
+        "coin_vr_std": 0.9934,
+        "coin_vr_median": 0.2656,
+        "coin_vr_percentile": [
+          0.0887, 0.1868, 0.2656, 0.3871, 0.9879, 1.8584, 2.6986, 4.5729,
+          8.3511, 12.8569, 12.8569
+        ],
+        "danmaku_vr_avg": 1.6177,
+        "danmaku_vr_std": 3.5004,
+        "danmaku_vr_median": 0.8577,
+        "danmaku_vr_percentile": [
+          0.2111, 0.5862, 0.8577, 1.1642, 2.2332, 3.4252, 5.1124, 12.1939,
+          45.0506, 117.6423, 117.6423
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10017131,
+        "max_view": 153208231,
+        "count": 472,
+        "coin_vr_avg": 0.5329,
+        "coin_vr_std": 0.7525,
+        "coin_vr_median": 0.2828,
+        "coin_vr_percentile": [
+          0.153, 0.2264, 0.2828, 0.3467, 0.6392, 1.1779, 2.0838, 4.234, 6.4048,
+          6.4048, 6.4048
+        ],
+        "danmaku_vr_avg": 1.6416,
+        "danmaku_vr_std": 1.9092,
+        "danmaku_vr_median": 1.1111,
+        "danmaku_vr_percentile": [
+          0.4464, 0.8799, 1.1111, 1.4414, 2.353, 3.4128, 4.4473, 9.3939,
+          20.6682, 20.6682, 20.6682
+        ],
+        "bucket_idx": 6
+      },
+      "others": {
+        "_id": "others",
+        "min_view": -1,
+        "max_view": -1,
+        "count": 39596,
+        "coin_vr_avg": 0.0,
+        "coin_vr_std": 0.0,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "danmaku_vr_avg": 0.0,
+        "danmaku_vr_std": 0.0,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "bucket_idx": 7
+      }
+    }
+  },
+  "2017-01-01": {
+    "date_range": ["2017-01-01", "2018-01-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 622221,
+        "coin_vr_avg": 1.8808,
+        "coin_vr_std": 51.7487,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 2.4692, 5.3938, 8.5428, 17.6443, 41.2504,
+          283.2102, 21485.7143
+        ],
+        "danmaku_vr_avg": 0.7372,
+        "danmaku_vr_std": 5.3113,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 1.6696, 3.4541, 11.9088, 58.8908, 200.3198,
+          1006.25
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 1536896,
+        "coin_vr_avg": 1.1803,
+        "coin_vr_std": 2.6494,
+        "coin_vr_median": 0.5066,
+        "coin_vr_percentile": [
+          0.0, 0.2821, 0.5066, 0.782, 1.7858, 3.1239, 4.7403, 9.5998, 18.6513,
+          32.9189, 1854.0984
+        ],
+        "danmaku_vr_avg": 0.892,
+        "danmaku_vr_std": 5.0397,
+        "danmaku_vr_median": 0.2292,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.2292, 0.423, 1.0563, 1.9964, 3.3884, 10.0082, 36.5882,
+          114.8432, 3596.7797
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 1328030,
+        "coin_vr_avg": 0.7118,
+        "coin_vr_std": 1.2911,
+        "coin_vr_median": 0.3133,
+        "coin_vr_percentile": [
+          0.0898, 0.2181, 0.3133, 0.4453, 0.9932, 1.7681, 2.7497, 5.7748,
+          11.5385, 20.5298, 415.2614
+        ],
+        "danmaku_vr_avg": 1.6938,
+        "danmaku_vr_std": 26.2021,
+        "danmaku_vr_median": 0.4913,
+        "danmaku_vr_percentile": [
+          0.1251, 0.3409, 0.4913, 0.6929, 1.447, 2.4164, 3.6779, 8.5267,
+          156.6762, 1344.5137, 4749.0513
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 547394,
+        "coin_vr_avg": 0.59,
+        "coin_vr_std": 1.0926,
+        "coin_vr_median": 0.2138,
+        "coin_vr_percentile": [
+          0.0608, 0.1444, 0.2138, 0.3186, 0.7926, 1.4936, 2.4254, 5.351,
+          10.9067, 17.9789, 41.4068
+        ],
+        "danmaku_vr_avg": 1.6659,
+        "danmaku_vr_std": 14.911,
+        "danmaku_vr_median": 0.5829,
+        "danmaku_vr_percentile": [
+          0.2101, 0.4361, 0.5829, 0.7718, 1.4607, 2.3858, 3.6326, 8.4957,
+          218.6095, 627.2011, 1636.2663
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100001,
+        "max_view": 999850,
+        "count": 107736,
+        "coin_vr_avg": 0.6063,
+        "coin_vr_std": 1.1511,
+        "coin_vr_median": 0.1842,
+        "coin_vr_percentile": [
+          0.0423, 0.1143, 0.1842, 0.2963, 0.8154, 1.6101, 2.6989, 5.6167,
+          10.8034, 18.0914, 28.0052
+        ],
+        "danmaku_vr_avg": 0.7794,
+        "danmaku_vr_std": 2.3293,
+        "danmaku_vr_median": 0.3869,
+        "danmaku_vr_percentile": [
+          0.1449, 0.2895, 0.3869, 0.5198, 1.0178, 1.6874, 2.5976, 5.8234,
+          18.0695, 61.6248, 495.0034
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000124,
+        "max_view": 9950462,
+        "count": 7471,
+        "coin_vr_avg": 0.6464,
+        "coin_vr_std": 1.1816,
+        "coin_vr_median": 0.1865,
+        "coin_vr_percentile": [
+          0.034, 0.1106, 0.1865, 0.313, 0.9227, 1.8635, 2.9341, 5.5508, 10.1897,
+          20.2791, 20.2791
+        ],
+        "danmaku_vr_avg": 0.6514,
+        "danmaku_vr_std": 1.0042,
+        "danmaku_vr_median": 0.2932,
+        "danmaku_vr_percentile": [
+          0.0871, 0.2028, 0.2932, 0.4262, 0.9458, 1.6791, 2.4469, 4.7299,
+          9.5247, 14.6113, 14.6113
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10001814,
+        "max_view": 167798715,
+        "count": 242,
+        "coin_vr_avg": 0.5281,
+        "coin_vr_std": 0.7158,
+        "coin_vr_median": 0.2947,
+        "coin_vr_percentile": [
+          0.1669, 0.2569, 0.2947, 0.3737, 0.6554, 1.1165, 1.6615, 3.724, 6.6495,
+          6.6495, 6.6495
+        ],
+        "danmaku_vr_avg": 1.3965,
+        "danmaku_vr_std": 1.2392,
+        "danmaku_vr_median": 1.1392,
+        "danmaku_vr_percentile": [
+          0.2625, 0.8232, 1.1392, 1.4262, 2.1271, 3.1471, 4.1179, 5.8529,
+          6.2101, 6.2101, 6.2101
+        ],
+        "bucket_idx": 6
+      },
+      "others": {
+        "_id": "others",
+        "min_view": -1,
+        "max_view": -1,
+        "count": 23765,
+        "coin_vr_avg": 0.0,
+        "coin_vr_std": 0.0,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "danmaku_vr_avg": 0.0,
+        "danmaku_vr_std": 0.0,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "bucket_idx": 7
+      }
+    }
+  },
+  "2018-01-01": {
+    "date_range": ["2018-01-01", "2019-01-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 1415740,
+        "coin_vr_avg": 2.0112,
+        "coin_vr_std": 23.5207,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 3.212, 6.4706, 10.0, 19.3786, 40.0, 118.8535,
+          16275.0
+        ],
+        "danmaku_vr_avg": 0.5158,
+        "danmaku_vr_std": 5.5986,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 1.0856, 2.5, 8.7058, 45.6962, 181.2008,
+          2652.8571
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 2850453,
+        "coin_vr_avg": 1.1456,
+        "coin_vr_std": 6.986,
+        "coin_vr_median": 0.4325,
+        "coin_vr_percentile": [
+          0.0, 0.1885, 0.4325, 0.7118, 1.71, 3.0267, 4.6179, 9.2974, 18.8288,
+          47.5569, 2820.9524
+        ],
+        "danmaku_vr_avg": 0.4739,
+        "danmaku_vr_std": 6.5221,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.5538, 1.0769, 1.9031, 5.8071, 24.5144, 80.8988,
+          10263.1692
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 2085025,
+        "coin_vr_avg": 0.6923,
+        "coin_vr_std": 1.2475,
+        "coin_vr_median": 0.3003,
+        "coin_vr_percentile": [
+          0.0799, 0.2054, 0.3003, 0.4298, 0.9666, 1.7202, 2.6931, 5.7053,
+          11.7298, 21.7854, 455.6558
+        ],
+        "danmaku_vr_avg": 0.7864,
+        "danmaku_vr_std": 16.7607,
+        "danmaku_vr_median": 0.241,
+        "danmaku_vr_percentile": [
+          0.0458, 0.1576, 0.241, 0.3572, 0.815, 1.4253, 2.2107, 4.9492, 15.503,
+          710.4267, 3969.9275
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 807056,
+        "coin_vr_avg": 0.6047,
+        "coin_vr_std": 1.1433,
+        "coin_vr_median": 0.2086,
+        "coin_vr_percentile": [
+          0.0534, 0.1365, 0.2086, 0.3181, 0.8154, 1.5461, 2.5372, 5.5609,
+          11.5139, 19.752, 35.5425
+        ],
+        "danmaku_vr_avg": 0.8117,
+        "danmaku_vr_std": 8.141,
+        "danmaku_vr_median": 0.3632,
+        "danmaku_vr_percentile": [
+          0.1139, 0.2644, 0.3632, 0.491, 0.9586, 1.5778, 2.3704, 4.9866,
+          13.4083, 329.9382, 1547.6654
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100001,
+        "max_view": 999928,
+        "count": 183265,
+        "coin_vr_avg": 0.589,
+        "coin_vr_std": 1.2275,
+        "coin_vr_median": 0.1545,
+        "coin_vr_percentile": [
+          0.035, 0.0938, 0.1545, 0.2539, 0.7383, 1.5379, 2.6858, 6.2185,
+          11.8772, 18.675, 25.7313
+        ],
+        "danmaku_vr_avg": 0.5206,
+        "danmaku_vr_std": 1.3882,
+        "danmaku_vr_median": 0.2632,
+        "danmaku_vr_percentile": [
+          0.0916, 0.1936, 0.2632, 0.3554, 0.6957, 1.1542, 1.7669, 3.8597,
+          9.1465, 54.6859, 236.5756
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000017,
+        "max_view": 9980894,
+        "count": 12635,
+        "coin_vr_avg": 0.7284,
+        "coin_vr_std": 1.4122,
+        "coin_vr_median": 0.1981,
+        "coin_vr_percentile": [
+          0.0367, 0.1189, 0.1981, 0.3321, 0.9847, 2.0767, 3.3849, 6.5862,
+          12.6811, 26.3544, 30.6231
+        ],
+        "danmaku_vr_avg": 0.5044,
+        "danmaku_vr_std": 0.9113,
+        "danmaku_vr_median": 0.2275,
+        "danmaku_vr_percentile": [
+          0.066, 0.1579, 0.2275, 0.324, 0.7238, 1.2317, 1.8411, 3.7098, 10.5333,
+          20.292, 34.2178
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10042897,
+        "max_view": 206280430,
+        "count": 395,
+        "coin_vr_avg": 0.6656,
+        "coin_vr_std": 0.9756,
+        "coin_vr_median": 0.3573,
+        "coin_vr_percentile": [
+          0.1796, 0.2889, 0.3573, 0.458, 0.8168, 1.4141, 2.4285, 5.3077, 9.4269,
+          9.4269, 9.4269
+        ],
+        "danmaku_vr_avg": 1.079,
+        "danmaku_vr_std": 1.4259,
+        "danmaku_vr_median": 0.852,
+        "danmaku_vr_percentile": [
+          0.297, 0.6486, 0.852, 1.026, 1.5998, 2.2822, 2.6149, 4.087, 24.3001,
+          24.3001, 24.3001
+        ],
+        "bucket_idx": 6
+      },
+      "others": {
+        "_id": "others",
+        "min_view": -1,
+        "max_view": -1,
+        "count": 422,
+        "coin_vr_avg": 0.0,
+        "coin_vr_std": 0.0,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "danmaku_vr_avg": 0.0,
+        "danmaku_vr_std": 0.0,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "bucket_idx": 7
+      }
+    }
+  },
+  "2019-01-01": {
+    "date_range": ["2019-01-01", "2019-07-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 2174387,
+        "coin_vr_avg": 1.7646,
+        "coin_vr_std": 5.8714,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 2.5645, 6.25, 10.0, 20.0, 50.0, 115.2284,
+          2836.3636
+        ],
+        "danmaku_vr_avg": 0.4803,
+        "danmaku_vr_std": 144.0701,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.9127, 7.6814, 35.6459, 120.9635,
+          212366.6667
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 2997025,
+        "coin_vr_avg": 1.1016,
+        "coin_vr_std": 3.0374,
+        "coin_vr_median": 0.3297,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.3297, 0.6368, 1.6593, 3.0082, 4.6433, 9.4487, 21.3194,
+          106.6662, 1449.2754
+        ],
+        "danmaku_vr_avg": 0.3406,
+        "danmaku_vr_std": 2.1406,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.3777, 0.8168, 1.4593, 4.5085, 18.9147, 59.782,
+          1055.5556
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 1831136,
+        "coin_vr_avg": 0.7164,
+        "coin_vr_std": 1.3161,
+        "coin_vr_median": 0.2999,
+        "coin_vr_percentile": [
+          0.0677, 0.1965, 0.2999, 0.4398, 1.0179, 1.8219, 2.8266, 5.844,
+          12.3071, 27.3934, 380.2792
+        ],
+        "danmaku_vr_avg": 0.4022,
+        "danmaku_vr_std": 1.0887,
+        "danmaku_vr_median": 0.1518,
+        "danmaku_vr_percentile": [
+          0.0, 0.0917, 0.1518, 0.2316, 0.5605, 1.0114, 1.5843, 3.5123, 8.8205,
+          25.9855, 394.4491
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 679822,
+        "coin_vr_avg": 0.7548,
+        "coin_vr_std": 1.3089,
+        "coin_vr_median": 0.2697,
+        "coin_vr_percentile": [
+          0.0546, 0.1675, 0.2697, 0.4262, 1.1049, 2.0261, 3.1595, 6.2742,
+          11.7806, 20.683, 75.824
+        ],
+        "danmaku_vr_avg": 0.5193,
+        "danmaku_vr_std": 0.9241,
+        "danmaku_vr_median": 0.2698,
+        "danmaku_vr_percentile": [
+          0.0741, 0.1908, 0.2698, 0.3723, 0.7418, 1.219, 1.8282, 3.7788, 8.5036,
+          16.3509, 202.6995
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100002,
+        "max_view": 999974,
+        "count": 144089,
+        "coin_vr_avg": 0.8678,
+        "coin_vr_std": 1.572,
+        "coin_vr_median": 0.2538,
+        "coin_vr_percentile": [
+          0.04, 0.1454, 0.2538, 0.4283, 1.2454, 2.4558, 3.9384, 7.7029, 13.2823,
+          20.1197, 55.185
+        ],
+        "danmaku_vr_avg": 0.4324,
+        "danmaku_vr_std": 0.7652,
+        "danmaku_vr_median": 0.2229,
+        "danmaku_vr_percentile": [
+          0.073, 0.1633, 0.2229, 0.3007, 0.5899, 0.9786, 1.5076, 3.3238, 7.8848,
+          13.1456, 100.0336
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000000,
+        "max_view": 9980355,
+        "count": 11487,
+        "coin_vr_avg": 1.1359,
+        "coin_vr_std": 1.8997,
+        "coin_vr_median": 0.3868,
+        "coin_vr_percentile": [
+          0.0475, 0.2015, 0.3868, 0.6552, 1.7585, 3.269, 4.907, 8.813, 16.443,
+          29.2787, 29.6418
+        ],
+        "danmaku_vr_avg": 0.4345,
+        "danmaku_vr_std": 0.6385,
+        "danmaku_vr_median": 0.2313,
+        "danmaku_vr_percentile": [
+          0.0621, 0.1614, 0.2313, 0.3187, 0.6441, 1.0302, 1.5555, 2.9653,
+          6.6633, 9.2657, 12.8363
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10001838,
+        "max_view": 182898186,
+        "count": 363,
+        "coin_vr_avg": 0.8853,
+        "coin_vr_std": 1.2887,
+        "coin_vr_median": 0.337,
+        "coin_vr_percentile": [
+          0.1081, 0.2854, 0.337, 0.4592, 1.3149, 2.7842, 3.8343, 5.8273, 6.7094,
+          6.7094, 6.7094
+        ],
+        "danmaku_vr_avg": 0.6784,
+        "danmaku_vr_std": 0.6591,
+        "danmaku_vr_median": 0.4419,
+        "danmaku_vr_percentile": [
+          0.1557, 0.2974, 0.4419, 0.6044, 1.2073, 1.5508, 1.8759, 3.0199,
+          3.9241, 3.9241, 3.9241
+        ],
+        "bucket_idx": 6
+      },
+      "others": {
+        "_id": "others",
+        "min_view": -1,
+        "max_view": -1,
+        "count": 36,
+        "coin_vr_avg": 0.0,
+        "coin_vr_std": 0.0,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "danmaku_vr_avg": 0.0,
+        "danmaku_vr_std": 0.0,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "bucket_idx": 7
+      }
+    }
+  },
+  "2019-07-01": {
+    "date_range": ["2019-07-01", "2020-01-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 3161524,
+        "coin_vr_avg": 1.9192,
+        "coin_vr_std": 8.1175,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 2.7305, 6.6667, 10.9524, 22.2222, 44.5782,
+          138.2758, 6482.6667
+        ],
+        "danmaku_vr_avg": 0.3546,
+        "danmaku_vr_std": 3.1585,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.7315, 7.4049, 33.2435, 114.4658,
+          1617.3913
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 3693403,
+        "coin_vr_avg": 1.0683,
+        "coin_vr_std": 3.1807,
+        "coin_vr_median": 0.2878,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.2878, 0.6033, 1.6266, 2.985, 4.6608, 9.6831, 20.1041,
+          44.5168, 3068.8679
+        ],
+        "danmaku_vr_avg": 0.2919,
+        "danmaku_vr_std": 2.1982,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.3121, 0.7282, 1.2749, 3.9244, 16.4107, 53.2128,
+          2535.0806
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 2181858,
+        "coin_vr_avg": 0.6969,
+        "coin_vr_std": 1.413,
+        "coin_vr_median": 0.2811,
+        "coin_vr_percentile": [
+          0.0575, 0.1828, 0.2811, 0.4165, 0.9914, 1.7876, 2.7787, 5.7875,
+          12.4986, 25.792, 875.692
+        ],
+        "danmaku_vr_avg": 0.3489,
+        "danmaku_vr_std": 3.7039,
+        "danmaku_vr_median": 0.1141,
+        "danmaku_vr_percentile": [
+          0.0, 0.0723, 0.1141, 0.1812, 0.4595, 0.8587, 1.3844, 3.2054, 8.5378,
+          24.5988, 3706.1572
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 801241,
+        "coin_vr_avg": 0.7325,
+        "coin_vr_std": 1.2862,
+        "coin_vr_median": 0.2587,
+        "coin_vr_percentile": [
+          0.0465, 0.1559, 0.2587, 0.4141, 1.0843, 1.9789, 3.034, 6.051, 12.2521,
+          21.9766, 46.393
+        ],
+        "danmaku_vr_avg": 0.4522,
+        "danmaku_vr_std": 0.8758,
+        "danmaku_vr_median": 0.2113,
+        "danmaku_vr_percentile": [
+          0.0516, 0.1441, 0.2113, 0.3009, 0.6383, 1.0802, 1.6501, 3.5451,
+          8.5987, 20.4991, 198.1372
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999973,
+        "count": 176966,
+        "coin_vr_avg": 0.8863,
+        "coin_vr_std": 1.548,
+        "coin_vr_median": 0.2792,
+        "coin_vr_percentile": [
+          0.0351, 0.1534, 0.2792, 0.4784, 1.3613, 2.492, 3.7844, 7.321, 13.9006,
+          22.7583, 47.1161
+        ],
+        "danmaku_vr_avg": 0.3872,
+        "danmaku_vr_std": 0.6976,
+        "danmaku_vr_median": 0.1855,
+        "danmaku_vr_percentile": [
+          0.0532, 0.1313, 0.1855, 0.2583, 0.5308, 0.8939, 1.3776, 3.1251,
+          7.5073, 15.4895, 36.4711
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000041,
+        "max_view": 9980804,
+        "count": 17056,
+        "coin_vr_avg": 1.2206,
+        "coin_vr_std": 1.9716,
+        "coin_vr_median": 0.4721,
+        "coin_vr_percentile": [
+          0.0485, 0.2505, 0.4721, 0.7836, 1.9023, 3.353, 4.9758, 9.2009,
+          17.6407, 28.4791, 29.5534
+        ],
+        "danmaku_vr_avg": 0.4108,
+        "danmaku_vr_std": 0.6606,
+        "danmaku_vr_median": 0.2027,
+        "danmaku_vr_percentile": [
+          0.0479, 0.1372, 0.2027, 0.2896, 0.6152, 0.9897, 1.4236, 3.0486,
+          7.1881, 11.7413, 13.2266
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10007264,
+        "max_view": 206221893,
+        "count": 424,
+        "coin_vr_avg": 1.5234,
+        "coin_vr_std": 2.5388,
+        "coin_vr_median": 0.5831,
+        "coin_vr_percentile": [
+          0.1973, 0.3739, 0.5831, 0.8319, 2.3018, 4.0435, 5.8254, 12.1279,
+          24.1015, 24.1015, 24.1015
+        ],
+        "danmaku_vr_avg": 0.7533,
+        "danmaku_vr_std": 0.8965,
+        "danmaku_vr_median": 0.4272,
+        "danmaku_vr_percentile": [
+          0.1236, 0.3137, 0.4272, 0.6358, 1.1488, 1.8743, 2.6116, 4.1959,
+          6.3001, 6.3001, 6.3001
+        ],
+        "bucket_idx": 6
+      },
+      "others": {
+        "_id": "others",
+        "min_view": -1,
+        "max_view": -1,
+        "count": 21,
+        "coin_vr_avg": 0.0,
+        "coin_vr_std": 0.0,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "danmaku_vr_avg": 0.0,
+        "danmaku_vr_std": 0.0,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "bucket_idx": 7
+      }
+    }
+  },
+  "2020-01-01": {
+    "date_range": ["2020-01-01", "2020-07-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 6365218,
+        "coin_vr_avg": 2.0119,
+        "coin_vr_std": 6.9222,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 2.7778, 7.1429, 11.7619, 23.5294, 50.0, 109.5374,
+          7200.0
+        ],
+        "danmaku_vr_avg": 0.4761,
+        "danmaku_vr_std": 76.8495,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0767, 9.0909, 39.0091, 121.6071,
+          120927.027
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 6094192,
+        "coin_vr_avg": 1.0779,
+        "coin_vr_std": 2.6453,
+        "coin_vr_median": 0.2463,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.2463, 0.5719, 1.6283, 3.0498, 4.8385, 10.057, 20.1858,
+          43.1809, 2115.3846
+        ],
+        "danmaku_vr_avg": 0.3224,
+        "danmaku_vr_std": 7.4937,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.3041, 0.7518, 1.3859, 4.6267, 20.2254, 59.8969,
+          17753.4113
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 3170638,
+        "coin_vr_avg": 0.6883,
+        "coin_vr_std": 1.3635,
+        "coin_vr_median": 0.2613,
+        "coin_vr_percentile": [
+          0.0449, 0.1676, 0.2613, 0.3952, 0.9766, 1.791, 2.8014, 5.8131,
+          12.8831, 29.1688, 417.4497
+        ],
+        "danmaku_vr_avg": 0.3573,
+        "danmaku_vr_std": 3.5026,
+        "danmaku_vr_median": 0.0963,
+        "danmaku_vr_percentile": [
+          0.0, 0.0609, 0.0963, 0.1615, 0.4346, 0.8571, 1.4421, 3.6193, 10.5195,
+          29.1845, 2059.7351
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 1105397,
+        "coin_vr_avg": 0.7052,
+        "coin_vr_std": 1.2996,
+        "coin_vr_median": 0.2308,
+        "coin_vr_percentile": [
+          0.0377, 0.1359, 0.2308, 0.3771, 1.0315, 1.9277, 2.9861, 6.0169,
+          12.5116, 23.2149, 94.2172
+        ],
+        "danmaku_vr_avg": 0.4563,
+        "danmaku_vr_std": 1.1099,
+        "danmaku_vr_median": 0.1858,
+        "danmaku_vr_percentile": [
+          0.0398, 0.1222, 0.1858, 0.2751, 0.6281, 1.1057, 1.7369, 3.9428,
+          9.8109, 20.1633, 632.4742
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100001,
+        "max_view": 999885,
+        "count": 253256,
+        "coin_vr_avg": 0.8298,
+        "coin_vr_std": 1.4818,
+        "coin_vr_median": 0.2489,
+        "coin_vr_percentile": [
+          0.0296, 0.1354, 0.2489, 0.431, 1.2557, 2.3564, 3.6264, 6.9347,
+          13.9867, 21.6017, 33.9573
+        ],
+        "danmaku_vr_avg": 0.4292,
+        "danmaku_vr_std": 0.8807,
+        "danmaku_vr_median": 0.1828,
+        "danmaku_vr_percentile": [
+          0.047, 0.1267, 0.1828, 0.2601, 0.5705, 1.0068, 1.5784, 3.8103, 9.9799,
+          21.7342, 63.2547
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000009,
+        "max_view": 9969912,
+        "count": 26320,
+        "coin_vr_avg": 1.0884,
+        "coin_vr_std": 1.8781,
+        "coin_vr_median": 0.3224,
+        "coin_vr_percentile": [
+          0.034, 0.169, 0.3224, 0.5861, 1.7067, 3.1165, 4.6625, 8.9158, 16.4559,
+          25.3137, 32.8882
+        ],
+        "danmaku_vr_avg": 0.4371,
+        "danmaku_vr_std": 0.8424,
+        "danmaku_vr_median": 0.1808,
+        "danmaku_vr_percentile": [
+          0.0343, 0.1174, 0.1808, 0.2681, 0.6427, 1.1193, 1.6648, 3.4141, 8.327,
+          23.4983, 43.5626
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10000150,
+        "max_view": 383782009,
+        "count": 658,
+        "coin_vr_avg": 1.3911,
+        "coin_vr_std": 2.1246,
+        "coin_vr_median": 0.5637,
+        "coin_vr_percentile": [
+          0.146, 0.3712, 0.5637, 0.8219, 2.1289, 3.8683, 5.5539, 10.719,
+          17.3538, 17.3538, 17.3538
+        ],
+        "danmaku_vr_avg": 0.613,
+        "danmaku_vr_std": 0.8239,
+        "danmaku_vr_median": 0.3511,
+        "danmaku_vr_percentile": [
+          0.0827, 0.2286, 0.3511, 0.5082, 0.9548, 1.4125, 1.9342, 4.9784, 8.092,
+          8.092, 8.092
+        ],
+        "bucket_idx": 6
+      },
+      "others": {
+        "_id": "others",
+        "min_view": -1,
+        "max_view": -1,
+        "count": 4,
+        "coin_vr_avg": 0.0,
+        "coin_vr_std": 0.0,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "danmaku_vr_avg": 0.0,
+        "danmaku_vr_std": 0.0,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        ],
+        "bucket_idx": 7
+      }
+    }
+  },
+  "2020-07-01": {
+    "date_range": ["2020-07-01", "2021-01-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 9863132,
+        "coin_vr_avg": 1.4355,
+        "coin_vr_std": 6.5087,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 4.4443, 9.3302, 22.4865, 57.4405, 199.9358,
+          2200.0
+        ],
+        "danmaku_vr_avg": 2.2213,
+        "danmaku_vr_std": 288.2257,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 5.8846, 88.5898, 4342.6456,
+          521627.2727
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 6387729,
+        "coin_vr_avg": 0.8489,
+        "coin_vr_std": 2.0657,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.3511, 1.2779, 2.4197, 3.9426, 8.7183, 17.897,
+          34.4328, 890.3614
+        ],
+        "danmaku_vr_avg": 0.2825,
+        "danmaku_vr_std": 22.571,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.122, 0.4809, 0.8905, 3.0859, 16.8849, 187.0803,
+          51657.5221
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 3356014,
+        "coin_vr_avg": 0.5562,
+        "coin_vr_std": 1.4139,
+        "coin_vr_median": 0.1946,
+        "coin_vr_percentile": [
+          0.0106, 0.125, 0.1946, 0.3087, 0.7758, 1.4385, 2.2757, 4.8605,
+          10.9258, 31.8986, 348.3871
+        ],
+        "danmaku_vr_avg": 0.2441,
+        "danmaku_vr_std": 10.3516,
+        "danmaku_vr_median": 0.0624,
+        "danmaku_vr_percentile": [
+          0.0, 0.0319, 0.0624, 0.0962, 0.2773, 0.5623, 0.9739, 2.5382, 7.528,
+          29.9623, 18732.5926
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 1236772,
+        "coin_vr_avg": 0.562,
+        "coin_vr_std": 1.1435,
+        "coin_vr_median": 0.1659,
+        "coin_vr_percentile": [
+          0.0263, 0.0958, 0.1659, 0.2795, 0.8009, 1.5315, 2.4173, 5.0462,
+          10.7193, 26.6062, 76.2752
+        ],
+        "danmaku_vr_avg": 0.3137,
+        "danmaku_vr_std": 1.0858,
+        "danmaku_vr_median": 0.1144,
+        "danmaku_vr_percentile": [
+          0.0231, 0.0735, 0.1144, 0.1743, 0.4263, 0.7739, 1.2237, 2.8179,
+          7.3241, 16.5136, 925.5499
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999973,
+        "count": 267710,
+        "coin_vr_avg": 0.6759,
+        "coin_vr_std": 1.2804,
+        "coin_vr_median": 0.1816,
+        "coin_vr_percentile": [
+          0.0214, 0.0936, 0.1816, 0.3267, 0.9992, 1.9078, 2.9951, 6.0438,
+          12.5293, 19.9378, 36.802
+        ],
+        "danmaku_vr_avg": 0.2916,
+        "danmaku_vr_std": 0.6075,
+        "danmaku_vr_median": 0.1163,
+        "danmaku_vr_percentile": [
+          0.0288, 0.0791, 0.1163, 0.1679, 0.388, 0.6957, 1.1202, 2.6288, 6.712,
+          14.5102, 67.0825
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000003,
+        "max_view": 9993980,
+        "count": 27641,
+        "coin_vr_avg": 0.9223,
+        "coin_vr_std": 1.6003,
+        "coin_vr_median": 0.2781,
+        "coin_vr_percentile": [
+          0.0266, 0.1406, 0.2781, 0.4952, 1.4518, 2.6408, 3.9564, 7.5224,
+          13.9539, 20.5104, 36.5007
+        ],
+        "danmaku_vr_avg": 0.2867,
+        "danmaku_vr_std": 0.5683,
+        "danmaku_vr_median": 0.1087,
+        "danmaku_vr_percentile": [
+          0.0214, 0.0704, 0.1087, 0.1624, 0.4116, 0.7334, 1.109, 2.3529, 6.7549,
+          13.41, 16.7884
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10005854,
+        "max_view": 186562936,
+        "count": 625,
+        "coin_vr_avg": 1.3659,
+        "coin_vr_std": 2.1938,
+        "coin_vr_median": 0.5863,
+        "coin_vr_percentile": [
+          0.1267, 0.3852, 0.5863, 0.8243, 2.0333, 3.3033, 5.1217, 10.5966,
+          20.7318, 20.7318, 20.7318
+        ],
+        "danmaku_vr_avg": 0.5462,
+        "danmaku_vr_std": 0.8127,
+        "danmaku_vr_median": 0.2483,
+        "danmaku_vr_percentile": [
+          0.0513, 0.1563, 0.2483, 0.3725, 0.7864, 1.4234, 2.3182, 3.6423,
+          7.5833, 7.5833, 7.5833
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2021-01-01": {
+    "date_range": ["2021-01-01", "2021-04-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 8833538,
+        "coin_vr_avg": 1.4392,
+        "coin_vr_std": 5.7749,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 4.1667, 9.6111, 25.0, 59.3093, 133.7091,
+          1600.0
+        ],
+        "danmaku_vr_avg": 2.0903,
+        "danmaku_vr_std": 173.6049,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 5.3929, 200.5483, 3929.2681,
+          201100.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 4403289,
+        "coin_vr_avg": 0.7968,
+        "coin_vr_std": 2.2462,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.2575, 1.2018, 2.2959, 3.8124, 8.439, 17.2013,
+          33.6853, 1934.0528
+        ],
+        "danmaku_vr_avg": 0.2442,
+        "danmaku_vr_std": 6.6676,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.3877, 0.7689, 2.5821, 17.7442, 214.4576,
+          2909.901
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 2075086,
+        "coin_vr_avg": 0.5315,
+        "coin_vr_std": 1.385,
+        "coin_vr_median": 0.1814,
+        "coin_vr_percentile": [
+          0.0, 0.1112, 0.1814, 0.2891, 0.741, 1.3759, 2.186, 4.7449, 11.0149,
+          27.9066, 338.5702
+        ],
+        "danmaku_vr_avg": 0.1981,
+        "danmaku_vr_std": 1.0005,
+        "danmaku_vr_median": 0.0488,
+        "danmaku_vr_percentile": [
+          0.0, 0.0193, 0.0488, 0.0799, 0.2225, 0.4555, 0.8013, 2.2186, 7.9352,
+          30.3092, 641.0384
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99998,
+        "count": 793197,
+        "coin_vr_avg": 0.5193,
+        "coin_vr_std": 1.0504,
+        "coin_vr_median": 0.1495,
+        "coin_vr_percentile": [
+          0.0226, 0.086, 0.1495, 0.2534, 0.7352, 1.4054, 2.2384, 4.8065,
+          10.2982, 18.9087, 81.9806
+        ],
+        "danmaku_vr_avg": 0.2689,
+        "danmaku_vr_std": 0.6724,
+        "danmaku_vr_median": 0.0878,
+        "danmaku_vr_percentile": [
+          0.0178, 0.0563, 0.0878, 0.1342, 0.3381, 0.6417, 1.0534, 2.6952,
+          7.9948, 18.7228, 51.0865
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999985,
+        "count": 190012,
+        "coin_vr_avg": 0.578,
+        "coin_vr_std": 1.1238,
+        "coin_vr_median": 0.1407,
+        "coin_vr_percentile": [
+          0.0178, 0.0738, 0.1407, 0.2575, 0.8319, 1.6463, 2.6185, 5.3864,
+          10.5956, 17.079, 25.7581
+        ],
+        "danmaku_vr_avg": 0.2381,
+        "danmaku_vr_std": 0.538,
+        "danmaku_vr_median": 0.0832,
+        "danmaku_vr_percentile": [
+          0.0201, 0.0555, 0.0832, 0.1234, 0.3024, 0.5708, 0.9368, 2.3666,
+          6.0454, 12.64, 30.6255
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000009,
+        "max_view": 9997578,
+        "count": 20766,
+        "coin_vr_avg": 0.7437,
+        "coin_vr_std": 1.377,
+        "coin_vr_median": 0.1919,
+        "coin_vr_percentile": [
+          0.0225, 0.1007, 0.1919, 0.3412, 1.1477, 2.1821, 3.298, 6.5129,
+          12.6042, 21.9682, 22.901
+        ],
+        "danmaku_vr_avg": 0.2208,
+        "danmaku_vr_std": 0.499,
+        "danmaku_vr_median": 0.072,
+        "danmaku_vr_percentile": [
+          0.0161, 0.0456, 0.072, 0.1122, 0.2993, 0.5687, 0.8902, 1.9556, 5.7178,
+          12.8069, 21.097
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10006110,
+        "max_view": 119461768,
+        "count": 340,
+        "coin_vr_avg": 1.5572,
+        "coin_vr_std": 2.6434,
+        "coin_vr_median": 0.5632,
+        "coin_vr_percentile": [
+          0.0592, 0.4215, 0.5632, 0.7471, 2.1355, 4.5094, 6.9438, 14.4233,
+          15.7132, 15.7132, 15.7132
+        ],
+        "danmaku_vr_avg": 0.3826,
+        "danmaku_vr_std": 0.5984,
+        "danmaku_vr_median": 0.1687,
+        "danmaku_vr_percentile": [
+          0.0295, 0.1186, 0.1687, 0.2735, 0.6117, 0.9432, 1.2124, 2.2915,
+          5.8786, 5.8786, 5.8786
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2021-04-01": {
+    "date_range": ["2021-04-01", "2021-07-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 9073558,
+        "coin_vr_avg": 1.2648,
+        "coin_vr_std": 5.6756,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 3.442, 8.0991, 22.2222, 57.0164, 141.1733,
+          2050.0
+        ],
+        "danmaku_vr_avg": 6.5773,
+        "danmaku_vr_std": 355.0259,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 4.6757, 1011.9477, 13076.1244,
+          154100.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 4944061,
+        "coin_vr_avg": 0.7368,
+        "coin_vr_std": 2.3421,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.1924, 1.1283, 2.1003, 3.5671, 7.7708, 16.0087,
+          32.7739, 1580.6338
+        ],
+        "danmaku_vr_avg": 0.6845,
+        "danmaku_vr_std": 22.6781,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.3624, 0.7388, 2.6428, 118.7732, 1029.7521,
+          6995.2381
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 2211684,
+        "coin_vr_avg": 0.4857,
+        "coin_vr_std": 1.1862,
+        "coin_vr_median": 0.1641,
+        "coin_vr_percentile": [
+          0.0, 0.0968, 0.1641, 0.2602, 0.676, 1.2659, 2.0178, 4.4118, 10.5605,
+          25.3385, 339.8401
+        ],
+        "danmaku_vr_avg": 0.2886,
+        "danmaku_vr_std": 6.1564,
+        "danmaku_vr_median": 0.0437,
+        "danmaku_vr_percentile": [
+          0.0, 0.0115, 0.0437, 0.0744, 0.2056, 0.4303, 0.7947, 2.7289, 10.1096,
+          278.5033, 1361.6554
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 823172,
+        "coin_vr_avg": 0.4836,
+        "coin_vr_std": 0.9773,
+        "coin_vr_median": 0.1411,
+        "coin_vr_percentile": [
+          0.0227, 0.0818, 0.1411, 0.2365, 0.6744, 1.2926, 2.0728, 4.5201,
+          10.3292, 17.0669, 71.47
+        ],
+        "danmaku_vr_avg": 0.2662,
+        "danmaku_vr_std": 1.3406,
+        "danmaku_vr_median": 0.0892,
+        "danmaku_vr_percentile": [
+          0.0184, 0.0576, 0.0892, 0.1361, 0.3427, 0.6433, 1.0319, 2.4139,
+          6.5488, 22.8932, 531.5663
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999993,
+        "count": 208559,
+        "coin_vr_avg": 0.5175,
+        "coin_vr_std": 1.0539,
+        "coin_vr_median": 0.1188,
+        "coin_vr_percentile": [
+          0.0178, 0.0642, 0.1188, 0.2189, 0.7253, 1.4595, 2.3652, 4.9997,
+          9.8219, 18.7959, 50.9237
+        ],
+        "danmaku_vr_avg": 0.2059,
+        "danmaku_vr_std": 0.5094,
+        "danmaku_vr_median": 0.0798,
+        "danmaku_vr_percentile": [
+          0.0197, 0.0535, 0.0798, 0.1163, 0.2683, 0.4888, 0.7776, 1.8843,
+          5.3273, 10.7408, 76.2832
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000004,
+        "max_view": 9995605,
+        "count": 23842,
+        "coin_vr_avg": 0.6742,
+        "coin_vr_std": 1.3001,
+        "coin_vr_median": 0.1399,
+        "coin_vr_percentile": [
+          0.0198, 0.0733, 0.1399, 0.2752, 0.9947, 1.9949, 3.1733, 6.1069,
+          11.5713, 20.2976, 24.5581
+        ],
+        "danmaku_vr_avg": 0.1779,
+        "danmaku_vr_std": 0.4321,
+        "danmaku_vr_median": 0.0602,
+        "danmaku_vr_percentile": [
+          0.0142, 0.0395, 0.0602, 0.0893, 0.237, 0.4488, 0.7096, 1.6278, 4.0638,
+          11.5766, 29.7906
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10013593,
+        "max_view": 90351208,
+        "count": 321,
+        "coin_vr_avg": 1.1442,
+        "coin_vr_std": 2.0318,
+        "coin_vr_median": 0.4808,
+        "coin_vr_percentile": [
+          0.0509, 0.343, 0.4808, 0.717, 1.5812, 2.6897, 4.8045, 9.6521, 16.5301,
+          16.5301, 16.5301
+        ],
+        "danmaku_vr_avg": 0.2931,
+        "danmaku_vr_std": 0.4575,
+        "danmaku_vr_median": 0.141,
+        "danmaku_vr_percentile": [
+          0.0226, 0.0819, 0.141, 0.218, 0.4275, 0.7041, 1.2059, 1.8628, 4.7383,
+          4.7383, 4.7383
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2021-07-01": {
+    "date_range": ["2021-07-01", "2021-10-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 10462014,
+        "coin_vr_avg": 1.1626,
+        "coin_vr_std": 4.7381,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 3.7774, 7.1567, 18.1818, 49.9969, 101.0486,
+          3000.0
+        ],
+        "danmaku_vr_avg": 13.7797,
+        "danmaku_vr_std": 760.2013,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 6.2531, 3589.1572, 17667.5852,
+          1991833.3333
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 6471839,
+        "coin_vr_avg": 0.771,
+        "coin_vr_std": 1.6983,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.2514, 1.2501, 2.2541, 3.6764, 7.7152, 15.217,
+          30.1274, 225.0
+        ],
+        "danmaku_vr_avg": 2.4035,
+        "danmaku_vr_std": 54.1765,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.4738, 0.8826, 3.9587, 756.3305, 2265.4785,
+          11082.0
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 2804629,
+        "coin_vr_avg": 0.4928,
+        "coin_vr_std": 1.0843,
+        "coin_vr_median": 0.1737,
+        "coin_vr_percentile": [
+          0.0, 0.1034, 0.1737, 0.2765, 0.7031, 1.2854, 2.0093, 4.3045, 10.2112,
+          29.1759, 166.4376
+        ],
+        "danmaku_vr_avg": 0.8669,
+        "danmaku_vr_std": 20.1361,
+        "danmaku_vr_median": 0.0539,
+        "danmaku_vr_percentile": [
+          0.0, 0.0231, 0.0539, 0.0865, 0.2452, 0.5123, 0.9874, 3.8059, 219.0993,
+          928.6647, 3904.3147
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 1044095,
+        "coin_vr_avg": 0.4761,
+        "coin_vr_std": 0.9455,
+        "coin_vr_median": 0.1465,
+        "coin_vr_percentile": [
+          0.0236, 0.0857, 0.1465, 0.2421, 0.6703, 1.2719, 2.021, 4.3413, 9.8167,
+          17.7086, 65.6827
+        ],
+        "danmaku_vr_avg": 0.3644,
+        "danmaku_vr_std": 4.9128,
+        "danmaku_vr_median": 0.1005,
+        "danmaku_vr_percentile": [
+          0.0205, 0.0649, 0.1005, 0.1531, 0.386, 0.7215, 1.1409, 2.6902, 9.2608,
+          241.816, 927.628
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999925,
+        "count": 242808,
+        "coin_vr_avg": 0.5439,
+        "coin_vr_std": 1.0604,
+        "coin_vr_median": 0.1366,
+        "coin_vr_percentile": [
+          0.0197, 0.0732, 0.1366, 0.2473, 0.7789, 1.5279, 2.4398, 5.1129,
+          10.2402, 15.6959, 31.3886
+        ],
+        "danmaku_vr_avg": 0.2384,
+        "danmaku_vr_std": 0.6616,
+        "danmaku_vr_median": 0.0916,
+        "danmaku_vr_percentile": [
+          0.0221, 0.0612, 0.0916, 0.1342, 0.3045, 0.5457, 0.8737, 2.2655,
+          6.4024, 17.0545, 101.9097
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000000,
+        "max_view": 9986911,
+        "count": 27637,
+        "coin_vr_avg": 0.7131,
+        "coin_vr_std": 1.3842,
+        "coin_vr_median": 0.1458,
+        "coin_vr_percentile": [
+          0.0203, 0.071, 0.1458, 0.2922, 1.0583, 2.0702, 3.2623, 6.7142,
+          12.2689, 19.5556, 27.1501
+        ],
+        "danmaku_vr_avg": 0.2068,
+        "danmaku_vr_std": 0.4725,
+        "danmaku_vr_median": 0.0659,
+        "danmaku_vr_percentile": [
+          0.0125, 0.0408, 0.0659, 0.1026, 0.2674, 0.5278, 0.8531, 1.9574,
+          5.6285, 12.3458, 20.6006
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10001639,
+        "max_view": 64875809,
+        "count": 371,
+        "coin_vr_avg": 1.1222,
+        "coin_vr_std": 2.1902,
+        "coin_vr_median": 0.3114,
+        "coin_vr_percentile": [
+          0.0282, 0.1679, 0.3114, 0.5011, 1.8089, 2.8786, 4.7265, 9.0517,
+          23.3093, 23.3093, 23.3093
+        ],
+        "danmaku_vr_avg": 0.3392,
+        "danmaku_vr_std": 0.703,
+        "danmaku_vr_median": 0.103,
+        "danmaku_vr_percentile": [
+          0.0102, 0.0554, 0.103, 0.1765, 0.5445, 0.8052, 1.0973, 3.2025, 8.4134,
+          8.4134, 8.4134
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2021-10-01": {
+    "date_range": ["2021-10-01", "2022-01-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 12454380,
+        "coin_vr_avg": 1.1532,
+        "coin_vr_std": 5.6668,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 2.8345, 6.8984, 22.2222, 65.8839, 140.3137,
+          2800.0
+        ],
+        "danmaku_vr_avg": 14.1744,
+        "danmaku_vr_std": 464.9306,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 6.1024, 3578.8817, 19261.5311,
+          159500.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 6935557,
+        "coin_vr_avg": 0.6829,
+        "coin_vr_std": 1.5715,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 1.0716, 1.9721, 3.3593, 7.3003, 15.0515, 28.6907,
+          235.0877
+        ],
+        "danmaku_vr_avg": 2.1614,
+        "danmaku_vr_std": 80.0998,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.3862, 0.7829, 3.2103, 685.7249, 2238.4779,
+          147997.0339
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 3027448,
+        "coin_vr_avg": 0.4424,
+        "coin_vr_std": 1.0883,
+        "coin_vr_median": 0.1458,
+        "coin_vr_percentile": [
+          0.0, 0.0829, 0.1458, 0.231, 0.6135, 1.1484, 1.8333, 4.0507, 10.2725,
+          28.7381, 177.1964
+        ],
+        "danmaku_vr_avg": 0.7388,
+        "danmaku_vr_std": 18.0311,
+        "danmaku_vr_median": 0.0398,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0398, 0.0701, 0.1964, 0.4268, 0.8582, 3.2435, 181.612,
+          827.8327, 3967.0222
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99998,
+        "count": 1120010,
+        "coin_vr_avg": 0.4393,
+        "coin_vr_std": 0.9682,
+        "coin_vr_median": 0.1221,
+        "coin_vr_percentile": [
+          0.0189, 0.0702, 0.1221, 0.2068, 0.5939, 1.1638, 1.8928, 4.2338,
+          10.212, 22.5059, 78.3739
+        ],
+        "danmaku_vr_avg": 0.3624,
+        "danmaku_vr_std": 7.5452,
+        "danmaku_vr_median": 0.0777,
+        "danmaku_vr_percentile": [
+          0.0153, 0.0493, 0.0777, 0.1201, 0.3182, 0.6197, 0.9973, 2.3242,
+          8.9047, 306.758, 2067.9764
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999983,
+        "count": 253749,
+        "coin_vr_avg": 0.4752,
+        "coin_vr_std": 1.0056,
+        "coin_vr_median": 0.1006,
+        "coin_vr_percentile": [
+          0.0151, 0.0537, 0.1006, 0.1873, 0.6442, 1.3275, 2.2076, 4.7846,
+          9.8124, 17.0851, 33.3357
+        ],
+        "danmaku_vr_avg": 0.1856,
+        "danmaku_vr_std": 0.4842,
+        "danmaku_vr_median": 0.0675,
+        "danmaku_vr_percentile": [
+          0.0153, 0.0444, 0.0675, 0.1005, 0.237, 0.4349, 0.7066, 1.7692, 4.9718,
+          14.7413, 86.5846
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000005,
+        "max_view": 9999387,
+        "count": 30588,
+        "coin_vr_avg": 0.5434,
+        "coin_vr_std": 1.1974,
+        "coin_vr_median": 0.0797,
+        "coin_vr_percentile": [
+          0.0136, 0.0421, 0.0797, 0.1598, 0.7211, 1.6049, 2.7078, 5.7972,
+          11.1923, 19.9457, 29.1637
+        ],
+        "danmaku_vr_avg": 0.1443,
+        "danmaku_vr_std": 0.4188,
+        "danmaku_vr_median": 0.0371,
+        "danmaku_vr_percentile": [
+          0.0059, 0.0224, 0.0371, 0.0606, 0.1673, 0.354, 0.6057, 1.4958, 5.0969,
+          10.5676, 20.9026
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10001230,
+        "max_view": 110588399,
+        "count": 406,
+        "coin_vr_avg": 0.8763,
+        "coin_vr_std": 1.6638,
+        "coin_vr_median": 0.32,
+        "coin_vr_percentile": [
+          0.0249, 0.1445, 0.32, 0.5046, 1.2097, 2.3143, 3.7601, 7.2327, 16.8951,
+          16.8951, 16.8951
+        ],
+        "danmaku_vr_avg": 0.268,
+        "danmaku_vr_std": 0.7228,
+        "danmaku_vr_median": 0.0716,
+        "danmaku_vr_percentile": [
+          0.0074, 0.0408, 0.0716, 0.122, 0.4034, 0.6267, 0.8632, 2.1062,
+          10.1416, 10.1416, 10.1416
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2022-01-01": {
+    "date_range": ["2022-01-01", "2022-04-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 14837920,
+        "coin_vr_avg": 1.4514,
+        "coin_vr_std": 6.1944,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 4.0816, 8.7673, 25.0, 66.6667, 200.0,
+          4449.2958
+        ],
+        "danmaku_vr_avg": 18.7953,
+        "danmaku_vr_std": 579.1057,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 7.1445, 4966.2027, 23929.5185,
+          235500.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 6906539,
+        "coin_vr_avg": 0.799,
+        "coin_vr_std": 1.691,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.3186, 1.2985, 2.3132, 3.7382, 7.8519, 15.5919,
+          27.4614, 394.8819
+        ],
+        "danmaku_vr_avg": 2.3151,
+        "danmaku_vr_std": 62.2612,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.4226, 0.833, 3.748, 726.4857, 2400.5763,
+          26642.3077
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 3024784,
+        "coin_vr_avg": 0.4773,
+        "coin_vr_std": 0.9828,
+        "coin_vr_median": 0.1803,
+        "coin_vr_percentile": [
+          0.0, 0.1154, 0.1803, 0.2782, 0.6707, 1.2107, 1.9019, 4.1656, 10.5861,
+          25.2818, 102.3236
+        ],
+        "danmaku_vr_avg": 0.9647,
+        "danmaku_vr_std": 23.1216,
+        "danmaku_vr_median": 0.0438,
+        "danmaku_vr_percentile": [
+          0.0, 0.0135, 0.0438, 0.0733, 0.1975, 0.4295, 0.9025, 3.3775, 259.3029,
+          1008.7759, 4906.4824
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 1199852,
+        "coin_vr_avg": 0.444,
+        "coin_vr_std": 0.9415,
+        "coin_vr_median": 0.1381,
+        "coin_vr_percentile": [
+          0.0278, 0.0853, 0.1381, 0.2209, 0.5978, 1.1426, 1.8614, 4.2003,
+          10.0492, 21.9895, 53.145
+        ],
+        "danmaku_vr_avg": 0.3697,
+        "danmaku_vr_std": 7.8384,
+        "danmaku_vr_median": 0.0797,
+        "danmaku_vr_percentile": [
+          0.0181, 0.0526, 0.0797, 0.1198, 0.3026, 0.576, 0.9128, 2.139, 10.5643,
+          327.8548, 1973.4878
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999999,
+        "count": 285802,
+        "coin_vr_avg": 0.4546,
+        "coin_vr_std": 0.9816,
+        "coin_vr_median": 0.1041,
+        "coin_vr_percentile": [
+          0.0186, 0.0598, 0.1041, 0.183, 0.6005, 1.2464, 2.0893, 4.5981, 9.821,
+          19.5602, 35.6625
+        ],
+        "danmaku_vr_avg": 0.172,
+        "danmaku_vr_std": 0.6094,
+        "danmaku_vr_median": 0.0683,
+        "danmaku_vr_percentile": [
+          0.0174, 0.0464, 0.0683, 0.0984, 0.2188, 0.3941, 0.6342, 1.5622,
+          4.3416, 13.9879, 168.1471
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000008,
+        "max_view": 9994025,
+        "count": 34804,
+        "coin_vr_avg": 0.4964,
+        "coin_vr_std": 1.1315,
+        "coin_vr_median": 0.0841,
+        "coin_vr_percentile": [
+          0.0155, 0.0465, 0.0841, 0.1495, 0.6016, 1.4153, 2.4954, 5.4859,
+          11.5564, 19.1901, 23.0251
+        ],
+        "danmaku_vr_avg": 0.1386,
+        "danmaku_vr_std": 0.3686,
+        "danmaku_vr_median": 0.0415,
+        "danmaku_vr_percentile": [
+          0.0088, 0.0264, 0.0415, 0.0635, 0.165, 0.3312, 0.5591, 1.4161, 4.6925,
+          9.5778, 17.3445
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10001707,
+        "max_view": 84314766,
+        "count": 354,
+        "coin_vr_avg": 0.9563,
+        "coin_vr_std": 1.8559,
+        "coin_vr_median": 0.2918,
+        "coin_vr_percentile": [
+          0.0407, 0.1994, 0.2918, 0.4405, 1.3114, 2.1742, 4.3081, 9.9582,
+          14.9161, 14.9161, 14.9161
+        ],
+        "danmaku_vr_avg": 0.2677,
+        "danmaku_vr_std": 0.4509,
+        "danmaku_vr_median": 0.0811,
+        "danmaku_vr_percentile": [
+          0.0136, 0.0513, 0.0811, 0.1372, 0.4254, 0.7047, 1.149, 2.4961, 2.9708,
+          2.9708, 2.9708
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2022-04-01": {
+    "date_range": ["2022-04-01", "2022-07-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 16307742,
+        "coin_vr_avg": 1.3557,
+        "coin_vr_std": 5.907,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 3.9224, 8.3333, 22.7255, 66.6667, 200.0,
+          2014.2857
+        ],
+        "danmaku_vr_avg": 21.7449,
+        "danmaku_vr_std": 722.6459,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 6.9575, 5627.2862, 29762.6232,
+          362600.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 8309392,
+        "coin_vr_avg": 0.7585,
+        "coin_vr_std": 1.6888,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.2664, 1.2073, 2.1655, 3.5996, 7.7166, 15.5451, 29.58,
+          569.5652
+        ],
+        "danmaku_vr_avg": 2.4107,
+        "danmaku_vr_std": 72.9994,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.3827, 0.788, 3.5804, 771.0517, 2756.9367,
+          35936.4407
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 3815999,
+        "coin_vr_avg": 0.4658,
+        "coin_vr_std": 1.0063,
+        "coin_vr_median": 0.1759,
+        "coin_vr_percentile": [
+          0.0, 0.1117, 0.1759, 0.2709, 0.6529, 1.1773, 1.8516, 4.0638, 10.1864,
+          26.9458, 130.2276
+        ],
+        "danmaku_vr_avg": 1.0198,
+        "danmaku_vr_std": 27.6185,
+        "danmaku_vr_median": 0.0434,
+        "danmaku_vr_percentile": [
+          0.0, 0.0139, 0.0434, 0.0727, 0.1972, 0.4398, 0.9734, 3.4675, 259.7156,
+          1209.381, 5508.2524
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 1523628,
+        "coin_vr_avg": 0.4094,
+        "coin_vr_std": 0.894,
+        "coin_vr_median": 0.1264,
+        "coin_vr_percentile": [
+          0.0255, 0.078, 0.1264, 0.2015, 0.5444, 1.0476, 1.709, 3.9263, 9.5774,
+          21.5675, 57.309
+        ],
+        "danmaku_vr_avg": 0.3123,
+        "danmaku_vr_std": 5.6133,
+        "danmaku_vr_median": 0.0742,
+        "danmaku_vr_percentile": [
+          0.0165, 0.0486, 0.0742, 0.1123, 0.2893, 0.5615, 0.9005, 2.1181,
+          7.6334, 261.5069, 2068.8715
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999998,
+        "count": 346054,
+        "coin_vr_avg": 0.4079,
+        "coin_vr_std": 0.8968,
+        "coin_vr_median": 0.0979,
+        "coin_vr_percentile": [
+          0.0185, 0.0569, 0.0979, 0.1674, 0.5253, 1.0913, 1.854, 4.2432, 9.1291,
+          17.1651, 40.4295
+        ],
+        "danmaku_vr_avg": 0.1607,
+        "danmaku_vr_std": 0.4044,
+        "danmaku_vr_median": 0.0623,
+        "danmaku_vr_percentile": [
+          0.015, 0.0417, 0.0623, 0.0911, 0.2048, 0.3688, 0.5925, 1.5223, 4.3473,
+          12.3768, 67.3883
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000003,
+        "max_view": 9996380,
+        "count": 37434,
+        "coin_vr_avg": 0.4793,
+        "coin_vr_std": 1.0864,
+        "coin_vr_median": 0.0885,
+        "coin_vr_percentile": [
+          0.0152, 0.0487, 0.0885, 0.1602, 0.5883, 1.3355, 2.2809, 5.3885,
+          10.6695, 17.3028, 22.5687
+        ],
+        "danmaku_vr_avg": 0.132,
+        "danmaku_vr_std": 0.3747,
+        "danmaku_vr_median": 0.0393,
+        "danmaku_vr_percentile": [
+          0.0081, 0.0247, 0.0393, 0.0605, 0.1578, 0.3136, 0.5325, 1.3497,
+          4.2904, 11.0245, 29.7169
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10002303,
+        "max_view": 147127488,
+        "count": 344,
+        "coin_vr_avg": 0.9254,
+        "coin_vr_std": 1.6864,
+        "coin_vr_median": 0.3317,
+        "coin_vr_percentile": [
+          0.035, 0.1653, 0.3317, 0.5377, 1.5024, 2.0923, 3.8621, 8.2315,
+          14.9249, 14.9249, 14.9249
+        ],
+        "danmaku_vr_avg": 0.2356,
+        "danmaku_vr_std": 0.3967,
+        "danmaku_vr_median": 0.0907,
+        "danmaku_vr_percentile": [
+          0.01, 0.05, 0.0907, 0.1551, 0.3966, 0.623, 0.8017, 1.7279, 4.0991,
+          4.0991, 4.0991
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2022-07-01": {
+    "date_range": ["2022-07-01", "2022-10-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 18534827,
+        "coin_vr_avg": 1.17,
+        "coin_vr_std": 5.292,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 3.2365, 7.1728, 20.0, 59.6106, 199.9289,
+          3600.0
+        ],
+        "danmaku_vr_avg": 15.3122,
+        "danmaku_vr_std": 548.4782,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 5.1963, 4004.8251, 22257.5428,
+          299700.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 9822900,
+        "coin_vr_avg": 0.7111,
+        "coin_vr_std": 1.584,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.2075, 1.1487, 2.0096, 3.4224, 7.311, 14.6258,
+          27.4334, 296.7391
+        ],
+        "danmaku_vr_avg": 2.0116,
+        "danmaku_vr_std": 64.0547,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.3594, 0.7606, 3.3725, 616.6844, 2731.1767,
+          28636.2069
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 4143304,
+        "coin_vr_avg": 0.4459,
+        "coin_vr_std": 1.0075,
+        "coin_vr_median": 0.1661,
+        "coin_vr_percentile": [
+          0.0, 0.1035, 0.1661, 0.2526, 0.6102, 1.1086, 1.7664, 4.0597, 10.6,
+          25.8169, 142.6326
+        ],
+        "danmaku_vr_avg": 0.9915,
+        "danmaku_vr_std": 28.7515,
+        "danmaku_vr_median": 0.0393,
+        "danmaku_vr_percentile": [
+          0.0, 0.0052, 0.0393, 0.0677, 0.1855, 0.4213, 0.9904, 3.5463, 237.3821,
+          1248.311, 9558.2007
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 1814688,
+        "coin_vr_avg": 0.3723,
+        "coin_vr_std": 0.983,
+        "coin_vr_median": 0.109,
+        "coin_vr_percentile": [
+          0.0232, 0.0678, 0.109, 0.174, 0.4728, 0.9185, 1.5274, 3.7313, 10.1094,
+          28.4106, 169.2098
+        ],
+        "danmaku_vr_avg": 0.3174,
+        "danmaku_vr_std": 6.5372,
+        "danmaku_vr_median": 0.0637,
+        "danmaku_vr_percentile": [
+          0.0132, 0.0409, 0.0637, 0.0976, 0.2621, 0.5267, 0.8597, 2.0451,
+          7.6341, 319.1226, 2124.0231
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999958,
+        "count": 433921,
+        "coin_vr_avg": 0.3542,
+        "coin_vr_std": 0.8408,
+        "coin_vr_median": 0.0809,
+        "coin_vr_percentile": [
+          0.0174, 0.0471, 0.0809, 0.1391, 0.4353, 0.9174, 1.581, 3.8726, 9.0329,
+          18.3679, 43.6927
+        ],
+        "danmaku_vr_avg": 0.147,
+        "danmaku_vr_std": 0.6557,
+        "danmaku_vr_median": 0.052,
+        "danmaku_vr_percentile": [
+          0.012, 0.0343, 0.052, 0.0773, 0.181, 0.3302, 0.5397, 1.4172, 4.2443,
+          14.2766, 139.1845
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000001,
+        "max_view": 9973440,
+        "count": 41053,
+        "coin_vr_avg": 0.4673,
+        "coin_vr_std": 1.0887,
+        "coin_vr_median": 0.0875,
+        "coin_vr_percentile": [
+          0.017, 0.0494, 0.0875, 0.1573, 0.5693, 1.2765, 2.2435, 5.188, 11.3287,
+          22.5236, 26.02
+        ],
+        "danmaku_vr_avg": 0.1312,
+        "danmaku_vr_std": 0.4238,
+        "danmaku_vr_median": 0.0365,
+        "danmaku_vr_percentile": [
+          0.0068, 0.0229, 0.0365, 0.0578, 0.1535, 0.3016, 0.5057, 1.3181,
+          5.7462, 15.1342, 23.0831
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10041286,
+        "max_view": 56311871,
+        "count": 323,
+        "coin_vr_avg": 0.9,
+        "coin_vr_std": 1.5932,
+        "coin_vr_median": 0.2738,
+        "coin_vr_percentile": [
+          0.0295, 0.1375, 0.2738, 0.4951, 1.3312, 2.3232, 3.7576, 7.5173,
+          13.7068, 13.7068, 13.7068
+        ],
+        "danmaku_vr_avg": 0.236,
+        "danmaku_vr_std": 0.9142,
+        "danmaku_vr_median": 0.0542,
+        "danmaku_vr_percentile": [
+          0.0095, 0.0351, 0.0542, 0.0994, 0.3065, 0.465, 0.6395, 2.1012,
+          14.8537, 14.8537, 14.8537
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2022-10-01": {
+    "date_range": ["2022-10-01", "2023-01-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 10838501,
+        "coin_vr_avg": 1.1158,
+        "coin_vr_std": 6.6227,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 2.3981, 6.25, 20.0, 100.0, 200.0, 2800.0
+        ],
+        "danmaku_vr_avg": 3.1892,
+        "danmaku_vr_std": 269.3906,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 3.3278, 46.3558, 7395.8214,
+          179600.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 5753754,
+        "coin_vr_avg": 0.6955,
+        "coin_vr_std": 1.5593,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.1822, 1.0996, 1.9894, 3.3869, 7.2856, 14.5952,
+          27.1999, 295.7627
+        ],
+        "danmaku_vr_avg": 0.5969,
+        "danmaku_vr_std": 39.3369,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.3335, 0.7386, 3.2825, 17.4598, 1093.3047,
+          20958.1818
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 3018212,
+        "coin_vr_avg": 0.447,
+        "coin_vr_std": 1.0468,
+        "coin_vr_median": 0.1646,
+        "coin_vr_percentile": [
+          0.0, 0.101, 0.1646, 0.2526, 0.6186, 1.1214, 1.769, 4.0212, 10.5174,
+          28.338, 162.4539
+        ],
+        "danmaku_vr_avg": 0.5482,
+        "danmaku_vr_std": 29.4502,
+        "danmaku_vr_median": 0.035,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.035, 0.0633, 0.1813, 0.4407, 1.122, 3.5502, 11.08,
+          722.5133, 18244.2202
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 1517046,
+        "coin_vr_avg": 0.3659,
+        "coin_vr_std": 0.9869,
+        "coin_vr_median": 0.1024,
+        "coin_vr_percentile": [
+          0.0215, 0.0633, 0.1024, 0.1654, 0.4606, 0.9066, 1.5049, 3.6644,
+          10.7854, 32.9909, 152.716
+        ],
+        "danmaku_vr_avg": 0.292,
+        "danmaku_vr_std": 5.5508,
+        "danmaku_vr_median": 0.0596,
+        "danmaku_vr_percentile": [
+          0.0118, 0.038, 0.0596, 0.0929, 0.2608, 0.5295, 0.861, 1.9704, 6.5577,
+          280.1932, 1484.1881
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999994,
+        "count": 491279,
+        "coin_vr_avg": 0.3003,
+        "coin_vr_std": 0.784,
+        "coin_vr_median": 0.0601,
+        "coin_vr_percentile": [
+          0.0149, 0.0366, 0.0601, 0.103, 0.3449, 0.7662, 1.3676, 3.4379, 8.7076,
+          20.662, 43.9011
+        ],
+        "danmaku_vr_avg": 0.1196,
+        "danmaku_vr_std": 0.4377,
+        "danmaku_vr_median": 0.0405,
+        "danmaku_vr_percentile": [
+          0.009, 0.0263, 0.0405, 0.0616, 0.1486, 0.2739, 0.4485, 1.1849, 3.4323,
+          10.1789, 86.8697
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000000,
+        "max_view": 9995709,
+        "count": 40391,
+        "coin_vr_avg": 0.4146,
+        "coin_vr_std": 1.0185,
+        "coin_vr_median": 0.0692,
+        "coin_vr_percentile": [
+          0.0143, 0.0407, 0.0692, 0.125, 0.474, 1.1387, 2.0356, 4.7967, 10.8537,
+          19.254, 28.1064
+        ],
+        "danmaku_vr_avg": 0.0981,
+        "danmaku_vr_std": 0.2728,
+        "danmaku_vr_median": 0.0262,
+        "danmaku_vr_percentile": [
+          0.0042, 0.0161, 0.0262, 0.0422, 0.119, 0.235, 0.4027, 1.0171, 3.5942,
+          7.2187, 14.605
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10021405,
+        "max_view": 116540732,
+        "count": 275,
+        "coin_vr_avg": 0.9848,
+        "coin_vr_std": 2.3193,
+        "coin_vr_median": 0.2048,
+        "coin_vr_percentile": [
+          0.0277, 0.1044, 0.2048, 0.3609, 1.3487, 2.3959, 3.9016, 13.1789,
+          23.6934, 23.6934, 23.6934
+        ],
+        "danmaku_vr_avg": 0.1806,
+        "danmaku_vr_std": 0.5449,
+        "danmaku_vr_median": 0.0519,
+        "danmaku_vr_percentile": [
+          0.0048, 0.0215, 0.0519, 0.0879, 0.2886, 0.427, 0.5628, 1.3302, 8.3893,
+          8.3893, 8.3893
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2023-01-01": {
+    "date_range": ["2023-01-01", "2023-04-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 7037057,
+        "coin_vr_avg": 1.1298,
+        "coin_vr_std": 27.5631,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 2.0409, 5.6278, 19.7561, 100.0, 200.0,
+          26800.0
+        ],
+        "danmaku_vr_avg": 10.4567,
+        "danmaku_vr_std": 521.7171,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 3.7415, 1774.0612, 21800.9647,
+          247600.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 6296008,
+        "coin_vr_avg": 0.5866,
+        "coin_vr_std": 1.5374,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.9339, 1.7857, 2.9176, 6.2285, 12.9591, 27.5126,
+          300.0
+        ],
+        "danmaku_vr_avg": 0.6814,
+        "danmaku_vr_std": 31.2767,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.2696, 0.672, 3.2231, 22.5203, 1386.4749,
+          16487.9397
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 3785801,
+        "coin_vr_avg": 0.4212,
+        "coin_vr_std": 1.1172,
+        "coin_vr_median": 0.1471,
+        "coin_vr_percentile": [
+          0.0, 0.0862, 0.1471, 0.225, 0.5746, 1.0601, 1.6931, 3.8852, 10.8736,
+          30.8065, 604.159
+        ],
+        "danmaku_vr_avg": 0.5653,
+        "danmaku_vr_std": 21.4799,
+        "danmaku_vr_median": 0.0273,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0273, 0.0564, 0.1694, 0.4237, 1.1285, 3.6585, 16.2253,
+          841.1661, 9620.712
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99998,
+        "count": 1522876,
+        "coin_vr_avg": 0.3745,
+        "coin_vr_std": 1.0002,
+        "coin_vr_median": 0.1014,
+        "coin_vr_percentile": [
+          0.0209, 0.0624, 0.1014, 0.164, 0.4639, 0.9268, 1.5544, 3.9024,
+          10.8694, 29.6359, 108.2105
+        ],
+        "danmaku_vr_avg": 0.3687,
+        "danmaku_vr_std": 9.4746,
+        "danmaku_vr_median": 0.0589,
+        "danmaku_vr_percentile": [
+          0.0108, 0.0371, 0.0589, 0.0929, 0.2689, 0.5544, 0.8913, 2.0327,
+          6.9473, 471.1243, 2338.1673
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999992,
+        "count": 497287,
+        "coin_vr_avg": 0.3052,
+        "coin_vr_std": 0.8443,
+        "coin_vr_median": 0.0591,
+        "coin_vr_percentile": [
+          0.0143, 0.036, 0.0591, 0.1012, 0.3401, 0.7603, 1.384, 3.6309, 9.2359,
+          22.7402, 58.2348
+        ],
+        "danmaku_vr_avg": 0.1183,
+        "danmaku_vr_std": 0.5034,
+        "danmaku_vr_median": 0.04,
+        "danmaku_vr_percentile": [
+          0.0088, 0.0259, 0.04, 0.0609, 0.1479, 0.2726, 0.4461, 1.1646, 3.5191,
+          7.9853, 243.4938
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000016,
+        "max_view": 9976719,
+        "count": 37354,
+        "coin_vr_avg": 0.4242,
+        "coin_vr_std": 1.101,
+        "coin_vr_median": 0.0629,
+        "coin_vr_percentile": [
+          0.0123, 0.0352, 0.0629, 0.1166, 0.4544, 1.1624, 2.1196, 5.0394,
+          11.7323, 21.7321, 41.3782
+        ],
+        "danmaku_vr_avg": 0.1022,
+        "danmaku_vr_std": 0.3593,
+        "danmaku_vr_median": 0.0229,
+        "danmaku_vr_percentile": [
+          0.0035, 0.0139, 0.0229, 0.0374, 0.1111, 0.2356, 0.4235, 1.1223,
+          4.4053, 12.5047, 25.8418
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10011825,
+        "max_view": 94092954,
+        "count": 274,
+        "coin_vr_avg": 0.791,
+        "coin_vr_std": 1.6064,
+        "coin_vr_median": 0.1784,
+        "coin_vr_percentile": [
+          0.0223, 0.092, 0.1784, 0.2606, 1.1587, 2.1911, 4.3083, 9.6014,
+          11.1467, 11.1467, 11.1467
+        ],
+        "danmaku_vr_avg": 0.1382,
+        "danmaku_vr_std": 0.2428,
+        "danmaku_vr_median": 0.0298,
+        "danmaku_vr_percentile": [
+          0.0046, 0.0141, 0.0298, 0.0669, 0.2405, 0.3473, 0.6507, 1.055, 1.9285,
+          1.9285, 1.9285
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2023-04-01": {
+    "date_range": ["2023-04-01", "2023-07-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 4341383,
+        "coin_vr_avg": 0.6815,
+        "coin_vr_std": 6.6802,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.3248, 15.1864, 81.7365, 200.0, 2500.0
+        ],
+        "danmaku_vr_avg": 56.9401,
+        "danmaku_vr_std": 1366.5935,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0509, 14908.0747, 61321.1538,
+          227400.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 6848696,
+        "coin_vr_avg": 0.4494,
+        "coin_vr_std": 1.1727,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.7326, 1.4692, 2.2432, 4.869, 10.2334, 21.3426,
+          601.005
+        ],
+        "danmaku_vr_avg": 1.0014,
+        "danmaku_vr_std": 40.8345,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.1749, 0.523, 2.521, 186.851, 1744.1242,
+          43884.375
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 4157089,
+        "coin_vr_avg": 0.3875,
+        "coin_vr_std": 0.9348,
+        "coin_vr_median": 0.1417,
+        "coin_vr_percentile": [
+          0.0, 0.0848, 0.1417, 0.2099, 0.5271, 0.9636, 1.5409, 3.5854, 10.251,
+          27.5203, 214.9035
+        ],
+        "danmaku_vr_avg": 0.6519,
+        "danmaku_vr_std": 19.2202,
+        "danmaku_vr_median": 0.0236,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0236, 0.0519, 0.1539, 0.3805, 1.0212, 3.3433, 86.911,
+          980.3319, 3292.6288
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 1664620,
+        "coin_vr_avg": 0.3429,
+        "coin_vr_std": 0.9298,
+        "coin_vr_median": 0.0922,
+        "coin_vr_percentile": [
+          0.0192, 0.0571, 0.0922, 0.1486, 0.4206, 0.8448, 1.4262, 3.578,
+          10.3706, 27.9553, 102.5691
+        ],
+        "danmaku_vr_avg": 0.3176,
+        "danmaku_vr_std": 8.8501,
+        "danmaku_vr_median": 0.0522,
+        "danmaku_vr_percentile": [
+          0.0087, 0.0322, 0.0522, 0.0836, 0.2476, 0.5173, 0.8424, 1.8714,
+          6.6155, 430.3294, 2348.8932
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999950,
+        "count": 484567,
+        "coin_vr_avg": 0.312,
+        "coin_vr_std": 0.8307,
+        "coin_vr_median": 0.067,
+        "coin_vr_percentile": [
+          0.0157, 0.0407, 0.067, 0.1126, 0.3601, 0.7782, 1.3826, 3.6229, 9.1244,
+          20.5126, 74.0501
+        ],
+        "danmaku_vr_avg": 0.1195,
+        "danmaku_vr_std": 0.3015,
+        "danmaku_vr_median": 0.0422,
+        "danmaku_vr_percentile": [
+          0.0091, 0.0272, 0.0422, 0.0641, 0.1542, 0.2827, 0.4589, 1.1485,
+          3.3156, 8.6845, 38.4989
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000009,
+        "max_view": 9995518,
+        "count": 36282,
+        "coin_vr_avg": 0.4306,
+        "coin_vr_std": 1.1113,
+        "coin_vr_median": 0.0723,
+        "coin_vr_percentile": [
+          0.0136, 0.0404, 0.0723, 0.1334, 0.4929, 1.1167, 2.0767, 5.083,
+          11.4217, 26.8578, 60.6218
+        ],
+        "danmaku_vr_avg": 0.0999,
+        "danmaku_vr_std": 0.3203,
+        "danmaku_vr_median": 0.0243,
+        "danmaku_vr_percentile": [
+          0.0037, 0.0149, 0.0243, 0.0391, 0.115, 0.2342, 0.4145, 1.0295, 4.447,
+          10.1903, 13.6892
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10000048,
+        "max_view": 57713196,
+        "count": 298,
+        "coin_vr_avg": 0.5326,
+        "coin_vr_std": 1.3382,
+        "coin_vr_median": 0.105,
+        "coin_vr_percentile": [
+          0.023, 0.0644, 0.105, 0.1672, 0.6736, 1.304, 2.2192, 8.3152, 12.9403,
+          12.9403, 12.9403
+        ],
+        "danmaku_vr_avg": 0.0829,
+        "danmaku_vr_std": 0.1328,
+        "danmaku_vr_median": 0.0191,
+        "danmaku_vr_percentile": [
+          0.0027, 0.0118, 0.0191, 0.0378, 0.1632, 0.2538, 0.3641, 0.5279,
+          1.0934, 1.0934, 1.0934
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2023-07-01": {
+    "date_range": ["2023-07-01", "2023-10-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 8104511,
+        "coin_vr_avg": 0.6593,
+        "coin_vr_std": 7.0961,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.1897, 15.935, 73.3778, 200.0, 8750.0
+        ],
+        "danmaku_vr_avg": 13.4757,
+        "danmaku_vr_std": 713.1276,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.516, 1700.3365, 30275.4844,
+          302600.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 10713173,
+        "coin_vr_avg": 0.4141,
+        "coin_vr_std": 0.9951,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.7436, 1.3578, 2.0002, 4.1279, 9.3719, 21.8966,
+          128.6624
+        ],
+        "danmaku_vr_avg": 0.4028,
+        "danmaku_vr_std": 21.8267,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.1042, 0.4311, 1.9486, 11.3865, 972.5018,
+          9683.5938
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 4853175,
+        "coin_vr_avg": 0.3931,
+        "coin_vr_std": 0.9766,
+        "coin_vr_median": 0.1404,
+        "coin_vr_percentile": [
+          0.0, 0.0845, 0.1404, 0.2045, 0.5222, 0.9662, 1.561, 3.7367, 11.1899,
+          29.3148, 125.9935
+        ],
+        "danmaku_vr_avg": 0.5611,
+        "danmaku_vr_std": 17.368,
+        "danmaku_vr_median": 0.0183,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0183, 0.0472, 0.1423, 0.3545, 0.9806, 3.4239, 58.9598,
+          821.9967, 9357.1008
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 1888761,
+        "coin_vr_avg": 0.3361,
+        "coin_vr_std": 0.9766,
+        "coin_vr_median": 0.0849,
+        "coin_vr_percentile": [
+          0.0186, 0.0531, 0.0849, 0.1367, 0.3934, 0.8128, 1.408, 3.6911,
+          10.5632, 30.7335, 118.8489
+        ],
+        "danmaku_vr_avg": 0.2594,
+        "danmaku_vr_std": 6.3206,
+        "danmaku_vr_median": 0.0478,
+        "danmaku_vr_percentile": [
+          0.0076, 0.0289, 0.0478, 0.0778, 0.2397, 0.5115, 0.8313, 1.8448, 6.078,
+          198.2913, 2476.7194
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999967,
+        "count": 482705,
+        "coin_vr_avg": 0.3344,
+        "coin_vr_std": 0.8718,
+        "coin_vr_median": 0.0807,
+        "coin_vr_percentile": [
+          0.0179, 0.049, 0.0807, 0.1345, 0.3972, 0.8243, 1.4559, 3.7308, 9.2281,
+          24.4257, 59.5184
+        ],
+        "danmaku_vr_avg": 0.1341,
+        "danmaku_vr_std": 0.3261,
+        "danmaku_vr_median": 0.0477,
+        "danmaku_vr_percentile": [
+          0.009, 0.0304, 0.0477, 0.0731, 0.176, 0.3232, 0.524, 1.2847, 3.4045,
+          7.786, 67.2946
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000022,
+        "max_view": 9988433,
+        "count": 44836,
+        "coin_vr_avg": 0.3751,
+        "coin_vr_std": 0.8933,
+        "coin_vr_median": 0.0747,
+        "coin_vr_percentile": [
+          0.0158, 0.0452, 0.0747, 0.1271, 0.4346, 0.9883, 1.7768, 4.2285, 9.831,
+          15.1196, 32.0825
+        ],
+        "danmaku_vr_avg": 0.1034,
+        "danmaku_vr_std": 0.4803,
+        "danmaku_vr_median": 0.0239,
+        "danmaku_vr_percentile": [
+          0.0027, 0.0141, 0.0239, 0.0387, 0.113, 0.2386, 0.4133, 1.012, 4.6962,
+          23.0187, 26.8991
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10001352,
+        "max_view": 47318731,
+        "count": 326,
+        "coin_vr_avg": 1.0367,
+        "coin_vr_std": 2.0436,
+        "coin_vr_median": 0.2193,
+        "coin_vr_percentile": [
+          0.0509, 0.1371, 0.2193, 0.3811, 1.3745, 2.9583, 4.953, 10.9888,
+          18.695, 18.695, 18.695
+        ],
+        "danmaku_vr_avg": 0.1302,
+        "danmaku_vr_std": 0.2219,
+        "danmaku_vr_median": 0.0434,
+        "danmaku_vr_percentile": [
+          0.0078, 0.0239, 0.0434, 0.0646, 0.1868, 0.3993, 0.5378, 0.8791,
+          1.7307, 1.7307, 1.7307
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2023-10-01": {
+    "date_range": ["2023-10-01", "2024-01-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 13035925,
+        "coin_vr_avg": 0.5577,
+        "coin_vr_std": 8.482,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.8994, 12.8261, 66.6667, 200.0, 10000.0
+        ],
+        "danmaku_vr_avg": 9.7421,
+        "danmaku_vr_std": 609.6931,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0318, 482.4784, 24636.7521,
+          223200.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 14724976,
+        "coin_vr_avg": 0.3878,
+        "coin_vr_std": 1.0656,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.5683, 1.4086, 1.9854, 4.4839, 9.9414, 25.1989,
+          191.5094
+        ],
+        "danmaku_vr_avg": 0.2804,
+        "danmaku_vr_std": 18.1079,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2546, 1.3789, 8.8343, 681.0028,
+          10342.623
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 4910662,
+        "coin_vr_avg": 0.3552,
+        "coin_vr_std": 0.9324,
+        "coin_vr_median": 0.117,
+        "coin_vr_percentile": [
+          0.0, 0.0661, 0.117, 0.1779, 0.4623, 0.88, 1.4503, 3.5202, 10.5371,
+          27.047, 134.0342
+        ],
+        "danmaku_vr_avg": 0.4607,
+        "danmaku_vr_std": 14.368,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0335, 0.1086, 0.2738, 0.7222, 2.7858, 30.7234,
+          707.1355, 8488.9236
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 1863971,
+        "coin_vr_avg": 0.2944,
+        "coin_vr_std": 0.9014,
+        "coin_vr_median": 0.0705,
+        "coin_vr_percentile": [
+          0.016, 0.0443, 0.0705, 0.1138, 0.3336, 0.7088, 1.2576, 3.2859, 9.394,
+          27.0963, 167.0013
+        ],
+        "danmaku_vr_avg": 0.2298,
+        "danmaku_vr_std": 6.4515,
+        "danmaku_vr_median": 0.0363,
+        "danmaku_vr_percentile": [
+          0.0057, 0.0216, 0.0363, 0.0593, 0.1901, 0.4234, 0.7187, 1.6056,
+          5.5998, 207.3084, 2331.8035
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999946,
+        "count": 499541,
+        "coin_vr_avg": 0.2832,
+        "coin_vr_std": 0.7452,
+        "coin_vr_median": 0.0606,
+        "coin_vr_percentile": [
+          0.0148, 0.0375, 0.0606, 0.1017, 0.3224, 0.6974, 1.2589, 3.3137,
+          8.3265, 17.4175, 51.3593
+        ],
+        "danmaku_vr_avg": 0.1076,
+        "danmaku_vr_std": 0.2627,
+        "danmaku_vr_median": 0.0328,
+        "danmaku_vr_percentile": [
+          0.0057, 0.0202, 0.0328, 0.0527, 0.1388, 0.2628, 0.4331, 1.1016,
+          2.9145, 6.7866, 30.473
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000002,
+        "max_view": 9988107,
+        "count": 39778,
+        "coin_vr_avg": 0.3707,
+        "coin_vr_std": 0.9206,
+        "coin_vr_median": 0.0682,
+        "coin_vr_percentile": [
+          0.0137, 0.0394, 0.0682, 0.1193, 0.4214, 0.9709, 1.7878, 4.3953,
+          9.7191, 17.9156, 40.0481
+        ],
+        "danmaku_vr_avg": 0.0889,
+        "danmaku_vr_std": 0.2944,
+        "danmaku_vr_median": 0.0177,
+        "danmaku_vr_percentile": [
+          0.0015, 0.0099, 0.0177, 0.0301, 0.0975, 0.2175, 0.3918, 0.9782,
+          3.8145, 9.7726, 15.3242
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10001019,
+        "max_view": 39109137,
+        "count": 265,
+        "coin_vr_avg": 0.8193,
+        "coin_vr_std": 1.7985,
+        "coin_vr_median": 0.1964,
+        "coin_vr_percentile": [
+          0.0535, 0.1228, 0.1964, 0.2702, 1.0777, 2.0735, 3.3884, 12.2516,
+          15.1659, 15.1659, 15.1659
+        ],
+        "danmaku_vr_avg": 0.1274,
+        "danmaku_vr_std": 0.2023,
+        "danmaku_vr_median": 0.0388,
+        "danmaku_vr_percentile": [
+          0.0073, 0.0221, 0.0388, 0.0641, 0.2254, 0.3439, 0.5199, 1.0012,
+          1.4848, 1.4848, 1.4848
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2024-01-01": {
+    "date_range": ["2024-01-01", "2024-04-01"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 14195841,
+        "coin_vr_avg": 0.6072,
+        "coin_vr_std": 7.2959,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0202, 13.3333, 100.0, 200.0, 10000.0
+        ],
+        "danmaku_vr_avg": 7.361,
+        "danmaku_vr_std": 548.4688,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0529, 72.1707, 19476.1467,
+          249300.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 14021971,
+        "coin_vr_avg": 0.3938,
+        "coin_vr_std": 1.1181,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.5542, 1.4047, 2.0002, 4.6668, 10.6935, 29.4699,
+          127.8481
+        ],
+        "danmaku_vr_avg": 0.2689,
+        "danmaku_vr_std": 17.0474,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2757, 1.3841, 7.9816, 653.0182,
+          8698.0952
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 4699493,
+        "coin_vr_avg": 0.3737,
+        "coin_vr_std": 1.0304,
+        "coin_vr_median": 0.1185,
+        "coin_vr_percentile": [
+          0.0, 0.0676, 0.1185, 0.1796, 0.4715, 0.9123, 1.5258, 3.8368, 11.5944,
+          31.5996, 191.0636
+        ],
+        "danmaku_vr_avg": 0.4959,
+        "danmaku_vr_std": 15.6924,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0313, 0.1025, 0.2668, 0.7101, 2.7655, 30.5183,
+          785.7938, 3421.4168
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 1852220,
+        "coin_vr_avg": 0.2983,
+        "coin_vr_std": 0.9847,
+        "coin_vr_median": 0.0676,
+        "coin_vr_percentile": [
+          0.0158, 0.043, 0.0676, 0.1082, 0.3206, 0.7005, 1.2744, 3.5247,
+          10.2211, 27.2441, 336.8904
+        ],
+        "danmaku_vr_avg": 0.1943,
+        "danmaku_vr_std": 4.3132,
+        "danmaku_vr_median": 0.0329,
+        "danmaku_vr_percentile": [
+          0.0056, 0.0198, 0.0329, 0.0535, 0.1745, 0.4004, 0.6959, 1.5953,
+          5.3487, 141.6364, 1631.6681
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999999,
+        "count": 490803,
+        "coin_vr_avg": 0.2871,
+        "coin_vr_std": 0.852,
+        "coin_vr_median": 0.0575,
+        "coin_vr_percentile": [
+          0.0148, 0.036, 0.0575, 0.0954, 0.3065, 0.6898, 1.2723, 3.52, 9.0862,
+          21.9063, 118.0487
+        ],
+        "danmaku_vr_avg": 0.1071,
+        "danmaku_vr_std": 0.2792,
+        "danmaku_vr_median": 0.0323,
+        "danmaku_vr_percentile": [
+          0.0059, 0.0202, 0.0323, 0.0509, 0.1334, 0.2568, 0.4286, 1.1229,
+          3.1536, 6.9167, 41.8675
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000000,
+        "max_view": 9991943,
+        "count": 45231,
+        "coin_vr_avg": 0.365,
+        "coin_vr_std": 1.1375,
+        "coin_vr_median": 0.057,
+        "coin_vr_percentile": [
+          0.014, 0.0352, 0.057, 0.0993, 0.3498, 0.8672, 1.7508, 4.6964, 12.8609,
+          30.2913, 67.3524
+        ],
+        "danmaku_vr_avg": 0.0804,
+        "danmaku_vr_std": 0.321,
+        "danmaku_vr_median": 0.0176,
+        "danmaku_vr_percentile": [
+          0.0017, 0.0104, 0.0176, 0.0283, 0.0858, 0.1903, 0.339, 0.862, 3.2749,
+          12.1796, 20.5354
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10007506,
+        "max_view": 38264041,
+        "count": 236,
+        "coin_vr_avg": 0.7287,
+        "coin_vr_std": 1.4402,
+        "coin_vr_median": 0.2046,
+        "coin_vr_percentile": [
+          0.0579, 0.1372, 0.2046, 0.2841, 0.9041, 2.0428, 3.6875, 6.8677,
+          12.2418, 12.2418, 12.2418
+        ],
+        "danmaku_vr_avg": 0.0974,
+        "danmaku_vr_std": 0.1586,
+        "danmaku_vr_median": 0.0335,
+        "danmaku_vr_percentile": [
+          0.0082, 0.0232, 0.0335, 0.0465, 0.1365, 0.2672, 0.426, 0.8835, 0.9997,
+          0.9997, 0.9997
+        ],
+        "bucket_idx": 6
+      }
+    }
+  },
+  "2024-04-01": {
+    "date_range": ["2024-04-01", "2024-10-02"],
+    "percentiles": [
+      0.2, 0.4, 0.5, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0
+    ],
+    "buckets": {
+      "0": {
+        "_id": 0,
+        "min_view": 0,
+        "max_view": 99,
+        "count": 31809601,
+        "coin_vr_avg": 0.8911,
+        "coin_vr_std": 8.1313,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.4844, 20.0, 100.0, 200.0, 3800.0
+        ],
+        "danmaku_vr_avg": 2.3243,
+        "danmaku_vr_std": 369.4291,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.3257, 50.0, 4512.4711, 1210900.0
+        ],
+        "bucket_idx": 0
+      },
+      "100": {
+        "_id": 100,
+        "min_view": 100,
+        "max_view": 999,
+        "count": 24972800,
+        "coin_vr_avg": 0.4407,
+        "coin_vr_std": 1.3358,
+        "coin_vr_median": 0.0,
+        "coin_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.6294, 1.414, 2.1438, 5.2382, 14.337, 38.5022,
+          761.9048
+        ],
+        "danmaku_vr_avg": 0.218,
+        "danmaku_vr_std": 17.693,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.364, 1.6424, 10.0868, 348.7805,
+          30552.4528
+        ],
+        "bucket_idx": 1
+      },
+      "1000": {
+        "_id": 1000,
+        "min_view": 1000,
+        "max_view": 9999,
+        "count": 9132097,
+        "coin_vr_avg": 0.4291,
+        "coin_vr_std": 3.7576,
+        "coin_vr_median": 0.1283,
+        "coin_vr_percentile": [
+          0.0, 0.0749, 0.1283, 0.1892, 0.5088, 1.0022, 1.7161, 4.5399, 13.7545,
+          58.2559, 10136.7621
+        ],
+        "danmaku_vr_avg": 0.2709,
+        "danmaku_vr_std": 10.3973,
+        "danmaku_vr_median": 0.0,
+        "danmaku_vr_percentile": [
+          0.0, 0.0, 0.0, 0.0394, 0.128, 0.3167, 0.7604, 2.7354, 9.226, 310.187,
+          16418.1383
+        ],
+        "bucket_idx": 2
+      },
+      "10000": {
+        "_id": 10000,
+        "min_view": 10000,
+        "max_view": 99999,
+        "count": 3045271,
+        "coin_vr_avg": 0.3508,
+        "coin_vr_std": 2.0035,
+        "coin_vr_median": 0.0745,
+        "coin_vr_percentile": [
+          0.0176, 0.0477, 0.0745, 0.1182, 0.349, 0.7722, 1.4269, 4.1398, 12.891,
+          61.1928, 578.2197
+        ],
+        "danmaku_vr_avg": 0.1942,
+        "danmaku_vr_std": 2.227,
+        "danmaku_vr_median": 0.0444,
+        "danmaku_vr_percentile": [
+          0.0074, 0.0268, 0.0444, 0.0728, 0.2276, 0.4786, 0.7888, 1.8283,
+          5.8196, 35.8777, 1898.3572
+        ],
+        "bucket_idx": 3
+      },
+      "100000": {
+        "_id": 100000,
+        "min_view": 100000,
+        "max_view": 999988,
+        "count": 894179,
+        "coin_vr_avg": 0.2925,
+        "coin_vr_std": 1.1788,
+        "coin_vr_median": 0.0504,
+        "coin_vr_percentile": [
+          0.0134, 0.0315, 0.0504, 0.0848, 0.2853, 0.6554, 1.2508, 3.7639,
+          11.3542, 35.6617, 193.2372
+        ],
+        "danmaku_vr_avg": 0.1203,
+        "danmaku_vr_std": 0.3742,
+        "danmaku_vr_median": 0.0342,
+        "danmaku_vr_percentile": [
+          0.0063, 0.0213, 0.0342, 0.0543, 0.1449, 0.2822, 0.4758, 1.273, 4.0137,
+          12.4822, 64.4568
+        ],
+        "bucket_idx": 4
+      },
+      "1000000": {
+        "_id": 1000000,
+        "min_view": 1000005,
+        "max_view": 9983171,
+        "count": 93343,
+        "coin_vr_avg": 0.3303,
+        "coin_vr_std": 1.3646,
+        "coin_vr_median": 0.0402,
+        "coin_vr_percentile": [
+          0.0123, 0.0258, 0.0402, 0.0682, 0.2657, 0.6821, 1.4607, 4.6809,
+          16.8267, 52.1773, 101.9934
+        ],
+        "danmaku_vr_avg": 0.0815,
+        "danmaku_vr_std": 0.3942,
+        "danmaku_vr_median": 0.0163,
+        "danmaku_vr_percentile": [
+          0.0028, 0.01, 0.0163, 0.0255, 0.0765, 0.1773, 0.3348, 0.9171, 4.5125,
+          15.4648, 46.5097
+        ],
+        "bucket_idx": 5
+      },
+      "10000000": {
+        "_id": 10000000,
+        "min_view": 10005175,
+        "max_view": 35550200,
+        "count": 271,
+        "coin_vr_avg": 0.8704,
+        "coin_vr_std": 1.5374,
+        "coin_vr_median": 0.257,
+        "coin_vr_percentile": [
+          0.0756, 0.1803, 0.257, 0.3922, 1.1426, 2.6382, 4.4734, 7.5035,
+          10.2504, 10.2504, 10.2504
+        ],
+        "danmaku_vr_avg": 0.126,
+        "danmaku_vr_std": 0.1893,
+        "danmaku_vr_median": 0.0526,
+        "danmaku_vr_percentile": [
+          0.0146, 0.0333, 0.0526, 0.0702, 0.1758, 0.3511, 0.5362, 0.9545,
+          1.1083, 1.1083, 1.1083
+        ],
+        "bucket_idx": 6
+      }
+    }
+  }
+}
