@@ -11,10 +11,12 @@ class VideosTagsAggregator:
         videos_collect_name: str = "videos",
         tags_collect_name: str = "videos_tags",
         tags_join_name: str = "tagger",
+        batch_size: int = 10000,
     ):
         self.videos_collect_name = videos_collect_name
         self.tags_collect_name = tags_collect_name
         self.tags_join_name = tags_join_name
+        self.batch_size = batch_size
         self.init_pipeline()
         self.init_mongo()
         self.init_cursor()
@@ -50,7 +52,9 @@ class VideosTagsAggregator:
         self.videos_estimated_count = self.videos_collect.estimated_document_count()
 
     def init_cursor(self):
-        self.cursor = self.videos_collect.aggregate(self.pipeline, allowDiskUse=True)
+        self.cursor = self.videos_collect.aggregate(
+            self.pipeline, allowDiskUse=True, batchSize=self.batch_size
+        )
 
     def __iter__(self):
         for doc in self.cursor:
@@ -85,7 +89,7 @@ class SentencesDataloader:
         )
 
     def init_mongo(self):
-        self.aggregator = VideosTagsAggregator()
+        self.aggregator = VideosTagsAggregator(batch_size=self.batch_size)
         self.cursor = self.aggregator.cursor
 
     def restore_cursor(self):
@@ -123,7 +127,7 @@ class SentencesDataloader:
         author = dict_get(doc, "owner.name", "")
         region_tags = dict_get(doc, "tagger.region_tags", "")
         tags = dict_get(doc, "tagger.tags", "")
-        sentence = f"Title: {title}. Desc: {desc}. Author: {author}. Tags: {region_tags}, {tags}"
+        sentence = f"{title}. {desc}. Author: {author}. Tags: {region_tags}, {tags}"
         return sentence
 
     def __iter__(self):
