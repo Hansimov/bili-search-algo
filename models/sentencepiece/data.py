@@ -1,10 +1,60 @@
 from sedb import MongoOperator
-from tclogger import TCLogger, logstr, TCLogbar, TCLogbarGroup
+from tclogger import logger, logstr, TCLogbar, TCLogbarGroup, dict_get
 from typing import Literal, Generator
 
 from configs.envs import MONGO_ENVS
 
-logger = TCLogger()
+
+class VideosTagsAggregator:
+    def __init__(
+        self,
+        videos_collect_name: str = "videos",
+        tags_collect_name: str = "videos_tags",
+        tags_join_name: str = "tagger",
+    ):
+        self.videos_collect_name = videos_collect_name
+        self.tags_collect_name = tags_collect_name
+        self.tags_join_name = tags_join_name
+        self.init_pipeline()
+        self.init_mongo()
+        self.init_cursor()
+
+    def init_pipeline(self):
+        self.pipeline = [
+            {
+                "$lookup": {
+                    "from": self.tags_collect_name,
+                    "localField": "bvid",
+                    "foreignField": "bvid",
+                    "as": self.tags_join_name,
+                }
+            },
+            {"$unwind": f"${self.tags_join_name}"},
+            {
+                "$project": {
+                    "title": 1,
+                    "desc": 1,
+                    "owner.name": 1,
+                    "tid": 1,
+                    f"{self.tags_join_name}.tags": 1,
+                    f"{self.tags_join_name}.region_tags": 1,
+                }
+            },
+        ]
+
+    def init_mongo(self):
+        self.mongo = MongoOperator(
+            MONGO_ENVS, connect_msg=f"from {self.__class__.__name__}", indent=2
+        )
+        self.videos_collect = self.mongo.db[self.videos_collect_name]
+        self.videos_estimated_count = self.videos_collect.estimated_document_count()
+
+    def init_cursor(self):
+        self.cursor = self.videos_collect.aggregate(self.pipeline, allowDiskUse=True)
+
+    def __iter__(self):
+        for doc in self.cursor:
+            yield doc
 
 
 class SentencesDataloader:
