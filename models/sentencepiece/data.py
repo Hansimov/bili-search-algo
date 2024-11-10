@@ -66,6 +66,7 @@ class SentencesDataloader:
         self,
         videos_collect_name: str = "videos",
         tags_collect_name: str = "videos_tags",
+        texts_collect_name: str = "videos_texts",
         batch_size: int = 10000,
         max_batch: int = None,
         iter_val: Literal["doc", "sentence"] = "sentence",
@@ -75,6 +76,7 @@ class SentencesDataloader:
     ):
         self.videos_collect_name = videos_collect_name
         self.tags_collect_name = tags_collect_name
+        self.texts_collect_name = texts_collect_name
         self.batch_size = batch_size
         self.max_batch = max_batch
         self.iter_val = iter_val
@@ -83,6 +85,15 @@ class SentencesDataloader:
         self.verbose = verbose
         self.init_mongo()
         self.init_progress_bars()
+
+    def init_mongo(self):
+        # self.aggregator = VideosTagsAggregator(batch_size=self.batch_size)
+        # self.cursor = self.aggregator.cursor
+        self.mongo = MongoOperator(
+            MONGO_ENVS, connect_msg=f"from {self.__class__.__name__}", indent=2
+        )
+        self.texts_collect = self.mongo.db[self.texts_collect_name]
+        self.cursor = self.texts_collect.find()
 
     def init_progress_bars(self):
         self.epoch_bar = TCLogbar(head=logstr.note("> Epoch:"))
@@ -94,29 +105,35 @@ class SentencesDataloader:
             verbose=self.verbose,
         )
 
-    def init_mongo(self):
-        self.aggregator = VideosTagsAggregator(batch_size=self.batch_size)
-        self.cursor = self.aggregator.cursor
-
     def restore_cursor(self):
-        self.aggregator.init_cursor()
-        self.cursor = self.aggregator.cursor
+        # self.aggregator.init_cursor()
+        # self.cursor = self.aggregator.cursor
+        self.cursor = self.texts_collect.find()
 
-    def __epoch_start__(self):
+    def init_total(self):
+        self.videos_count = self.texts_collect.estimated_document_count()
         self.epoch_bar.total = self.iter_epochs or 1
-        self.epoch_bar.update(0, flush=True)
         if self.max_batch:
             self.batch_bar.total = self.max_batch
         else:
-            self.batch_bar.total = (
-                int(self.aggregator.videos_estimated_count / self.batch_size) + 1
-            )
+            self.batch_bar.total = self.videos_count // self.batch_size + 1
+
+    def __epoch_start__(self):
+        self.init_total()
+        self.epoch_bar.update(0, flush=True)
 
     def __epoch_end__(self):
         self.epoch_bar.update(increment=1)
-        self.batch_bar.reset()
-        self.sample_bar.reset()
-        self.restore_cursor()
+        if (
+            self.iter_epochs
+            and self.iter_epochs > 1
+            and self.epoch_bar.count < self.iter_epochs
+        ):
+            self.batch_bar.reset()
+            self.sample_bar.reset()
+            self.restore_cursor()
+        else:
+            print()
 
     def doc_batch(self) -> Generator[dict, None, None]:
         while True:
@@ -131,12 +148,20 @@ class SentencesDataloader:
             yield res
 
     def doc_to_sentence(self, doc: dict) -> str:
-        title = dict_get(doc, "title", "")
-        desc = dict_get(doc, "desc", "")
         author = dict_get(doc, "owner.name", "")
-        region_tags = dict_get(doc, "tagger.region_tags", "")
-        tags = dict_get(doc, "tagger.tags", "")
-        sentence = f"{title}. {desc}. Author: {author}. Tags: {region_tags}, {tags}"
+        author_str = f"{author}: " if author else ""
+
+        title = dict_get(doc, "title", "")
+        title_str = f"{title}. " if title else ""
+
+        desc = dict_get(doc, "desc", "")
+        desc_str = f"{desc}. " if desc else ""
+
+        rtags = dict_get(doc, "rtags", "")
+        tags = dict_get(doc, "tags", "")
+        tags_str = f"{rtags}, {tags}." if tags else f"{rtags}."
+
+        sentence = f"{author_str}{title_str}{desc_str}{tags_str}"
         return sentence
 
     def __iter__(self) -> Generator[str, None, None]:
@@ -153,12 +178,13 @@ class SentencesDataloader:
                 self.sample_bar.update(increment=1)
                 yield res
             self.sample_bar.reset()
-        if self.iter_epochs and self.iter_epochs > 1:
-            self.__epoch_end__()
+        self.__epoch_end__()
 
 
 if __name__ == "__main__":
-    loader = SentencesDataloader(batch_size=10000, show_at_init=False, verbose=True)
+    loader = SentencesDataloader(
+        batch_size=10000, max_batch=200, show_at_init=False, verbose=True
+    )
     for doc in loader:
         continue
 
