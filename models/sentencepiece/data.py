@@ -70,6 +70,8 @@ class SentencesDataloader:
         max_batch: int = None,
         iter_val: Literal["doc", "sentence"] = "sentence",
         iter_epochs: int = None,
+        show_at_init: bool = False,
+        verbose: bool = False,
     ):
         self.videos_collect_name = videos_collect_name
         self.tags_collect_name = tags_collect_name
@@ -77,6 +79,8 @@ class SentencesDataloader:
         self.max_batch = max_batch
         self.iter_val = iter_val
         self.iter_epochs = iter_epochs
+        self.show_at_init = show_at_init
+        self.verbose = verbose
         self.init_mongo()
         self.init_progress_bars()
 
@@ -85,7 +89,9 @@ class SentencesDataloader:
         self.batch_bar = TCLogbar(head=logstr.note("  * Batch:"))
         self.sample_bar = TCLogbar(head=logstr.note("  * Sample:"))
         TCLogbarGroup(
-            [self.epoch_bar, self.batch_bar, self.sample_bar], show_at_init=True
+            [self.epoch_bar, self.batch_bar, self.sample_bar],
+            show_at_init=self.show_at_init,
+            verbose=self.verbose,
         )
 
     def init_mongo(self):
@@ -99,9 +105,12 @@ class SentencesDataloader:
     def __epoch_start__(self):
         self.epoch_bar.total = self.iter_epochs or 1
         self.epoch_bar.update(0, flush=True)
-        self.batch_bar.total = (
-            int(self.aggregator.videos_estimated_count / self.batch_size) + 1
-        )
+        if self.max_batch:
+            self.batch_bar.total = self.max_batch
+        else:
+            self.batch_bar.total = (
+                int(self.aggregator.videos_estimated_count / self.batch_size) + 1
+            )
 
     def __epoch_end__(self):
         self.epoch_bar.update(increment=1)
@@ -130,7 +139,7 @@ class SentencesDataloader:
         sentence = f"{title}. {desc}. Author: {author}. Tags: {region_tags}, {tags}"
         return sentence
 
-    def __iter__(self):
+    def __iter__(self) -> Generator[str, None, None]:
         self.__epoch_start__()
         for batch_idx, batch in enumerate(self.doc_batch()):
             if self.max_batch is not None and batch_idx >= self.max_batch:
@@ -149,7 +158,7 @@ class SentencesDataloader:
 
 
 if __name__ == "__main__":
-    loader = SentencesDataloader(batch_size=10000)
+    loader = SentencesDataloader(batch_size=10000, show_at_init=False, verbose=True)
     for doc in loader:
         continue
 
