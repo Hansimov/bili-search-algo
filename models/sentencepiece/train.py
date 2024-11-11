@@ -1,5 +1,7 @@
+import argparse
 import sentencepiece as spm
-import io
+import sys
+
 
 from collections.abc import Iterable
 from tclogger import logger, logstr, Runtimer
@@ -23,6 +25,7 @@ class SentencePieceModelTrainer:
         model_prefix="sentencepiece",
         add_dummy_prefix: bool = False,
         minloglevel: int = 2,
+        input_sentence_size: int = 1000000,
     ):
         self.vocab_size = vocab_size
         self.character_coverage = character_coverage
@@ -30,6 +33,7 @@ class SentencePieceModelTrainer:
         self.model_prefix = model_prefix
         self.add_dummy_prefix = add_dummy_prefix
         self.minloglevel = minloglevel
+        self.input_sentence_size = input_sentence_size
 
     def load_data(
         self,
@@ -58,6 +62,7 @@ class SentencePieceModelTrainer:
             character_coverage=self.character_coverage,
             add_dummy_prefix=self.add_dummy_prefix,
             minloglevel=self.minloglevel,
+            input_sentence_size=self.input_sentence_size,
         )
 
     def test(self, test_sentences: list[str]):
@@ -69,11 +74,27 @@ class SentencePieceModelTrainer:
             logger.success(f"  * {tokens}")
 
 
+class ArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("-t", "--test-only", action="store_true")
+        self.add_argument("-m", "--model-prefix", type=str, default="sentencepiece")
+        self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
+
+
 if __name__ == "__main__":
-    trainer = SentencePieceModelTrainer(vocab_size=64000)
-    trainer.load_data(max_batch=100, batch_size=10000)
-    with Runtimer() as timer:
-        trainer.train()
+    args = ArgParser().args
+    trainer = SentencePieceModelTrainer(
+        vocab_size=64000,
+        model_type="bpe",
+        model_prefix=args.model_prefix,
+    )
+    if not args.test_only:
+        trainer.load_data(max_batch=20000, batch_size=10000)
+        with Runtimer() as timer:
+            trainer.train()
     trainer.test(TEST_SENTENCES)
 
     # python -m models.sentencepiece.train
+    # python -m models.sentencepiece.train -t
+    # python -m models.sentencepiece.train -m sp_200m_64k_bpe
