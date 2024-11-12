@@ -1,8 +1,9 @@
 from sedb import MongoOperator
-from tclogger import logger, logstr, TCLogbar, TCLogbarGroup, dict_get
+from tclogger import logger, logstr, TCLogbar, TCLogbarGroup
 from typing import Literal, Generator
 
 from configs.envs import MONGO_ENVS
+from models.sentencepiece.convert import DocSentenceConverter
 
 
 class VideosTagsAggregator:
@@ -85,6 +86,7 @@ class SentencesDataloader:
         self.verbose = verbose
         self.init_mongo()
         self.init_progress_bars()
+        self.doc_converter = DocSentenceConverter()
 
     def init_mongo(self):
         # self.aggregator = VideosTagsAggregator(batch_size=self.batch_size)
@@ -147,23 +149,6 @@ class SentencesDataloader:
                 break
             yield res
 
-    def doc_to_sentence(self, doc: dict) -> str:
-        author = dict_get(doc, "owner.name", "")
-        author_str = f"{author}: " if author else ""
-
-        title = dict_get(doc, "title", "")
-        title_str = f"{title}. " if title else ""
-
-        desc = dict_get(doc, "desc", "")
-        desc_str = f"{desc}. " if desc else ""
-
-        rtags = dict_get(doc, "rtags", "")
-        tags = dict_get(doc, "tags", "")
-        tags_str = f"{rtags}, {tags}." if tags else f"{rtags}."
-
-        sentence = f"{author_str}{title_str}{desc_str}{tags_str}"
-        return sentence
-
     def __iter__(self) -> Generator[str, None, None]:
         self.__epoch_start__()
         for batch_idx, batch in enumerate(self.doc_batch()):
@@ -172,7 +157,7 @@ class SentencesDataloader:
             self.sample_bar.total = len(batch)
             for doc in batch:
                 if self.iter_val == "sentence":
-                    res = self.doc_to_sentence(doc)
+                    res = self.doc_converter.convert(doc)
                 else:
                     res = doc
                 self.sample_bar.update(increment=1)
