@@ -1,5 +1,4 @@
 import re
-import string
 
 from tclogger import dict_get
 
@@ -22,8 +21,11 @@ class DocSentenceConverter:
     RE_DASH = r"\-\_\."
 
     RE_CJK_SPACE = rf"(?<=[{RE_CJK}])\s+(?=[{RE_CJK}])"
+    RE_NON_WORD = rf"[^({RE_CJK})|({RE_EN})]"
 
-    RE_NON_WORD = rf"[^({RE_CJK})|({RE_EN})|({RE_DASH})]"
+    PT_CJK_SPACE = re.compile(RE_CJK_SPACE)
+    PT_NON_WORD = re.compile(RE_NON_WORD)
+    PT_WHITESPACES = re.compile(r"\s{2,}")
 
     def doc_to_sentence(self, doc: dict) -> str:
         author = dict_get(doc, "owner.name", "")
@@ -42,23 +44,20 @@ class DocSentenceConverter:
         sentence = f"{author_str} | {title_str} | {desc_str} | {tags_str}"
         return sentence
 
-    def lower(self, sentence: str) -> str:
-        return sentence.lower()
-
     def remove_whitespaces_among_cjk(self, sentence: str) -> str:
-        return re.sub(self.RE_CJK_SPACE, "", sentence)
+        return self.PT_CJK_SPACE.sub("", sentence)
 
     def replace_non_word_with_whitespaces(self, sentence: str) -> str:
-        return re.sub(self.RE_NON_WORD, " ", sentence)
+        return self.PT_NON_WORD.sub(" ", sentence)
 
     def merge_whitespaces(self, sentence: str) -> str:
-        return re.sub(r"\s+", " ", sentence).strip()
+        return self.PT_WHITESPACES.sub(" ", sentence).strip()
 
     def convert_sentence(self, sentence: str) -> str:
-        sentence = self.lower(sentence)
-        sentence = self.remove_whitespaces_among_cjk(sentence)
+        sentence = sentence.lower()
+        # sentence = self.remove_whitespaces_among_cjk(sentence)
         sentence = self.replace_non_word_with_whitespaces(sentence)
-        sentence = self.merge_whitespaces(sentence)
+        # sentence = self.merge_whitespaces(sentence)
         return sentence
 
     def convert(self, doc: dict) -> str:

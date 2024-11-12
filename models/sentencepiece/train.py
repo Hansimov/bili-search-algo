@@ -28,7 +28,7 @@ class SentencePieceModelTrainer:
         num_threads: int = 16,
         split_by_unicode_script: bool = False,
         shrinking_factor: float = 0.75,
-        treat_whitespace_as_suffix: bool = True,
+        treat_whitespace_as_suffix: bool = False,
         vocab_size: int = 32000,
     ):
         self.train_params = {
