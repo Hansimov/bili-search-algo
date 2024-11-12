@@ -4,7 +4,7 @@ import sys
 
 
 from collections.abc import Iterable
-from tclogger import logger, logstr, Runtimer
+from tclogger import logger, logstr, Runtimer, dict_to_str
 from typing import Literal
 
 from models.sentencepiece.data import SentencesDataloader
@@ -19,21 +19,32 @@ class SentencePieceModelTrainer:
 
     def __init__(
         self,
-        vocab_size: int = 32000,
-        character_coverage: float = 0.9995,
+        add_dummy_prefix: bool = False,
+        character_coverage: float = 0.9999,
+        input_sentence_size: int = 1000000,
+        minloglevel: int = 2,
         model_type: Literal["unigram", "bpe", "char", "word"] = "unigram",
         model_prefix="sentencepiece",
-        add_dummy_prefix: bool = False,
-        minloglevel: int = 2,
-        input_sentence_size: int = 1000000,
+        num_threads: int = 16,
+        split_by_unicode_script: bool = False,
+        shrinking_factor: float = 0.75,
+        treat_whitespace_as_suffix: bool = True,
+        vocab_size: int = 32000,
     ):
-        self.vocab_size = vocab_size
-        self.character_coverage = character_coverage
-        self.model_type = model_type
-        self.model_prefix = model_prefix
-        self.add_dummy_prefix = add_dummy_prefix
-        self.minloglevel = minloglevel
-        self.input_sentence_size = input_sentence_size
+        self.train_params = {
+            "add_dummy_prefix": add_dummy_prefix,
+            "character_coverage": character_coverage,
+            "input_sentence_size": input_sentence_size,
+            "minloglevel": minloglevel,
+            "model_type": model_type,
+            "model_prefix": model_prefix,
+            "num_threads": num_threads,
+            "split_by_unicode_script": split_by_unicode_script,
+            "shrinking_factor": shrinking_factor,
+            "treat_whitespace_as_suffix": treat_whitespace_as_suffix,
+            "vocab_size": vocab_size,
+        }
+        self.model_file = f"{model_prefix}.model"
 
     def load_data(
         self,
@@ -54,40 +65,35 @@ class SentencePieceModelTrainer:
 
     def train(self):
         logger.note("> Training ...")
+        logger.mesg(dict_to_str(self.train_params), indent=2)
         spm.SentencePieceTrainer.Train(
             sentence_iterator=iter(self.data_loader),
-            model_prefix=self.model_prefix,
-            vocab_size=self.vocab_size,
-            model_type=self.model_type,
-            character_coverage=self.character_coverage,
-            add_dummy_prefix=self.add_dummy_prefix,
-            minloglevel=self.minloglevel,
-            input_sentence_size=self.input_sentence_size,
+            **self.train_params,
         )
 
     def test(self, test_sentences: list[str]):
         logger.note("> Testing ...")
-        sp = spm.SentencePieceProcessor(model_file=f"{self.model_prefix}.model")
+        sp = spm.SentencePieceProcessor(model_file=self.model_file)
         for sentence in test_sentences:
-            logger.note(f"> {sentence}")
             tokens = sp.EncodeAsPieces(sentence)
-            logger.success(f"  * {tokens}")
+            tokens_str = f"{logstr.note('_')}".join(tokens)
+            logger.mesg(f"  * {tokens_str}")
 
 
 class ArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument("-t", "--test-only", action="store_true")
         self.add_argument("-m", "--model-prefix", type=str, default="sentencepiece")
+        self.add_argument("-t", "--test-only", action="store_true")
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
 
 
 if __name__ == "__main__":
     args = ArgParser().args
     trainer = SentencePieceModelTrainer(
-        vocab_size=64000,
-        model_type="bpe",
         model_prefix=args.model_prefix,
+        num_threads=16,
+        vocab_size=256000,
     )
     if not args.test_only:
         trainer.load_data(max_batch=20000, batch_size=10000)
@@ -96,5 +102,5 @@ if __name__ == "__main__":
     trainer.test(TEST_SENTENCES)
 
     # python -m models.sentencepiece.train
-    # python -m models.sentencepiece.train -t
-    # python -m models.sentencepiece.train -m sp_200m_64k_bpe
+    # python -m models.sentencepiece.train -m sp_200m_256k
+    # python -m models.sentencepiece.train -m sp_200m_256k -t
