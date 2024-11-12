@@ -75,7 +75,7 @@ class SentencePieceModelTrainer:
         logger.note("> Testing ...")
         sp = spm.SentencePieceProcessor(model_file=self.model_file)
         for sentence in test_sentences:
-            tokens = sp.EncodeAsPieces(sentence)
+            tokens = sp.EncodeAsPieces(sentence.lower())
             tokens_str = f"{logstr.note('_')}".join(tokens)
             logger.mesg(f"  * {tokens_str}")
 
@@ -85,6 +85,8 @@ class ArgParser(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
         self.add_argument("-m", "--model-prefix", type=str, default="sentencepiece")
         self.add_argument("-t", "--test-only", action="store_true")
+        self.add_argument("-vs", "--vocab-size", type=int, default=32000)
+        self.add_argument("-mb", "--max-batch", type=int, default=20000)
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
 
 
@@ -92,15 +94,16 @@ if __name__ == "__main__":
     args = ArgParser().args
     trainer = SentencePieceModelTrainer(
         model_prefix=args.model_prefix,
-        num_threads=16,
-        vocab_size=256000,
+        vocab_size=args.vocab_size,
     )
     if not args.test_only:
-        trainer.load_data(max_batch=20000, batch_size=10000)
+        trainer.load_data(max_batch=args.max_batch, batch_size=10000)
         with Runtimer() as timer:
             trainer.train()
     trainer.test(TEST_SENTENCES)
 
     # python -m models.sentencepiece.train
-    # python -m models.sentencepiece.train -m sp_200m_256k
     # python -m models.sentencepiece.train -m sp_200m_256k -t
+
+    # python -m models.sentencepiece.train -m sp_1kw_8k -vs 8192 -mb 1000
+    # python -m models.sentencepiece.train -m sp_200m_256k -vs 256000 -mb 20000
