@@ -23,12 +23,13 @@ class SentencePieceModelTrainer:
         character_coverage: float = 0.9999,
         input_sentence_size: int = 1000000,
         minloglevel: int = 2,
-        model_type: Literal["unigram", "bpe", "char", "word"] = "unigram",
         model_prefix="sentencepiece",
+        model_type: Literal["unigram", "bpe", "char", "word"] = "unigram",
         num_threads: int = 16,
         split_by_unicode_script: bool = False,
         shrinking_factor: float = 0.75,
         treat_whitespace_as_suffix: bool = False,
+        user_defined_symbols="▁",
         vocab_size: int = 32000,
     ):
         self.train_params = {
@@ -42,6 +43,7 @@ class SentencePieceModelTrainer:
             "split_by_unicode_script": split_by_unicode_script,
             "shrinking_factor": shrinking_factor,
             "treat_whitespace_as_suffix": treat_whitespace_as_suffix,
+            "user_defined_symbols": user_defined_symbols,
             "vocab_size": vocab_size,
         }
         self.model_file = f"{model_prefix}.model"
@@ -83,10 +85,11 @@ class SentencePieceModelTrainer:
 class ArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument("-m", "--model-prefix", type=str, default="sentencepiece")
+        self.add_argument("-mb", "--max-batch", type=int, default=20000)
+        self.add_argument("-mp", "--model-prefix", type=str, default="sentencepiece")
+        self.add_argument("-mt", "--model-type", type=str, default="unigram")
         self.add_argument("-t", "--test-only", action="store_true")
         self.add_argument("-vs", "--vocab-size", type=int, default=32000)
-        self.add_argument("-mb", "--max-batch", type=int, default=20000)
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
 
 
@@ -94,6 +97,7 @@ if __name__ == "__main__":
     args = ArgParser().args
     trainer = SentencePieceModelTrainer(
         model_prefix=args.model_prefix,
+        model_type=args.model_type,
         vocab_size=args.vocab_size,
     )
     if not args.test_only:
@@ -103,7 +107,7 @@ if __name__ == "__main__":
     trainer.test(TEST_SENTENCES)
 
     # python -m models.sentencepiece.train
-    # python -m models.sentencepiece.train -m sp_200m_256k -t
+    # python -m models.sentencepiece.train -mp sp_380m_500k -t
 
-    # python -m models.sentencepiece.train -m sp_1kw_8k -vs 8192 -mb 1000
-    # python -m models.sentencepiece.train -m sp_200m_256k -vs 256000 -mb 20000
+    # python -m models.sentencepiece.train -mp sp_380m_500k -mb 38000 -vs 500000
+    # python -m models.sentencepiece.train -mp sp_400m_500k_bpe -mb 40000 -vs 500000 -mt bpe
