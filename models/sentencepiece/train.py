@@ -1,4 +1,5 @@
 import argparse
+import os
 import sentencepiece as spm
 import sys
 
@@ -8,8 +9,9 @@ from tclogger import logger, logstr, Runtimer, dict_to_str
 from typing import Literal
 
 from models.sentencepiece.data import SentencesDataloader
-from models.sentencepiece.test import TEST_SENTENCES
 from models.sentencepiece.edit import SentencePieceModelVocabEditor
+from models.sentencepiece.tokenize import SentenceFullTokenizer
+from models.sentencepiece.test import TEST_SENTENCES
 
 
 class SentencePieceModelTrainer:
@@ -28,10 +30,12 @@ class SentencePieceModelTrainer:
         model_type: Literal["unigram", "bpe", "char", "word"] = "unigram",
         num_threads: int = 16,
         split_by_unicode_script: bool = False,
+        split_by_number: bool = False,
         shrinking_factor: float = 0.75,
         treat_whitespace_as_suffix: bool = False,
         user_defined_symbols="▁",
         vocab_size: int = 32000,
+        overwrite: bool = True,
     ):
         self.train_params = {
             "add_dummy_prefix": add_dummy_prefix,
@@ -42,12 +46,15 @@ class SentencePieceModelTrainer:
             "model_prefix": model_prefix,
             "num_threads": num_threads,
             "split_by_unicode_script": split_by_unicode_script,
+            "split_by_number": split_by_number,
             "shrinking_factor": shrinking_factor,
             "treat_whitespace_as_suffix": treat_whitespace_as_suffix,
             "user_defined_symbols": user_defined_symbols,
             "vocab_size": vocab_size,
         }
+        self.model_prefix = model_prefix
         self.model_file = f"{model_prefix}.model"
+        self.overwrite = overwrite
 
     def load_data(
         self,
@@ -66,9 +73,27 @@ class SentencePieceModelTrainer:
                 verbose=True,
             )
 
+    def delete_existed_model(self):
+        model_prefix = str(self.model_prefix)
+        logger.warn(f"  ! WARNING: You are deleting model:", end=" ")
+        logger.note(f"[{model_prefix}]")
+        confirmation = input(
+            f'  > Type "{logstr.file(model_prefix)}" to confirm deletion: '
+        )
+        if confirmation != model_prefix:
+            logger.mesg(f"  * Skip delete model file: [{model_prefix}]")
+        else:
+            os.remove(f"{model_prefix}.model")
+            os.remove(f"{model_prefix}.vocab")
+            logger.warn(f"  * Model file deleted: [{model_prefix}]")
+
     def train(self):
         logger.note("> Training ...")
         logger.mesg(dict_to_str(self.train_params), indent=2)
+
+        if self.overwrite and os.path.exists(self.model_file):
+            self.delete_existed_model()
+
         spm.SentencePieceTrainer.Train(
             sentence_iterator=iter(self.data_loader),
             **self.train_params,
@@ -76,11 +101,11 @@ class SentencePieceModelTrainer:
 
     def test(self, test_sentences: list[str]):
         logger.note("> Testing ...")
-        sp = spm.SentencePieceProcessor(model_file=self.model_file)
+        tokenizer = SentenceFullTokenizer(self.model_file)
         for sentence in test_sentences:
-            tokens = sp.EncodeAsPieces(sentence.lower())
-            tokens_str = f"{logstr.note('_')}".join(tokens)
-            logger.mesg(f"  * {tokens_str}")
+            tokens = tokenizer.tokenize(sentence)
+            pretty_tokens = tokenizer.prettify_tokens(tokens)
+            logger.mesg(f"  * {pretty_tokens}")
 
 
 class ArgParser(argparse.ArgumentParser):
@@ -92,6 +117,8 @@ class ArgParser(argparse.ArgumentParser):
         self.add_argument("-mt", "--model-type", type=str, default="unigram")
         self.add_argument("-t", "--test-only", action="store_true")
         self.add_argument("-vs", "--vocab-size", type=int, default=32000)
+        self.add_argument("-k", "--keep-exist-model", action="store_true")
+        self.add_argument("-e", "--edit-model", action="store_true")
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
 
 
@@ -102,13 +129,15 @@ if __name__ == "__main__":
         model_prefix=args.model_prefix,
         model_type=args.model_type,
         vocab_size=args.vocab_size,
+        overwrite=not args.keep_exist_model,
     )
     if not args.test_only:
         trainer.load_data(max_batch=args.max_batch, batch_size=10000)
         with Runtimer() as timer:
             trainer.train()
-    editor = SentencePieceModelVocabEditor(trainer.model_file, verbose=True)
-    editor.edit()
+    if args.edit_model:
+        editor = SentencePieceModelVocabEditor(trainer.model_file, verbose=True)
+        editor.edit()
     trainer.test(TEST_SENTENCES)
 
     # python -m models.sentencepiece.train
@@ -116,3 +145,4 @@ if __name__ == "__main__":
 
     # python -m models.sentencepiece.train -mp sp_200m_200k -mb 20000 -vs 200000
     # python -m models.sentencepiece.train -mp sp_480m_600k -mb 48000 -vs 600000
+    # python -m models.sentencepiece.train -mp sp_100m_100k -mb 10000 -vs 100000
