@@ -1,3 +1,4 @@
+import math
 import re
 
 from tclogger import dict_get
@@ -53,6 +54,18 @@ class DocSentenceConverter:
     def merge_whitespaces(self, sentence: str) -> str:
         return self.PT_WHITESPACES.sub(" ", sentence).strip()
 
+    def multiply_sentence(self, doc: dict, sentence: str) -> str:
+        view = dict_get(doc, "stat.view", 0)
+        if view <= 100:
+            multi = 1
+        elif view >= 1e7:
+            multi = 8
+        else:
+            view_log = max(math.log(max(view, 0) + 1, 10), 0)
+            multi = int(view_log) + 1
+        sentence = f"{sentence} " * multi
+        return sentence
+
     def convert_sentence(self, sentence: str) -> str:
         sentence = sentence.lower()
         # sentence = self.remove_whitespaces_among_cjk(sentence)
@@ -63,6 +76,7 @@ class DocSentenceConverter:
     def convert(self, doc: dict) -> str:
         sentence = self.doc_to_sentence(doc)
         sentence = self.convert_sentence(sentence)
+        sentence = self.multiply_sentence(doc, sentence)
         return sentence
 
 
