@@ -22,22 +22,34 @@ class DocSentenceConverter:
     RE_DASH = r"\-\_\."
 
     RE_CJK_SPACE = rf"(?<=[{RE_CJK}])\s+(?=[{RE_CJK}])"
-    RE_NON_WORD = rf"[^({RE_CJK})|({RE_EN})]"
+    RE_NON_WORD = rf"[^{RE_CJK}{RE_EN}]"
+    RE_WHITESPACES = r"\s{2,}"
+
+    RE_UNIT_NUM = r"毫厘分个十百千万兆亿"
+    RE_UNIT_DATE = r"年月日天夜号点分秒"
+    RE_UNIT_WEIGHT = r"吨斤升两克磅里米尺寸"
+    RE_UNIT_OTHRES = r"季集章回级元块期课题届次人份只头种件位辆楼层间"
+    RE_UNIT_COMBO = (
+        rf"(小时)|(分钟)|([公海英]里)|([美日欧]元)|([{RE_UNIT_NUM}][{RE_UNIT_WEIGHT}])"
+    )
+    RE_UNITS = rf"({RE_UNIT_COMBO}|[{RE_UNIT_NUM}{RE_UNIT_DATE}{RE_UNIT_WEIGHT}{RE_UNIT_OTHRES}])"
+    RE_DIGIT_UNIT = rf"\d+{RE_UNITS}"
+    RE_DIGIT_PURE = r"(^|\s)\d+(\s|\n|$)"
+
+    RE_DIGITS = rf"({RE_DIGIT_UNIT}|{RE_DIGIT_PURE})"
 
     PT_CJK_SPACE = re.compile(RE_CJK_SPACE)
     PT_NON_WORD = re.compile(RE_NON_WORD)
-    PT_WHITESPACES = re.compile(r"\s{2,}")
+    PT_WHITESPACES = re.compile(RE_WHITESPACES)
+    PT_DIGITS = re.compile(RE_DIGITS)
 
     def doc_to_sentence(self, doc: dict) -> str:
         author = dict_get(doc, "owner.name", "")
         author_str = f"{author}" if author else ""
-
         title = dict_get(doc, "title", "")
         title_str = f"{title}" if title else ""
-
         desc = dict_get(doc, "desc", "")
         desc_str = f"{desc}" if desc else ""
-
         rtags = dict_get(doc, "rtags", "")
         tags = dict_get(doc, "tags", "")
         tags_str = f"{rtags}, {tags}" if tags else f"{rtags}"
@@ -50,6 +62,9 @@ class DocSentenceConverter:
 
     def replace_non_word_with_whitespaces(self, sentence: str) -> str:
         return self.PT_NON_WORD.sub(" ", sentence)
+
+    def replace_digits(self, sentence: str, token: str = "<DIGITS>") -> str:
+        return self.PT_DIGITS.sub(token, sentence)
 
     def merge_whitespaces(self, sentence: str) -> str:
         return self.PT_WHITESPACES.sub(" ", sentence).strip()
@@ -70,6 +85,7 @@ class DocSentenceConverter:
         sentence = sentence.lower()
         # sentence = self.remove_whitespaces_among_cjk(sentence)
         sentence = self.replace_non_word_with_whitespaces(sentence)
+        sentence = self.replace_digits(sentence)
         # sentence = self.merge_whitespaces(sentence)
         return sentence
 
@@ -83,7 +99,10 @@ class DocSentenceConverter:
 if __name__ == "__main__":
     from tclogger import logger
 
-    sentence = " 这是 一段 中文。这是日语：これは 日本語 です。 Here is some English. https://www.google.com"
+    sentence = (
+        " 这是 一段 中文。这是日语：これは 日本語 です。 Here is some English. https://www.google.com \n"
+        "3g gta5 红警HBK08 (1) [34] 1999年11月11日 300勇士 5分钟 300吨 2万公里 122毫米 2万 100"
+    )
     logger.note(sentence)
     converter = DocSentenceConverter()
     sentence = converter.convert_sentence(sentence)
