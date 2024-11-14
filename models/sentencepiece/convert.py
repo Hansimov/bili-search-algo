@@ -30,7 +30,7 @@ class DocSentenceConverter:
     RE_UNIT_WEIGHT = r"吨斤升两克磅里米尺寸"
     RE_UNIT_OTHRES = r"季集章回级元块期课题届次人份只头种件位辆楼层间"
     RE_UNIT_COMBO = (
-        rf"(小时)|(分钟)|([公海英]里)|([美日欧]元)|([{RE_UNIT_NUM}][{RE_UNIT_WEIGHT}])"
+        rf"小时|分钟|[公海英]里|[美日欧]元|[{RE_UNIT_NUM}][{RE_UNIT_WEIGHT}]"
     )
     RE_UNITS = rf"({RE_UNIT_COMBO}|[{RE_UNIT_NUM}{RE_UNIT_DATE}{RE_UNIT_WEIGHT}{RE_UNIT_OTHRES}])"
     RE_DIGIT_UNIT = rf"\d+{RE_UNITS}"
@@ -63,8 +63,8 @@ class DocSentenceConverter:
     def replace_non_word_with_whitespaces(self, sentence: str) -> str:
         return self.PT_NON_WORD.sub(" ", sentence)
 
-    def replace_digits(self, sentence: str, token: str = "<DIGITS>") -> str:
-        return self.PT_DIGITS.sub(token, sentence)
+    def replace_digits(self, sentence: str) -> str:
+        return self.PT_DIGITS.sub("", sentence)
 
     def merge_whitespaces(self, sentence: str) -> str:
         return self.PT_WHITESPACES.sub(" ", sentence).strip()
@@ -72,7 +72,7 @@ class DocSentenceConverter:
     def multiply_sentence(self, doc: dict, sentence: str) -> str:
         view = dict_get(doc, "stat.view", 0)
         if view <= 100:
-            multi = 1
+            return sentence
         elif view >= 1e7:
             multi = 8
         else:
@@ -98,14 +98,26 @@ class DocSentenceConverter:
 
 if __name__ == "__main__":
     from tclogger import logger
+    import timeit
 
     sentence = (
         " 这是 一段 中文。这是日语：これは 日本語 です。 Here is some English. https://www.google.com \n"
-        "3g gta5 红警HBK08 (1) [34] 1999年11月11日 300勇士 5分钟 300吨 2万公里 122毫米 2万 100"
+        "3g gta5 红警HBK08 (1) [34] 1999年11月11日 300勇士 3小 5分多钟 300吨 2万海里 122毫米 2万 100"
     )
     logger.note(sentence)
     converter = DocSentenceConverter()
     sentence = converter.convert_sentence(sentence)
     logger.success(sentence)
+
+    logger.note("> Benchmarking ...")
+    sum_time = 0
+    epochs, iterations = 5, 10000
+    for i in range(epochs):
+        res = timeit.timeit(
+            lambda: converter.convert_sentence(sentence), number=iterations
+        )
+        logger.file(f"* {res:.6f}")
+        sum_time += res
+    logger.success(f"{sum_time/epochs:.6f}")
 
     # python -m models.sentencepiece.convert

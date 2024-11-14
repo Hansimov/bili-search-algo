@@ -20,7 +20,7 @@ class SentencePieceModelTrainer:
     def __init__(
         self,
         add_dummy_prefix: bool = False,
-        character_coverage: float = 0.9995,
+        character_coverage: float = 0.99,
         input_sentence_size: int = 1000000,
         minloglevel: int = 2,
         model_prefix="sentencepiece",
@@ -29,7 +29,7 @@ class SentencePieceModelTrainer:
         split_by_unicode_script: bool = False,
         shrinking_factor: float = 0.75,
         treat_whitespace_as_suffix: bool = False,
-        user_defined_symbols="▁,<DIGITS>",
+        user_defined_symbols="▁",
         vocab_size: int = 32000,
     ):
         self.train_params = {
@@ -85,7 +85,7 @@ class SentencePieceModelTrainer:
 class ArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument("-cc", "--character-coverage", type=float, default=0.9995)
+        self.add_argument("-cc", "--character-coverage", type=float, default=0.99)
         self.add_argument("-mb", "--max-batch", type=int, default=20000)
         self.add_argument("-mp", "--model-prefix", type=str, default="sentencepiece")
         self.add_argument("-mt", "--model-type", type=str, default="unigram")
