@@ -64,6 +64,11 @@ class SentencePieceModelVocabEditor:
             logger.mesg(f"  * New vocab size: {logstr.success(brk(new_vocab_size))}")
             logger.mesg(f"  - Tokens removed: {logstr.file(brk(removed_count))}")
 
+    def edit(self):
+        self.load_model()
+        self.remove_digits()
+        self.save_model()
+
 
 if __name__ == "__main__":
     model_path = Path(__file__).parents[2] / "sp_100m_100k_no.model"

@@ -9,6 +9,7 @@ from typing import Literal
 
 from models.sentencepiece.data import SentencesDataloader
 from models.sentencepiece.test import TEST_SENTENCES
+from models.sentencepiece.edit import SentencePieceModelVocabEditor
 
 
 class SentencePieceModelTrainer:
@@ -106,6 +107,8 @@ if __name__ == "__main__":
         trainer.load_data(max_batch=args.max_batch, batch_size=10000)
         with Runtimer() as timer:
             trainer.train()
+    editor = SentencePieceModelVocabEditor(trainer.model_file, verbose=True)
+    editor.edit()
     trainer.test(TEST_SENTENCES)
 
     # python -m models.sentencepiece.train
