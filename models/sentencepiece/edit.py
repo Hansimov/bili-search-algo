@@ -34,7 +34,10 @@ class SentencePieceModelProtor:
 
 class SentencePieceModelVocabEditor:
     RE_DIGITS_PURE = r"^\d+$"
+    RE_DIGITS_CJK = r"^\d+[^\da-z]+$"
+
     PT_DIGIT_PURE = re.compile(RE_DIGITS_PURE)
+    PT_DIGIT_CJK = re.compile(RE_DIGITS_CJK)
 
     def __init__(self, model_path: Union[str, Path], verbose: bool = False):
         self.model_path = model_path
@@ -48,12 +51,13 @@ class SentencePieceModelVocabEditor:
         self.protor.save_model(model=self.model)
 
     def remove_digits(self) -> spm_pb2.ModelProto:
-        logger.note("> Remove pure digit tokens from vocab:", verbose=self.verbose)
+        logger.note("> Remove digit tokens from vocab:", verbose=self.verbose)
         old_vocab_size = len(self.model.pieces)
         new_pieces = [
             piece
             for piece in self.model.pieces
             if not self.PT_DIGIT_PURE.match(piece.piece)
+            and not self.PT_DIGIT_CJK.match(piece.piece)
         ]
         self.model.ClearField("pieces")
         self.model.pieces.extend(new_pieces)
