@@ -104,7 +104,7 @@ class SentencePieceModelTrainer:
         tokenizer = SentenceFullTokenizer(self.model_file)
         for sentence in test_sentences:
             tokens = tokenizer.tokenize(sentence)
-            pretty_tokens = tokenizer.prettify_tokens(tokens)
+            pretty_tokens = tokenizer.stringify(tokens)
             logger.mesg(f"  * {pretty_tokens}")
 
 
@@ -143,6 +143,7 @@ if __name__ == "__main__":
     # python -m models.sentencepiece.train
     # python -m models.sentencepiece.train -mp sp_380m_500k -t
 
-    # python -m models.sentencepiece.train -mp sp_200m_200k -mb 20000 -vs 200000
-    # python -m models.sentencepiece.train -mp sp_480m_600k -mb 48000 -vs 600000
     # python -m models.sentencepiece.train -mp sp_100m_100k -mb 10000 -vs 100000
+    # python -m models.sentencepiece.train -mp sp_200m_200k -mb 20000 -vs 200000
+    # python -m models.sentencepiece.train -e -mb 48000 -vs 300000 -mp sp_480m_300k
+    # python -m models.sentencepiece.train -e -mb 48000 -vs 200000 -mp sp_480m_200k

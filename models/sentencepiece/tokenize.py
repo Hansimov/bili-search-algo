@@ -7,6 +7,12 @@ from typing import Union
 
 from models.sentencepiece.convert import DocSentenceConverter
 
+"""Naming conventions by typings:
+- tokenize: str -> list[str]
+- tokenize_parts: list[tuple] -> list[str]
+- transform: list[str] -> list[str]
+"""
+
 
 class SentencePreTokenizer:
     RE_NON_WORD = DocSentenceConverter.RE_NON_WORD
@@ -59,25 +65,84 @@ class SentencePieceModelTokenizer:
         return tokens
 
 
+class SentencePostTokenizer:
+    RE_ATOZ = r"[a-zA-Z]+"
+    RE_DIGITS = r"\d+"
+    RE_WORD = r"[^\da-zA-Z]+"
+    RE_ATOZ_DIGITS = rf"(?P<atoz>{RE_ATOZ})|(?P<digits>{RE_DIGITS})|(?P<word>{RE_WORD})"
+
+    PT_ATOZ = re.compile(RE_ATOZ)
+    PT_DIGITS = re.compile(RE_DIGITS)
+    PT_ATOZ_DIGITS = re.compile(RE_ATOZ_DIGITS)
+
+    def is_same_type(self, a: str, b: str) -> bool:
+        if a.isdigit() and b.isdigit():
+            return True
+        if self.PT_ATOZ.match(a) and self.PT_ATOZ.match(b):
+            return True
+        return False
+
+    def split_atoz_and_digits(self, token: str) -> list[str]:
+        """Examples:
+        - "abc100" -> ["abc", "100"]
+        - "5a10" -> ["5", "a", "10"]
+        - "1000" -> ["1000"]
+        """
+        parts = []
+        for match in self.PT_ATOZ_DIGITS.finditer(token):
+            atoz = match.group("atoz")
+            digits = match.group("digits")
+            word = match.group("word")
+            if atoz:
+                parts.append(atoz)
+            if digits:
+                parts.append(digits)
+            if word:
+                parts.append(word)
+        return parts
+
+    def merge_same_types(self, tokens: list[str]) -> list[tuple[str, str]]:
+        """Examples:
+        - [hb,k0,8,是] -> [hbk,08,是]
+        - [2024lbw,nb] -> [2024,lbwnb]
+        - [2024lbw, ,nb]-> [2024lbw, ,nb] # no merge as adjacent token type not same
+        - [abc100,0, def123] -> [abc,1000,def123]
+        - [5a10,0d, def123d,?] -> [5a,100,ddef,123,d,?]
+        """
+        merges = []
+        for i in range(len(tokens)):
+            token = tokens[i]
+            if token == "":
+                continue
+            if not merges:
+                merges.append((token, "raw"))
+                continue
+            last_token = merges[-1][0]
+            if self.is_same_type(last_token[-1], token[0]):
+                merges[-1] = (last_token + token, "merged")
+            else:
+                merges.append((tokens[i], "raw"))
+        merged_tokens = []
+        for token, type in merges:
+            if type == "raw":
+                merged_tokens.append(token)
+            else:
+                split_tokens = self.split_atoz_and_digits(token)
+                merged_tokens.extend(split_tokens)
+        return merged_tokens
+
+    def transform(self, tokens: list[str]) -> list[str]:
+        tokens = self.merge_same_types(tokens)
+        return tokens
+
+
 class SentenceFullTokenizer:
-    RE_DIGITS_END = r"(?P<non_digits>[^\d]+)(?P<digits_end>\d+)$"
-    RE_DIGITS_START = r"^(?P<digits_start>\d+)(?P<non_digits>[^\d]+)$"
-
-    PT_DIGITS_END = re.compile(RE_DIGITS_END)
-    PT_DIGITS_START = re.compile(RE_DIGITS_START)
-
     def __init__(self, model_path: Union[Path, str], verbose: bool = False):
         self.model_path = model_path
         self.verbose = verbose
         self.pre_tokenizer = SentencePreTokenizer()
+        self.post_tokenizer = SentencePostTokenizer()
         self.model_tokenizer = SentencePieceModelTokenizer(model_path)
-
-    def join_tokens(self, tokens: list[str], sep: str = " ") -> str:
-        return sep.join(tokens)
-
-    def prettify_tokens(self, tokens: list[str]) -> str:
-        tokens_str = f"{logstr.note('_')}".join(tokens)
-        return tokens_str
 
     def tokenize_parts(self, parts: list[tuple]) -> list[str]:
         tokens = []
@@ -88,41 +153,15 @@ class SentenceFullTokenizer:
                 tokens.extend(self.model_tokenizer.tokenize(part))
         return tokens
 
-    def merge_digits(self, tokens: list[str]) -> list[str]:
-        """Examples:
-        - [hb,k0,8,是] -> [hb,k,08,是]
-        - [斗鱼,632,4房] -> [斗鱼,6324,房]
-        """
-        merged_tokens = []
-        for i in range(len(tokens)):
-            token = tokens[i]
-            if i == 0:
-                merged_tokens.append(token)
-                continue
-            prev_token = merged_tokens[-1]
-            digits_end_match = self.PT_DIGITS_END.match(prev_token)
-            digits_start_match = self.PT_DIGITS_START.match(token)
-            if token.isdigit() and digits_end_match:
-                last_token_non_digits = digits_end_match.group("non_digits")
-                last_token_digits = digits_end_match.group("digits_end")
-                merged_tokens.pop()
-                merged_tokens.extend([last_token_non_digits, last_token_digits + token])
-            elif prev_token.isdigit() and digits_start_match:
-                token_digits_start = digits_start_match.group("digits_start")
-                token_non_digits = digits_start_match.group("non_digits")
-                merged_tokens.pop()
-                merged_tokens.extend(
-                    [prev_token + token_digits_start, token_non_digits]
-                )
-            else:
-                merged_tokens.append(token)
-        return merged_tokens
+    def stringify(self, tokens: list[str]) -> str:
+        tokens_str = f"{logstr.note('_')}".join(tokens)
+        return tokens_str
 
     def tokenize(self, sentence: str) -> list[str]:
         sentence = sentence.lower()
         parts = self.pre_tokenizer.tokenize(sentence)
         tokens = self.tokenize_parts(parts)
-        # tokens = self.merge_digits(tokens)
+        tokens = self.post_tokenizer.transform(tokens)
         return tokens
 
 
@@ -141,7 +180,7 @@ if __name__ == "__main__":
     tokenizer = SentenceFullTokenizer(model_path, verbose=True)
     for sentence in TEST_SENTENCES:
         tokens = tokenizer.tokenize(sentence)
-        pretty_tokens = tokenizer.prettify_tokens(tokens)
+        pretty_tokens = tokenizer.stringify(tokens)
         logger.mesg(f"  * {pretty_tokens}")
 
     # python -m models.sentencepiece.tokenize
