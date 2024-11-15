@@ -15,11 +15,19 @@ from models.sentencepiece.convert import DocSentenceConverter
 
 
 class SentencePreTokenizer:
-    RE_NON_WORD = DocSentenceConverter.RE_NON_WORD
-    RE_DIGITS = DocSentenceConverter.RE_DIGITS
+    RE_CJK = DocSentenceConverter.RE_CJK
+    RE_EN = DocSentenceConverter.RE_EN
+    RE_NON_WORD = rf"[^{RE_CJK}{RE_EN}\.]+"
+
+    RE_DIGIT_PREFIX = DocSentenceConverter.RE_DIGIT_PREFIX
+    RE_UNITS = DocSentenceConverter.RE_UNITS
+    RE_DIGITS = r"[\d\.]+(?<!\.)"
+    RE_DIGIT_DOTS = r"\d*\.\d+"
+    RE_DIGIT_UNIT = rf"[{RE_DIGIT_PREFIX}]?{RE_DIGITS}{RE_UNITS}"
+    RE_DIGITS_ALL = rf"(?:{RE_DIGIT_UNIT}|{RE_DIGIT_DOTS})"
 
     PT_NON_WORD = re.compile(RE_NON_WORD)
-    PT_DIGITS = re.compile(RE_DIGITS)
+    PT_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
 
     def fill_str_parts(
         self, parts: list[tuple[int, int, str, str]], sentence: str
@@ -46,7 +54,7 @@ class SentencePreTokenizer:
         - type: "non_word", "digits", "str"
         """
         parts = []
-        for match in self.PT_DIGITS.finditer(sentence):
+        for match in self.PT_DIGITS_ALL.finditer(sentence):
             parts.append((match.start(), match.end(), match.group(), "digits"))
         for match in self.PT_NON_WORD.finditer(sentence):
             parts.append((match.start(), match.end(), match.group(), "non_word"))
@@ -67,18 +75,30 @@ class SentencePieceModelTokenizer:
 
 class SentencePostTokenizer:
     RE_ATOZ = r"[a-zA-Z]+"
-    RE_DIGITS = r"\d+"
+    RE_ATOZ_HEAD = rf"^{RE_ATOZ}"
+    RE_ATOZ_TAIL = rf"{RE_ATOZ}$"
+
+    RE_DIGITS = SentencePreTokenizer.RE_DIGITS
+    RE_DIGITS_HEAD = rf"^{RE_DIGITS}"
+    RE_DIGITS_TAIL = rf"{RE_DIGITS}$"
+
     RE_WORD = r"[^\da-zA-Z]+"
     RE_ATOZ_DIGITS = rf"(?P<atoz>{RE_ATOZ})|(?P<digits>{RE_DIGITS})|(?P<word>{RE_WORD})"
 
     PT_ATOZ = re.compile(RE_ATOZ)
+    PT_ATOZ_HEAD = re.compile(RE_ATOZ_HEAD)
+    PT_ATOZ_TAIL = re.compile(RE_ATOZ_TAIL)
+
     PT_DIGITS = re.compile(RE_DIGITS)
+    PT_DIGITS_HEAD = re.compile(RE_DIGITS_HEAD)
+    PT_DIGITS_TAIL = re.compile(RE_DIGITS_TAIL)
+
     PT_ATOZ_DIGITS = re.compile(RE_ATOZ_DIGITS)
 
     def is_same_type(self, a: str, b: str) -> bool:
-        if a.isdigit() and b.isdigit():
+        if self.PT_DIGITS_TAIL.match(a) and self.PT_DIGITS_HEAD.match(b):
             return True
-        if self.PT_ATOZ.match(a) and self.PT_ATOZ.match(b):
+        if self.PT_ATOZ_TAIL.match(a) and self.PT_ATOZ_HEAD.match(b):
             return True
         return False
 
