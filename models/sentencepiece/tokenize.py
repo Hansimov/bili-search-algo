@@ -6,7 +6,6 @@ from tclogger import logger, logstr
 from typing import Union
 
 from models.sentencepiece.convert import DocSentenceConverter
-from models.sentencepiece.test import TEST_SENTENCES
 
 
 class SentencePreTokenizer:
@@ -61,6 +60,12 @@ class SentencePieceModelTokenizer:
 
 
 class SentenceFullTokenizer:
+    RE_DIGITS_END = r"(?P<non_digits>[^\d]+)(?P<digits_end>\d+)$"
+    RE_DIGITS_START = r"^(?P<digits_start>\d+)(?P<non_digits>[^\d]+)$"
+
+    PT_DIGITS_END = re.compile(RE_DIGITS_END)
+    PT_DIGITS_START = re.compile(RE_DIGITS_START)
+
     def __init__(self, model_path: Union[Path, str], verbose: bool = False):
         self.model_path = model_path
         self.verbose = verbose
@@ -83,20 +88,49 @@ class SentenceFullTokenizer:
                 tokens.extend(self.model_tokenizer.tokenize(part))
         return tokens
 
+    def merge_digits(self, tokens: list[str]) -> list[str]:
+        """Examples:
+        - [hb,k0,8,是] -> [hb,k,08,是]
+        - [斗鱼,632,4房] -> [斗鱼,6324,房]
+        """
+        merged_tokens = []
+        for i in range(len(tokens)):
+            token = tokens[i]
+            if i == 0:
+                merged_tokens.append(token)
+                continue
+            prev_token = merged_tokens[-1]
+            digits_end_match = self.PT_DIGITS_END.match(prev_token)
+            digits_start_match = self.PT_DIGITS_START.match(token)
+            if token.isdigit() and digits_end_match:
+                last_token_non_digits = digits_end_match.group("non_digits")
+                last_token_digits = digits_end_match.group("digits_end")
+                merged_tokens.pop()
+                merged_tokens.extend([last_token_non_digits, last_token_digits + token])
+            elif prev_token.isdigit() and digits_start_match:
+                token_digits_start = digits_start_match.group("digits_start")
+                token_non_digits = digits_start_match.group("non_digits")
+                merged_tokens.pop()
+                merged_tokens.extend(
+                    [prev_token + token_digits_start, token_non_digits]
+                )
+            else:
+                merged_tokens.append(token)
+        return merged_tokens
+
     def tokenize(self, sentence: str) -> list[str]:
         sentence = sentence.lower()
         parts = self.pre_tokenizer.tokenize(sentence)
         tokens = self.tokenize_parts(parts)
+        # tokens = self.merge_digits(tokens)
         return tokens
 
 
 if __name__ == "__main__":
     from tclogger import logger
+    from models.sentencepiece.test import TEST_TOKENS, TEST_SENTENCES
 
-    sentence = (
-        " 这是 一段 中文。这是日语：これは 日本語 です。 Here is some English. https://www.google.com \n"
-        "3g gta5 红警HBK08 (1) [34] 1999年11月11日 300勇士 3小时5分多钟300吨 2万海里 122毫米 2万 100"
-    )
+    sentence = TEST_TOKENS
     logger.note("> Pre-Tokenizing ...")
     pre_tokenizer = SentencePreTokenizer()
     parts = pre_tokenizer.tokenize(sentence)
