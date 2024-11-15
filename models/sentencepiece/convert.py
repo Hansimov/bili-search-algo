@@ -25,15 +25,14 @@ class DocSentenceConverter:
     RE_NON_WORD = rf"[^{RE_CJK}{RE_EN}]+"
     RE_WHITESPACES = r"\s{2,}"
 
+    RE_DIGIT_PREFIX = r"第前后"
     RE_UNIT_NUM = r"毫厘分个十百千万兆亿"
-    RE_UNIT_DATE = r"年月日天夜号点分秒"
-    RE_UNIT_WEIGHT = r"吨斤升两克磅里米尺寸"
-    RE_UNIT_OTHRES = r"季集章篇节回级元块期课题届次人份只头种件位辆楼层间"
-    RE_UNIT_COMBO = (
-        rf"小时|分钟|[公海英]里|[美日欧]元|[{RE_UNIT_NUM}][{RE_UNIT_WEIGHT}]"
-    )
+    RE_UNIT_DATE = r"年岁月周日天夜号点分秒"
+    RE_UNIT_WEIGHT = r"吨斤升两克磅里平米尺寸吋"
+    RE_UNIT_OTHRES = r"季集章篇部节回阶级系路元块折期课题届次名人份只头种件位辆楼层套间室厅厨卫杀袋包箱台倍星枚连"
+    RE_UNIT_COMBO = rf"小时|分钟|周[年岁]|倍[速镜]|平米|[公海英]里|英[镑尺寸吋]|[美日欧]元|[{RE_UNIT_NUM}][{RE_UNIT_WEIGHT}]"
     RE_UNITS = rf"({RE_UNIT_COMBO}|[{RE_UNIT_NUM}{RE_UNIT_DATE}{RE_UNIT_WEIGHT}{RE_UNIT_OTHRES}])"
-    RE_DIGIT_UNIT = rf"\d+{RE_UNITS}"
+    RE_DIGIT_UNIT = rf"[{RE_DIGIT_PREFIX}]?\d+{RE_UNITS}"
     RE_DIGIT_PURE = r"(^|\b)\d+(\b|$)"
 
     RE_DIGITS = rf"({RE_DIGIT_UNIT}|{RE_DIGIT_PURE})"
@@ -98,12 +97,10 @@ class DocSentenceConverter:
 
 if __name__ == "__main__":
     from tclogger import logger
+    from models.sentencepiece.test import TEST_TOKENS
     import timeit
 
-    sentence = (
-        " 这是 一段 中文。这是日语：これは 日本語 です。 Here is some English. https://www.google.com \n"
-        "3g gta5 早上8点 红警HBK08 (1) [34] <56> 78 1999年11月11日 300勇士 3小5分多钟300吨 2万海里 122毫米 2万 100"
-    )
+    sentence = TEST_TOKENS
     logger.note(sentence)
     converter = DocSentenceConverter()
     sentence = converter.convert_sentence(sentence)
