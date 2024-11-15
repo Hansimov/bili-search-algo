@@ -25,7 +25,7 @@ class DocSentenceConverter:
     RE_NON_WORD = rf"[^{RE_CJK}{RE_EN}]+"
     RE_WHITESPACES = r"\s{2,}"
 
-    RE_DIGIT_PREFIX = r"第前后"
+    RE_DIGIT_PREFIX = r"第前"
     RE_UNIT_NUM = r"毫厘分个十百千万兆亿"
     RE_UNIT_DATE = r"年岁月周日天夜号点分秒"
     RE_UNIT_WEIGHT = r"吨斤升两克磅里平米尺寸吋"
@@ -35,12 +35,12 @@ class DocSentenceConverter:
     RE_DIGIT_UNIT = rf"[{RE_DIGIT_PREFIX}]?\d+{RE_UNITS}"
     RE_DIGIT_PURE = r"(^|\b)\d+(\b|$)"
 
-    RE_DIGITS = rf"({RE_DIGIT_UNIT}|{RE_DIGIT_PURE})"
+    RE_DIGITS_ALL = rf"({RE_DIGIT_UNIT}|{RE_DIGIT_PURE})"
 
     PT_CJK_SPACE = re.compile(RE_CJK_SPACE)
     PT_NON_WORD = re.compile(RE_NON_WORD)
     PT_WHITESPACES = re.compile(RE_WHITESPACES)
-    PT_DIGITS = re.compile(RE_DIGITS)
+    RE_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
 
     def doc_to_sentence(self, doc: dict) -> str:
         author = dict_get(doc, "owner.name", "")
@@ -63,7 +63,7 @@ class DocSentenceConverter:
         return self.PT_NON_WORD.sub(" ", sentence)
 
     def replace_digits(self, sentence: str) -> str:
-        return self.PT_DIGITS.sub("", sentence)
+        return self.RE_DIGITS_ALL.sub("", sentence)
 
     def merge_whitespaces(self, sentence: str) -> str:
         return self.PT_WHITESPACES.sub(" ", sentence).strip()
