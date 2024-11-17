@@ -1,6 +1,7 @@
 import math
 import re
 
+from functools import partial
 from tclogger import dict_get
 
 
@@ -48,37 +49,30 @@ class DocSentenceConverter:
         if fields:
             self.fields = fields
         else:
-            self.fields = ["owner.name", "title", "desc", "tags"]
+            self.fields = None
 
-    def doc_to_sentence(self, doc: dict) -> str:
-        if "owner.name" in self.fields:
-            author = dict_get(doc, "owner.name", "")
-            author_str = f"{author}" if author else ""
+        self.init_doc_to_sentence()
+
+    def init_doc_to_sentence(self):
+        if self.fields == ["owner.name"]:
+            self.doc_to_sentence = partial(self.get_doc_field, field="owner.name")
+        elif self.fields:
+            self.doc_to_sentence = partial(self.get_doc_fields, fields=self.fields)
         else:
-            author_str = ""
+            self.doc_to_sentence = self.get_doc_all_fields
 
-        if "title" in self.fields:
-            title = dict_get(doc, "title", "")
-            title_str = f"{title}" if title else ""
-        else:
-            title_str = ""
+    def get_doc_field(self, doc: dict, field: str) -> str:
+        return dict_get(doc, field, "")
 
-        if "desc" in self.fields:
-            desc = dict_get(doc, "desc", "")
-            desc_str = f"{desc}" if desc else ""
-        else:
-            desc_str = ""
+    def get_doc_fields(self, doc: dict, fields: list[str]) -> str:
+        field_strs = [self.get_doc_field(doc, field) for field in fields]
+        fields_str = " | ".join([field_str for field_str in field_strs if field_str])
+        return fields_str
 
-        if "tags" in self.fields:
-            rtags = dict_get(doc, "rtags", "")
-            tags = dict_get(doc, "tags", "")
-            tags_str = f"{rtags}, {tags}" if tags else f"{rtags}"
-        else:
-            tags_str = ""
-
-        sentence_list = [s for s in [author_str, title_str, desc_str, tags_str] if s]
-        sentence = " | ".join(sentence_list)
-        return sentence
+    def get_doc_all_fields(self, doc: dict) -> str:
+        return self.get_doc_fields(
+            doc, ["owner.name", "title", "desc", "rtags", "tags"]
+        )
 
     def remove_whitespaces_among_cjk(self, sentence: str) -> str:
         return self.PT_CJK_SPACE.sub("", sentence)
