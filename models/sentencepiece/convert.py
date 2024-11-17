@@ -3,6 +3,7 @@ import re
 
 from functools import partial
 from tclogger import dict_get
+from typing import Literal
 
 
 class DocSentenceConverter:
@@ -45,21 +46,30 @@ class DocSentenceConverter:
     PT_WHITESPACES = re.compile(RE_WHITESPACES)
     RE_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
 
-    def __init__(self, fields: list[str] = None):
+    def __init__(
+        self,
+        collect_name: Literal["videos_texts", "users"] = "videos_texts",
+        fields: list[str] = None,
+    ):
+        self.collect_name = collect_name
         if fields:
             self.fields = fields
         else:
             self.fields = None
-
         self.init_doc_to_sentence()
 
     def init_doc_to_sentence(self):
-        if self.fields == ["owner.name"]:
-            self.doc_to_sentence = partial(self.get_doc_field, field="owner.name")
-        elif self.fields:
-            self.doc_to_sentence = partial(self.get_doc_fields, fields=self.fields)
+        if self.collect_name == "users":
+            self.doc_to_sentence = partial(self.get_doc_field, field="name")
+            self.multiply_sentence = self.multiply_sentence_by_stat_view
         else:
-            self.doc_to_sentence = self.get_doc_all_fields
+            if self.fields == ["owner.name"]:
+                self.doc_to_sentence = partial(self.get_doc_field, field="owner.name")
+            elif self.fields:
+                self.doc_to_sentence = partial(self.get_doc_fields, fields=self.fields)
+            else:
+                self.doc_to_sentence = self.get_doc_all_fields
+            self.multiply_sentence = self.multiply_sentence_by_videos_count
 
     def get_doc_field(self, doc: dict, field: str) -> str:
         return dict_get(doc, field, "")
@@ -86,7 +96,7 @@ class DocSentenceConverter:
     def merge_whitespaces(self, sentence: str) -> str:
         return self.PT_WHITESPACES.sub(" ", sentence).strip()
 
-    def multiply_sentence(self, doc: dict, sentence: str) -> str:
+    def multiply_sentence_by_stat_view(self, doc: dict, sentence: str) -> str:
         view = dict_get(doc, "stat.view", 0)
         if view <= 100:
             return sentence
@@ -96,6 +106,12 @@ class DocSentenceConverter:
             view_log = max(math.log(max(view, 0) + 1, 10), 0)
             multi = int(view_log) + 1
         sentence = f"{sentence} " * multi
+        return sentence
+
+    def multiply_sentence_by_videos_count(self, doc: dict, sentence: str) -> str:
+        videos = dict_get(doc, "videos", [])
+        videos_count = min(len(videos), 1)
+        sentence = f"{sentence} " * videos_count
         return sentence
 
     def convert_sentence(self, sentence: str) -> str:
