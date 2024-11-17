@@ -17,14 +17,19 @@ from models.sentencepiece.convert import DocSentenceConverter
 class SentencePreTokenizer:
     RE_CJK = DocSentenceConverter.RE_CJK
     RE_EN = DocSentenceConverter.RE_EN
-    RE_NON_WORD = rf"[^{RE_CJK}{RE_EN}\.]+"
-
+    RE_LB = r"\(\[\{"
+    RE_RB = r"\)\]\}"
+    RE_NON_WORD = rf"[^{RE_CJK}{RE_EN}\.{RE_LB}{RE_RB}]+"
     RE_DIGIT_PREFIX = DocSentenceConverter.RE_DIGIT_PREFIX
     RE_UNITS = DocSentenceConverter.RE_UNITS
     RE_DIGITS = r"[\d\.]+(?<!\.)"
+    RE_DIGIT_ZH = r"[〇零一二两三四五六七八九十]"
     RE_DIGIT_DOTS = r"\d*\.\d+"
-    RE_DIGIT_UNIT = rf"[{RE_DIGIT_PREFIX}]?{RE_DIGITS}{RE_UNITS}"
-    RE_DIGITS_ALL = rf"(?:{RE_DIGIT_UNIT}|{RE_DIGIT_DOTS})"
+    RE_DIGIT_UNIT = rf"{RE_DIGIT_PREFIX}?({RE_DIGITS}|{RE_DIGIT_ZH}){RE_UNITS}"
+    RE_DIGIT_BRACKETS = rf"\[{RE_DIGITS}\]|\({RE_DIGITS}\)|{{RE_DIGITS}}"
+    RE_DIGITS_ALL = (
+        rf"(?:{RE_DIGIT_UNIT}|{RE_DIGIT_BRACKETS}|{RE_DIGIT_DOTS}|{RE_DIGIT_ZH}{{2,}})"
+    )
 
     PT_NON_WORD = re.compile(RE_NON_WORD)
     PT_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
