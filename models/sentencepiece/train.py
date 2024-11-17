@@ -59,6 +59,7 @@ class SentencePieceModelTrainer:
     def load_data(
         self,
         data_loader: Iterable[str] = None,
+        source_collect: Literal["videos_texts", "users"] = "videos_texts",
         data_fields: str = None,
         max_batch: int = 100,
         batch_size: int = 10000,
@@ -67,10 +68,12 @@ class SentencePieceModelTrainer:
         if data_loader:
             self.data_loader = data_loader
         else:
+            self.source_collect = source_collect
             if data_fields and isinstance(data_fields, str):
                 data_fields = data_fields.split(",")
 
             self.data_params = {
+                "source_collect": source_collect,
                 "data_fields": data_fields,
                 "max_batch": max_batch,
                 "batch_size": batch_size,
@@ -78,6 +81,7 @@ class SentencePieceModelTrainer:
             logger.mesg(dict_to_str(self.data_params), indent=2)
 
             self.data_loader = SentencesDataloader(
+                source_collect=source_collect,
                 max_batch=max_batch,
                 batch_size=batch_size,
                 show_at_init=False,
@@ -129,6 +133,13 @@ class ArgParser(argparse.ArgumentParser):
         self.add_argument("-mt", "--model-type", type=str, default="unigram")
         self.add_argument("-sf", "--shrinking-factor", type=float, default=0.75)
         self.add_argument("-vs", "--vocab-size", type=int, default=32000)
+        self.add_argument(
+            "-sc",
+            "--source-collect",
+            type=str,
+            choices=["videos_texts", "users"],
+            default="videos_texts",
+        )
         self.add_argument("-df", "--data-fields", type=str, default=None)
         self.add_argument("-t", "--test-only", action="store_true")
         self.add_argument("-k", "--keep-exist-model", action="store_true")
@@ -148,7 +159,10 @@ if __name__ == "__main__":
     )
     if not args.test_only:
         trainer.load_data(
-            data_fields=args.data_fields, max_batch=args.max_batch, batch_size=10000
+            source_collect=args.source_collect,
+            data_fields=args.data_fields,
+            max_batch=args.max_batch,
+            batch_size=10000,
         )
         with Runtimer() as timer:
             trainer.train()
@@ -160,3 +174,4 @@ if __name__ == "__main__":
     # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -mb 48000 -vs 400000 -cc 0.9995 -sf 0.9 -e
     # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -t
     # python -m models.sentencepiece.train -mp sp_48kw_40k_name -mb 48000 -vs 40000 -df owner.name -e
+    # python -m models.sentencepiece.train -mp sp_1kw_10k_users -mb 1000 -vs 10000 -sc users -e
