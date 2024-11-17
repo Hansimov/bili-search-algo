@@ -18,21 +18,23 @@ class DocSentenceConverter:
     """
 
     RE_CJK = r"\u4E00-\u9FFF\u3040-\u30FF"
-    RE_EN = r"0-9a-zA-Z"
+    RE_EN = r"0-9a-zA-Zα-ωΑ-Ω"
     RE_DASH = r"\-\_\."
 
     RE_CJK_SPACE = rf"(?<=[{RE_CJK}])\s+(?=[{RE_CJK}])"
     RE_NON_WORD = rf"[^{RE_CJK}{RE_EN}]+"
     RE_WHITESPACES = r"\s{2,}"
 
-    RE_DIGIT_PREFIX = r"第前"
+    RE_DIGIT_PREFIX = r"[第前这那每]"
     RE_UNIT_NUM = r"毫厘分个十百千万兆亿"
     RE_UNIT_DATE = r"年岁月周日天夜号点分秒"
     RE_UNIT_WEIGHT = r"吨斤升两克磅里平米尺寸吋"
-    RE_UNIT_OTHRES = r"季集章篇部节回阶级系路元块折期课题届次名人份只头种件位辆楼层套间室厅厨卫杀袋包箱台倍星枚连"
+    RE_UNIT_PAPER = r"集章篇部卷节回页张句行词字"
+    RE_UNIT_OTHRES = r"季阶级系路元块折期课题届次名人份只头种件位辆楼层套间室厅厨卫杀袋包箱台倍星枚连"
     RE_UNIT_COMBO = rf"小时|分钟|周[年岁]|倍[速镜]|平米|[公海英]里|英[镑尺寸吋]|[美日欧]元|[{RE_UNIT_NUM}][{RE_UNIT_WEIGHT}]"
-    RE_UNITS = rf"({RE_UNIT_COMBO}|[{RE_UNIT_NUM}{RE_UNIT_DATE}{RE_UNIT_WEIGHT}{RE_UNIT_OTHRES}])"
-    RE_DIGIT_UNIT = rf"[{RE_DIGIT_PREFIX}]?\d+{RE_UNITS}"
+    RE_UNIT_EN = rf"([mck]m|[km]w|h|min|[ukm]g|[nmu]s|[km]hz|kwh)(?<!a-zA-Z)"
+    RE_UNITS = rf"({RE_UNIT_COMBO}|{RE_UNIT_EN}|[{RE_UNIT_NUM}{RE_UNIT_DATE}{RE_UNIT_WEIGHT}{RE_UNIT_PAPER}{RE_UNIT_OTHRES}])"
+    RE_DIGIT_UNIT = rf"{RE_DIGIT_PREFIX}?\d+{RE_UNITS}"
     RE_DIGIT_PURE = r"(^|\b)\d+(\b|$)"
 
     RE_DIGITS_ALL = rf"({RE_DIGIT_UNIT}|{RE_DIGIT_PURE})"
