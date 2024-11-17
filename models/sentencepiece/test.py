@@ -30,4 +30,6 @@ TEST_SENTENCES = [
     "美国首映是在1968年4月2日，在华盛顿特区Uptown剧院 。而最初的特别献映电影则是以六音轨立体磁性声带70mm投射格式影片发行。投射长宽比是2.21:1 。",
     "The number π (spelled out as 'pi') is a mathematical constant that is the ratio of a circle's circumference to its diameter, approximately equal to 3.14159.",
     "北约5.56毫米口径的武器子弹实际直径是5.66mm，阴线直径是5.70mm，而阳线才是5.56mm。而巴雷特反器材狙击枪和M2重机枪使用的.50子弹...",
+    "(1)《一九八四》（英语：Nineteen Eighty-Four），是英国作家乔治·奥威尔所创作的一部反乌托邦小说[2][3]，出版于一九四九年。它重点探讨党和政府权力过分伸张、推行极权主义、实施压抑性统治的后果[4][5]",
+    "独一无二不三不四五颜六色七上八下",
 ]

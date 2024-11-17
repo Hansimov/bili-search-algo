@@ -23,7 +23,7 @@ class SentencePieceModelTrainer:
     def __init__(
         self,
         add_dummy_prefix: bool = False,
-        character_coverage: float = 0.99,
+        character_coverage: float = 0.999,
         input_sentence_size: int = 1000000,
         minloglevel: int = 2,
         model_prefix="sentencepiece",
@@ -111,12 +111,13 @@ class SentencePieceModelTrainer:
 class ArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument("-cc", "--character-coverage", type=float, default=0.99)
+        self.add_argument("-cc", "--character-coverage", type=float, default=0.999)
         self.add_argument("-mb", "--max-batch", type=int, default=20000)
         self.add_argument("-mp", "--model-prefix", type=str, default="sentencepiece")
         self.add_argument("-mt", "--model-type", type=str, default="unigram")
-        self.add_argument("-t", "--test-only", action="store_true")
+        self.add_argument("-sf", "--shrinking-factor", type=float, default=0.75)
         self.add_argument("-vs", "--vocab-size", type=int, default=32000)
+        self.add_argument("-t", "--test-only", action="store_true")
         self.add_argument("-k", "--keep-exist-model", action="store_true")
         self.add_argument("-e", "--edit-model", action="store_true")
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
@@ -128,6 +129,7 @@ if __name__ == "__main__":
         character_coverage=args.character_coverage,
         model_prefix=args.model_prefix,
         model_type=args.model_type,
+        shrinking_factor=args.shrinking_factor,
         vocab_size=args.vocab_size,
         overwrite=not args.keep_exist_model,
     )
@@ -140,10 +142,5 @@ if __name__ == "__main__":
         editor.edit()
     trainer.test(TEST_SENTENCES)
 
-    # python -m models.sentencepiece.train
-    # python -m models.sentencepiece.train -mp sp_380m_500k -t
-
-    # python -m models.sentencepiece.train -mp sp_100m_100k -mb 10000 -vs 100000
-    # python -m models.sentencepiece.train -mp sp_200m_200k -mb 20000 -vs 200000
-    # python -m models.sentencepiece.train -e -mb 48000 -vs 300000 -mp sp_480m_300k
-    # python -m models.sentencepiece.train -e -mb 48000 -vs 200000 -mp sp_480m_200k
+    # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -mb 48000 -vs 400000 -cc 0.9995 -sf 0.9 -e
+    # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -t
