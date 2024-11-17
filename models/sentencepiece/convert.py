@@ -44,18 +44,40 @@ class DocSentenceConverter:
     PT_WHITESPACES = re.compile(RE_WHITESPACES)
     RE_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
 
-    def doc_to_sentence(self, doc: dict) -> str:
-        author = dict_get(doc, "owner.name", "")
-        author_str = f"{author}" if author else ""
-        title = dict_get(doc, "title", "")
-        title_str = f"{title}" if title else ""
-        desc = dict_get(doc, "desc", "")
-        desc_str = f"{desc}" if desc else ""
-        rtags = dict_get(doc, "rtags", "")
-        tags = dict_get(doc, "tags", "")
-        tags_str = f"{rtags}, {tags}" if tags else f"{rtags}"
+    def __init__(self, fields: list[str] = None):
+        if fields:
+            self.fields = fields
+        else:
+            self.fields = ["owner.name", "title", "desc", "tags"]
 
-        sentence = f"{author_str} | {title_str} | {desc_str} | {tags_str}"
+    def doc_to_sentence(self, doc: dict) -> str:
+        if "owner.name" in self.fields:
+            author = dict_get(doc, "owner.name", "")
+            author_str = f"{author}" if author else ""
+        else:
+            author_str = ""
+
+        if "title" in self.fields:
+            title = dict_get(doc, "title", "")
+            title_str = f"{title}" if title else ""
+        else:
+            title_str = ""
+
+        if "desc" in self.fields:
+            desc = dict_get(doc, "desc", "")
+            desc_str = f"{desc}" if desc else ""
+        else:
+            desc_str = ""
+
+        if "tags" in self.fields:
+            rtags = dict_get(doc, "rtags", "")
+            tags = dict_get(doc, "tags", "")
+            tags_str = f"{rtags}, {tags}" if tags else f"{rtags}"
+        else:
+            tags_str = ""
+
+        sentence_list = [s for s in [author_str, title_str, desc_str, tags_str] if s]
+        sentence = " | ".join(sentence_list)
         return sentence
 
     def remove_whitespaces_among_cjk(self, sentence: str) -> str:

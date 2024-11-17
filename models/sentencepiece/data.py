@@ -71,6 +71,7 @@ class SentencesDataloader:
         batch_size: int = 10000,
         max_batch: int = None,
         iter_val: Literal["doc", "sentence"] = "sentence",
+        data_fields: list[str] = None,
         iter_epochs: int = None,
         show_at_init: bool = False,
         verbose: bool = False,
@@ -81,12 +82,13 @@ class SentencesDataloader:
         self.batch_size = batch_size
         self.max_batch = max_batch
         self.iter_val = iter_val
+        self.data_fields = data_fields
         self.iter_epochs = iter_epochs
         self.show_at_init = show_at_init
         self.verbose = verbose
         self.init_mongo()
         self.init_progress_bars()
-        self.doc_converter = DocSentenceConverter()
+        self.doc_converter = DocSentenceConverter(self.data_fields)
 
     def init_mongo(self):
         # self.aggregator = VideosTagsAggregator(batch_size=self.batch_size)
