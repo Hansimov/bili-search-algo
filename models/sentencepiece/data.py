@@ -68,6 +68,8 @@ class SentencesDataloader:
         videos_collect_name: str = "videos",
         tags_collect_name: str = "videos_tags",
         texts_collect_name: str = "videos_texts",
+        users_collect_name: str = "users",
+        source_collect: Literal["videos_texts", "users"] = "videos_texts",
         batch_size: int = 10000,
         max_batch: int = None,
         iter_val: Literal["doc", "sentence"] = "sentence",
@@ -79,6 +81,8 @@ class SentencesDataloader:
         self.videos_collect_name = videos_collect_name
         self.tags_collect_name = tags_collect_name
         self.texts_collect_name = texts_collect_name
+        self.users_collect_name = users_collect_name
+        self.source_collect = source_collect
         self.batch_size = batch_size
         self.max_batch = max_batch
         self.iter_val = iter_val
@@ -96,8 +100,11 @@ class SentencesDataloader:
         self.mongo = MongoOperator(
             MONGO_ENVS, connect_msg=f"from {self.__class__.__name__}", indent=2
         )
-        self.texts_collect = self.mongo.db[self.texts_collect_name]
-        self.cursor = self.texts_collect.find()
+        if self.source_collect == "users":
+            self.samples_collect = self.mongo.db[self.users_collect_name]
+        else:
+            self.samples_collect = self.mongo.db[self.videos_collect_name]
+        self.cursor = self.samples_collect.find()
 
     def init_progress_bars(self):
         self.epoch_bar = TCLogbar(head=logstr.note("> Epoch:"))
@@ -112,15 +119,15 @@ class SentencesDataloader:
     def restore_cursor(self):
         # self.aggregator.init_cursor()
         # self.cursor = self.aggregator.cursor
-        self.cursor = self.texts_collect.find()
+        self.cursor = self.samples_collect.find()
 
     def init_total(self):
-        self.videos_count = self.texts_collect.estimated_document_count()
+        self.samples_count = self.samples_collect.estimated_document_count()
         self.epoch_bar.total = self.iter_epochs or 1
         if self.max_batch:
             self.batch_bar.total = self.max_batch
         else:
-            self.batch_bar.total = self.videos_count // self.batch_size + 1
+            self.batch_bar.total = self.samples_count // self.batch_size + 1
 
     def __epoch_start__(self):
         self.init_total()
