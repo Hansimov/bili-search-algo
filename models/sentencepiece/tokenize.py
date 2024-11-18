@@ -90,28 +90,34 @@ class SentencePostTokenizer:
     RE_ATOZ = r"[a-zA-Z]+"
     RE_ATOZ_HEAD = rf"^{RE_ATOZ}"
     RE_ATOZ_TAIL = rf"{RE_ATOZ}$"
+    PT_ATOZ_TAIL = re.compile(RE_ATOZ_TAIL)
+    PT_ATOZ_HEAD = re.compile(RE_ATOZ_HEAD)
 
     RE_DIGITS = SentencePreTokenizer.RE_DIGITS
-    RE_DIGITS_HEAD = rf"^{RE_DIGITS}"
     RE_DIGITS_TAIL = rf"{RE_DIGITS}$"
+    RE_DIGITS_HEAD = rf"^{RE_DIGITS}"
+    PT_DIGITS_TAIL = re.compile(RE_DIGITS_TAIL)
+    PT_DIGITS_HEAD = re.compile(RE_DIGITS_HEAD)
+
+    RE_UNITS = DocSentenceConverter.RE_UNITS
+    RE_DIGITS_ZH = SentencePreTokenizer.RE_DIGITS_ZH
+    RE_DIGITS_ZH_TAIL = rf"{RE_DIGITS_ZH}$"
+    RE_DIGITS_ZH_HEAD = rf"^{RE_DIGITS_ZH}{RE_UNITS}?$"
+    PT_DIGITS_ZH_TAIL = re.compile(RE_DIGITS_ZH_TAIL)
+    PT_DIGITS_ZH_HEAD = re.compile(RE_DIGITS_ZH_HEAD)
 
     RE_WORD = r"[^\da-zA-Z]+"
-    RE_ATOZ_DIGITS = rf"(?P<atoz>{RE_ATOZ})|(?P<digits>{RE_DIGITS})|(?P<word>{RE_WORD})"
-
-    PT_ATOZ = re.compile(RE_ATOZ)
-    PT_ATOZ_HEAD = re.compile(RE_ATOZ_HEAD)
-    PT_ATOZ_TAIL = re.compile(RE_ATOZ_TAIL)
-
-    PT_DIGITS = re.compile(RE_DIGITS)
-    PT_DIGITS_HEAD = re.compile(RE_DIGITS_HEAD)
-    PT_DIGITS_TAIL = re.compile(RE_DIGITS_TAIL)
-
-    PT_ATOZ_DIGITS = re.compile(RE_ATOZ_DIGITS)
+    RE_ATOZ_DIGITS_WORD = (
+        rf"(?P<atoz>{RE_ATOZ})|(?P<digits>{RE_DIGITS})|(?P<word>{RE_WORD})"
+    )
+    PT_ATOZ_DIGITS_WORD = re.compile(RE_ATOZ_DIGITS_WORD)
 
     def is_same_type(self, a: str, b: str) -> bool:
         if self.PT_DIGITS_TAIL.match(a) and self.PT_DIGITS_HEAD.match(b):
             return True
         if self.PT_ATOZ_TAIL.match(a) and self.PT_ATOZ_HEAD.match(b):
+            return True
+        if self.PT_DIGITS_ZH_TAIL.match(a) and self.PT_DIGITS_ZH_HEAD.match(b):
             return True
         return False
 
@@ -122,7 +128,7 @@ class SentencePostTokenizer:
         - "1000" -> ["1000"]
         """
         parts = []
-        for match in self.PT_ATOZ_DIGITS.finditer(token):
+        for match in self.PT_ATOZ_DIGITS_WORD.finditer(token):
             atoz = match.group("atoz")
             digits = match.group("digits")
             word = match.group("word")
@@ -151,7 +157,7 @@ class SentencePostTokenizer:
                 merges.append((token, "raw"))
                 continue
             last_token = merges[-1][0]
-            if self.is_same_type(last_token[-1], token[0]):
+            if self.is_same_type(last_token, token):
                 merges[-1] = (last_token + token, "merged")
             else:
                 merges.append((tokens[i], "raw"))
