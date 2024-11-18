@@ -92,7 +92,9 @@ class SentencesDataloader:
         self.verbose = verbose
         self.init_mongo()
         self.init_progress_bars()
-        self.doc_converter = DocSentenceConverter(self.data_fields)
+        self.doc_converter = DocSentenceConverter(
+            collect_name=self.source_collect, fields=self.data_fields
+        )
 
     def init_mongo(self):
         # self.aggregator = VideosTagsAggregator(batch_size=self.batch_size)

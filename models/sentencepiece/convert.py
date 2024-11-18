@@ -61,7 +61,7 @@ class DocSentenceConverter:
     def init_doc_to_sentence(self):
         if self.collect_name == "users":
             self.doc_to_sentence = partial(self.get_doc_field, field="name")
-            self.multiply_sentence = self.multiply_sentence_by_stat_view
+            self.multiply_sentence = self.multiply_sentence_by_videos_count
         else:
             if self.fields == ["owner.name"]:
                 self.doc_to_sentence = partial(self.get_doc_field, field="owner.name")
@@ -69,7 +69,7 @@ class DocSentenceConverter:
                 self.doc_to_sentence = partial(self.get_doc_fields, fields=self.fields)
             else:
                 self.doc_to_sentence = self.get_doc_all_fields
-            self.multiply_sentence = self.multiply_sentence_by_videos_count
+            self.multiply_sentence = self.multiply_sentence_by_stat_view
 
     def get_doc_field(self, doc: dict, field: str) -> str:
         return dict_get(doc, field, "")
