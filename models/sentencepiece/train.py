@@ -31,7 +31,7 @@ class SentencePieceModelTrainer:
         num_threads: int = 16,
         split_by_unicode_script: bool = False,
         split_by_number: bool = False,
-        shrinking_factor: float = 0.75,
+        shrinking_factor: float = 0.9,
         treat_whitespace_as_suffix: bool = False,
         user_defined_symbols="▁",
         vocab_size: int = 32000,
@@ -131,7 +131,7 @@ class ArgParser(argparse.ArgumentParser):
         self.add_argument("-mb", "--max-batch", type=int, default=20000)
         self.add_argument("-mp", "--model-prefix", type=str, default="sentencepiece")
         self.add_argument("-mt", "--model-type", type=str, default="unigram")
-        self.add_argument("-sf", "--shrinking-factor", type=float, default=0.75)
+        self.add_argument("-sf", "--shrinking-factor", type=float, default=0.9)
         self.add_argument("-vs", "--vocab-size", type=int, default=32000)
         self.add_argument(
             "-sc",
@@ -173,5 +173,4 @@ if __name__ == "__main__":
 
     # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -mb 48000 -vs 400000 -cc 0.9995 -sf 0.9 -e
     # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -t
-    # python -m models.sentencepiece.train -mp sp_48kw_40k_name -mb 48000 -vs 40000 -df owner.name -e
-    # python -m models.sentencepiece.train -mp sp_1kw_10k_users -mb 1000 -vs 10000 -sc users -e
+    # python -m models.sentencepiece.train -mp sp_users_1kw_10k_users -sc users -mb 1000 -vs 10000 -cc 1.0 -e
