@@ -66,66 +66,54 @@ class SentencesDataloader:
     def __init__(
         self,
         dbname: str = None,
-        videos_collect_name: str = "videos",
-        tags_collect_name: str = "videos_tags",
-        texts_collect_name: str = "videos_texts",
-        users_collect_name: str = "users",
-        pages_collect_name: str = "pages",
-        source_collect: Literal["videos_texts", "users", "pages"] = "videos_texts",
+        collect_name: Literal[
+            "videos", "videos_tags", "videos_texts", "users", "pages"
+        ] = "videos_texts",
+        data_fields: list[str] = None,
         mongo_filter: dict = {},
         batch_size: int = 10000,
         max_batch: int = None,
         estimate_count: bool = True,
         iter_val: Literal["doc", "sentence"] = "sentence",
-        data_fields: list[str] = None,
         iter_epochs: int = None,
         show_at_init: bool = False,
         verbose: bool = False,
     ):
         self.dbname = dbname
-        self.videos_collect_name = videos_collect_name
-        self.tags_collect_name = tags_collect_name
-        self.texts_collect_name = texts_collect_name
-        self.users_collect_name = users_collect_name
-        self.pages_collect_name = pages_collect_name
-        self.source_collect = source_collect
+        self.collect_name = collect_name
+        self.data_fields = data_fields
         self.mongo_filter = mongo_filter
         self.batch_size = batch_size
         self.max_batch = max_batch
         self.estimate_count = estimate_count
         self.iter_val = iter_val
-        self.data_fields = data_fields
         self.iter_epochs = iter_epochs
         self.show_at_init = show_at_init
         self.verbose = verbose
         self.init_mongo()
+        self.init_cursor()
         self.init_progress_bars()
         self.doc_converter = DocSentenceConverter(
-            collect_name=self.source_collect, fields=self.data_fields
+            collect_name=self.collect_name, fields=self.data_fields
         )
 
     def init_mongo(self):
-        # self.aggregator = VideosTagsAggregator(batch_size=self.batch_size)
-        # self.cursor = self.aggregator.cursor
         self.mongo_envs = MONGO_ENVS
         if self.dbname:
             self.mongo_envs["dbname"] = self.dbname
         self.mongo = MongoOperator(
-            self.mongo_envs, connect_msg=f"from {self.__class__.__name__}", indent=0
+            self.mongo_envs,
+            connect_msg=f"from {self.__class__.__name__}",
+            indent=0,
+            verbose=self.verbose,
         )
-        if self.source_collect == "users":
-            self.samples_collect = self.mongo.db[self.users_collect_name]
-        elif self.source_collect == "pages":
-            self.samples_collect = self.mongo.db[self.pages_collect_name]
-        else:
-            self.samples_collect = self.mongo.db[self.videos_collect_name]
-        if self.source_collect == "pages":
+        self.samples_collect = self.mongo.db[self.collect_name]
+        collect_str = f"* collection: {logstr.success(self.collect_name)}"
+        logger.file(collect_str, indent=self.mongo.indent + 2, verbose=self.verbose)
+        if self.collect_name == "pages":
             self.mongo_filter = {"ns": 0, "revision.text": {"$exists": True}}
-        self.init_cursor()
 
     def init_cursor(self):
-        # self.aggregator.init_cursor()
-        # self.cursor = self.aggregator.cursor
         self.cursor = self.samples_collect.find(self.mongo_filter)
 
     def init_progress_bars(self):
@@ -140,11 +128,11 @@ class SentencesDataloader:
 
     def init_total(self):
         if self.estimate_count:
-            logger.note("> Estimating docs count: ", end=" ")
+            logger.note(f"> Estimating docs:", end=" ")
             self.samples_count = self.samples_collect.estimated_document_count()
             logger.mesg(f"[{self.samples_count}]")
         else:
-            logger.note("> Counting docs count: ", end=" ")
+            logger.note(f"> Counting docs:", end=" ")
             self.samples_count = self.samples_collect.count_documents(self.mongo_filter)
             logger.mesg(f"[{self.samples_count}]")
             if self.mongo_filter:
@@ -203,19 +191,20 @@ class SentencesDataloader:
 
 if __name__ == "__main__":
     videos_texts_params = {
-        "source_collect": "videos_texts",
+        "collect_name": "videos_texts",
         "batch_size": 10000,
-        "max_batch": 200,
+        # "max_batch": 200,
     }
     zhwiki_pages_params = {
         "dbname": "zhwiki",
-        "source_collect": "pages",
+        "collect_name": "pages",
         "batch_size": 1000,
         "max_batch": None,
         "estimate_count": False,
     }
     loader = SentencesDataloader(
         **zhwiki_pages_params,
+        # **videos_texts_params,
         show_at_init=False,
         verbose=True,
     )
