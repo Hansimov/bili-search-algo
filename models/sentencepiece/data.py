@@ -202,8 +202,22 @@ class SentencesDataloader:
 
 
 if __name__ == "__main__":
+    videos_texts_params = {
+        "source_collect": "videos_texts",
+        "batch_size": 10000,
+        "max_batch": 200,
+    }
+    zhwiki_pages_params = {
+        "dbname": "zhwiki",
+        "source_collect": "pages",
+        "batch_size": 1000,
+        "max_batch": None,
+        "estimate_count": False,
+    }
     loader = SentencesDataloader(
-        batch_size=10000, max_batch=200, show_at_init=False, verbose=True
+        **zhwiki_pages_params,
+        show_at_init=False,
+        verbose=True,
     )
     for doc in loader:
         continue
