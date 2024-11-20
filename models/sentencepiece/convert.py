@@ -3,7 +3,7 @@ import re
 
 from functools import partial
 from tclogger import dict_get
-from typing import Literal
+from typing import Literal, Union
 
 
 class DocSentenceConverter:
@@ -44,12 +44,12 @@ class DocSentenceConverter:
     PT_CJK_SPACE = re.compile(RE_CJK_SPACE)
     PT_NON_WORD = re.compile(RE_NON_WORD)
     PT_WHITESPACES = re.compile(RE_WHITESPACES)
-    RE_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
+    PT_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
 
     def __init__(
         self,
         collect_name: Literal["videos_texts", "users", "pages"] = "videos_texts",
-        fields: list[str] = None,
+        fields: Union[str, list[str]] = None,
     ):
         self.collect_name = collect_name
         if fields:
@@ -62,17 +62,17 @@ class DocSentenceConverter:
         if self.collect_name == "users":
             self.doc_to_sentence = partial(self.get_doc_field, field="name")
             self.multiply_sentence = self.multiply_sentence_by_videos_count
-        elif self.collect_name == "pages":
-            self.doc_to_sentence = partial(self.get_doc_field, field="revision.text")
-            self.multiply_sentence = lambda doc, sentence: sentence
-        else:
-            if self.fields == ["owner.name"]:
-                self.doc_to_sentence = partial(self.get_doc_field, field="owner.name")
-            elif self.fields:
+        elif self.collect_name == "videos_texts":
+            if self.fields:
                 self.doc_to_sentence = partial(self.get_doc_fields, fields=self.fields)
             else:
                 self.doc_to_sentence = self.get_doc_all_fields
             self.multiply_sentence = self.multiply_sentence_by_stat_view
+        elif self.collect_name == "pages":
+            self.doc_to_sentence = partial(self.get_doc_field, field="revision.text")
+            self.multiply_sentence = lambda doc, sentence: sentence
+        else:
+            raise ValueError(f"× Invalid collect_name: {self.collect_name}")
 
     def get_doc_field(self, doc: dict, field: str) -> str:
         return dict_get(doc, field, "")
@@ -94,7 +94,7 @@ class DocSentenceConverter:
         return self.PT_NON_WORD.sub(" ", sentence)
 
     def replace_digits(self, sentence: str) -> str:
-        return self.RE_DIGITS_ALL.sub("", sentence)
+        return self.PT_DIGITS_ALL.sub("", sentence)
 
     def merge_whitespaces(self, sentence: str) -> str:
         return self.PT_WHITESPACES.sub(" ", sentence).strip()
