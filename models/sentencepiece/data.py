@@ -1,3 +1,6 @@
+import argparse
+import sys
+
 from sedb import MongoOperator
 from tclogger import logger, logstr, TCLogbar, TCLogbarGroup, dict_to_str
 from typing import Literal, Generator
@@ -189,26 +192,40 @@ class SentencesDataloader:
         self.__epoch_end__()
 
 
+class DataLoaderArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("-db", "--dbname", type=str, default=None)
+        self.add_argument(
+            "-cn",
+            "--collect-name",
+            type=str,
+            choices=["videos_texts", "users", "pages"],
+            default="videos_texts",
+        )
+        self.add_argument("-df", "--data-fields", type=str, default=None)
+        self.add_argument("-bs", "--batch-size", type=int, default=10000)
+        self.add_argument("-mb", "--max-batch", type=int, default=None)
+        self.add_argument("-ec", "--estimate-count", action="store_true")
+
+    def parse_args(self):
+        self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
+        return self.args
+
+
 if __name__ == "__main__":
-    videos_texts_params = {
-        "collect_name": "videos_texts",
-        "batch_size": 10000,
-        # "max_batch": 200,
+    args = DataLoaderArgParser().parse_args()
+    data_loader_params = {
+        "dbname": args.dbname,
+        "collect_name": args.collect_name,
+        "data_fields": args.data_fields.split(",") if args.data_fields else None,
+        "batch_size": args.batch_size,
+        "max_batch": args.max_batch,
+        "estimate_count": args.estimate_count,
     }
-    zhwiki_pages_params = {
-        "dbname": "zhwiki",
-        "collect_name": "pages",
-        "batch_size": 1000,
-        "max_batch": None,
-        "estimate_count": False,
-    }
-    loader = SentencesDataloader(
-        **zhwiki_pages_params,
-        # **videos_texts_params,
-        show_at_init=False,
-        verbose=True,
-    )
+    loader = SentencesDataloader(**data_loader_params, show_at_init=False, verbose=True)
     for doc in loader:
         continue
 
-    # python -m models.sentencepiece.data
+    # python -m models.sentencepiece.data -db zhwiki -cn pages -bs 1000
+    # python -m models.sentencepiece.data -cn videos_texts -bs 10000 -mb 200 -ec
