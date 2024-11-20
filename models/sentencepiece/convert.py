@@ -1,5 +1,6 @@
 import math
 import re
+import zhconv
 
 from functools import partial
 from tclogger import dict_get
@@ -50,12 +51,14 @@ class DocSentenceConverter:
         self,
         collect_name: Literal["videos_texts", "users", "pages"] = "videos_texts",
         fields: Union[str, list[str]] = None,
+        simplify_chinese: bool = False,
     ):
         self.collect_name = collect_name
         if fields:
             self.fields = fields
         else:
             self.fields = None
+        self.simplify_chinese = simplify_chinese
         self.init_doc_to_sentence()
 
     def init_doc_to_sentence(self):
@@ -122,6 +125,8 @@ class DocSentenceConverter:
         # sentence = self.remove_whitespaces_among_cjk(sentence)
         sentence = self.replace_non_word_with_whitespaces(sentence)
         sentence = self.replace_digits(sentence)
+        if self.simplify_chinese:
+            sentence = zhconv.convert(sentence, "zh-cn")
         # sentence = self.merge_whitespaces(sentence)
         return sentence
 
