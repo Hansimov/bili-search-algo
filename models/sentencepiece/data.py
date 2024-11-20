@@ -96,9 +96,7 @@ class SentencesDataloader:
         self.init_mongo()
         self.init_cursor()
         self.init_progress_bars()
-        self.doc_converter = DocSentenceConverter(
-            collect_name=self.collect_name, fields=self.data_fields
-        )
+        self.init_doc_converter()
 
     def init_mongo(self):
         self.mongo_envs = MONGO_ENVS
@@ -127,6 +125,13 @@ class SentencesDataloader:
             [self.epoch_bar, self.batch_bar, self.sample_bar],
             show_at_init=self.show_at_init,
             verbose=self.verbose,
+        )
+
+    def init_doc_converter(self):
+        self.doc_converter = DocSentenceConverter(
+            collect_name=self.collect_name,
+            fields=self.data_fields,
+            simplify_chinese=True,
         )
 
     def init_total(self):
