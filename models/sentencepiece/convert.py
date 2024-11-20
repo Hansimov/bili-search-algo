@@ -48,7 +48,7 @@ class DocSentenceConverter:
 
     def __init__(
         self,
-        collect_name: Literal["videos_texts", "users"] = "videos_texts",
+        collect_name: Literal["videos_texts", "users", "pages"] = "videos_texts",
         fields: list[str] = None,
     ):
         self.collect_name = collect_name
@@ -62,6 +62,9 @@ class DocSentenceConverter:
         if self.collect_name == "users":
             self.doc_to_sentence = partial(self.get_doc_field, field="name")
             self.multiply_sentence = self.multiply_sentence_by_videos_count
+        elif self.collect_name == "pages":
+            self.doc_to_sentence = partial(self.get_doc_field, field="revision.text")
+            self.multiply_sentence = lambda doc, sentence: sentence
         else:
             if self.fields == ["owner.name"]:
                 self.doc_to_sentence = partial(self.get_doc_field, field="owner.name")
