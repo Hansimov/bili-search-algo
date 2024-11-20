@@ -75,6 +75,7 @@ class SentencesDataloader:
         mongo_filter: dict = {},
         batch_size: int = 10000,
         max_batch: int = None,
+        estimate_count: bool = True,
         iter_val: Literal["doc", "sentence"] = "sentence",
         data_fields: list[str] = None,
         iter_epochs: int = None,
@@ -91,6 +92,7 @@ class SentencesDataloader:
         self.mongo_filter = mongo_filter
         self.batch_size = batch_size
         self.max_batch = max_batch
+        self.estimate_count = estimate_count
         self.iter_val = iter_val
         self.data_fields = data_fields
         self.iter_epochs = iter_epochs
@@ -137,7 +139,16 @@ class SentencesDataloader:
         )
 
     def init_total(self):
-        self.samples_count = self.samples_collect.estimated_document_count()
+        if self.estimate_count:
+            logger.note("> Estimating docs count: ", end=" ")
+            self.samples_count = self.samples_collect.estimated_document_count()
+            logger.mesg(f"[{self.samples_count}]")
+        else:
+            logger.note("> Counting docs count: ", end=" ")
+            self.samples_count = self.samples_collect.count_documents(self.mongo_filter)
+            logger.mesg(f"[{self.samples_count}]")
+            if self.mongo_filter:
+                logger.file(dict_to_str(self.mongo_filter), indent=2)
         self.epoch_bar.total = self.iter_epochs or 1
         if self.max_batch:
             self.batch_bar.total = self.max_batch
