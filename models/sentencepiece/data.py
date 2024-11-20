@@ -1,5 +1,5 @@
 from sedb import MongoOperator
-from tclogger import logger, logstr, TCLogbar, TCLogbarGroup
+from tclogger import logger, logstr, TCLogbar, TCLogbarGroup, dict_to_str
 from typing import Literal, Generator
 
 from configs.envs import MONGO_ENVS
@@ -65,11 +65,14 @@ class VideosTagsAggregator:
 class SentencesDataloader:
     def __init__(
         self,
+        dbname: str = None,
         videos_collect_name: str = "videos",
         tags_collect_name: str = "videos_tags",
         texts_collect_name: str = "videos_texts",
         users_collect_name: str = "users",
-        source_collect: Literal["videos_texts", "users"] = "videos_texts",
+        pages_collect_name: str = "pages",
+        source_collect: Literal["videos_texts", "users", "pages"] = "videos_texts",
+        mongo_filter: dict = {},
         batch_size: int = 10000,
         max_batch: int = None,
         iter_val: Literal["doc", "sentence"] = "sentence",
@@ -78,11 +81,14 @@ class SentencesDataloader:
         show_at_init: bool = False,
         verbose: bool = False,
     ):
+        self.dbname = dbname
         self.videos_collect_name = videos_collect_name
         self.tags_collect_name = tags_collect_name
         self.texts_collect_name = texts_collect_name
         self.users_collect_name = users_collect_name
+        self.pages_collect_name = pages_collect_name
         self.source_collect = source_collect
+        self.mongo_filter = mongo_filter
         self.batch_size = batch_size
         self.max_batch = max_batch
         self.iter_val = iter_val
@@ -99,14 +105,26 @@ class SentencesDataloader:
     def init_mongo(self):
         # self.aggregator = VideosTagsAggregator(batch_size=self.batch_size)
         # self.cursor = self.aggregator.cursor
+        self.mongo_envs = MONGO_ENVS
+        if self.dbname:
+            self.mongo_envs["dbname"] = self.dbname
         self.mongo = MongoOperator(
-            MONGO_ENVS, connect_msg=f"from {self.__class__.__name__}", indent=2
+            self.mongo_envs, connect_msg=f"from {self.__class__.__name__}", indent=0
         )
         if self.source_collect == "users":
             self.samples_collect = self.mongo.db[self.users_collect_name]
+        elif self.source_collect == "pages":
+            self.samples_collect = self.mongo.db[self.pages_collect_name]
         else:
             self.samples_collect = self.mongo.db[self.videos_collect_name]
-        self.cursor = self.samples_collect.find()
+        if self.source_collect == "pages":
+            self.mongo_filter = {"ns": 0, "revision.text": {"$exists": True}}
+        self.init_cursor()
+
+    def init_cursor(self):
+        # self.aggregator.init_cursor()
+        # self.cursor = self.aggregator.cursor
+        self.cursor = self.samples_collect.find(self.mongo_filter)
 
     def init_progress_bars(self):
         self.epoch_bar = TCLogbar(head=logstr.note("> Epoch:"))
@@ -117,11 +135,6 @@ class SentencesDataloader:
             show_at_init=self.show_at_init,
             verbose=self.verbose,
         )
-
-    def restore_cursor(self):
-        # self.aggregator.init_cursor()
-        # self.cursor = self.aggregator.cursor
-        self.cursor = self.samples_collect.find()
 
     def init_total(self):
         self.samples_count = self.samples_collect.estimated_document_count()
@@ -144,7 +157,7 @@ class SentencesDataloader:
         ):
             self.batch_bar.reset()
             self.sample_bar.reset()
-            self.restore_cursor()
+            self.init_cursor()
         else:
             print()
 
