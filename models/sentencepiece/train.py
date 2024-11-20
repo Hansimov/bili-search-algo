@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from tclogger import logger, logstr, Runtimer, dict_to_str
 from typing import Literal
 
-from models.sentencepiece.data import SentencesDataloader
+from models.sentencepiece.data import SentencesDataloader, DataLoaderArgParser
 from models.sentencepiece.edit import SentencePieceModelVocabEditor
 from models.sentencepiece.tokenize import SentenceFullTokenizer
 from models.sentencepiece.test import TEST_SENTENCES
@@ -94,31 +94,31 @@ class SentencePieceModelTrainer:
             logger.mesg(f"  * {pretty_tokens}")
 
 
-class ArgParser(argparse.ArgumentParser):
+class ModelTrainerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-cc", "--character-coverage", type=float, default=0.999)
-        self.add_argument("-mb", "--max-batch", type=int, default=20000)
         self.add_argument("-mp", "--model-prefix", type=str, default="sentencepiece")
         self.add_argument("-mt", "--model-type", type=str, default="unigram")
         self.add_argument("-sf", "--shrinking-factor", type=float, default=0.9)
         self.add_argument("-vs", "--vocab-size", type=int, default=32000)
-        self.add_argument(
-            "-sc",
-            "--source-collect",
-            type=str,
-            choices=["videos_texts", "users"],
-            default="videos_texts",
-        )
-        self.add_argument("-df", "--data-fields", type=str, default=None)
-        self.add_argument("-t", "--test-only", action="store_true")
         self.add_argument("-k", "--keep-exist-model", action="store_true")
+        self.add_argument("-t", "--test-only", action="store_true")
         self.add_argument("-e", "--edit-model", action="store_true")
+
+    def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
+        return self.args
 
 
 if __name__ == "__main__":
-    args = ArgParser().args
+    data_loader_parser = DataLoaderArgParser(add_help=False)
+    model_trainer_parser = ModelTrainerArgParser(add_help=False)
+    merged_parser = argparse.ArgumentParser(
+        parents=[data_loader_parser, model_trainer_parser]
+    )
+    args, unknown_args = merged_parser.parse_known_args(sys.argv[1:])
+
     trainer = SentencePieceModelTrainer(
         character_coverage=args.character_coverage,
         model_prefix=args.model_prefix,
@@ -151,4 +151,5 @@ if __name__ == "__main__":
 
     # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -mb 48000 -vs 400000 -cc 0.9995 -sf 0.9 -e
     # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -t
-    # python -m models.sentencepiece.train -mp sp_users_1kw_10k_users -sc users -mb 1000 -vs 10000 -cc 1.0 -e
+    # python -m models.sentencepiece.train -mp sp_users_1kw_10k -cn users -mb 1000 -vs 10000 -cc 1.0 -e
+    # python -m models.sentencepiece.train -mp sp_wiki_1w_10k -db zhwiki -cn pages -bs 1000 -ec -mb 10 -vs 10000 -e
