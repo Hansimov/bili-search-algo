@@ -56,38 +56,8 @@ class SentencePieceModelTrainer:
         self.model_file = f"{model_prefix}.model"
         self.overwrite = overwrite
 
-    def load_data(
-        self,
-        data_loader: Iterable[str] = None,
-        source_collect: Literal["videos_texts", "users"] = "videos_texts",
-        data_fields: str = None,
-        max_batch: int = 100,
-        batch_size: int = 10000,
-    ):
-        logger.note("> Loading data ...")
-        if data_loader:
-            self.data_loader = data_loader
-        else:
-            self.source_collect = source_collect
-            if data_fields and isinstance(data_fields, str):
-                data_fields = data_fields.split(",")
-
-            self.data_params = {
-                "source_collect": source_collect,
-                "data_fields": data_fields,
-                "max_batch": max_batch,
-                "batch_size": batch_size,
-            }
-            logger.mesg(dict_to_str(self.data_params), indent=2)
-
-            self.data_loader = SentencesDataloader(
-                source_collect=source_collect,
-                max_batch=max_batch,
-                batch_size=batch_size,
-                show_at_init=False,
-                data_fields=data_fields,
-                verbose=True,
-            )
+    def init_data_loader(self, data_loader: SentencesDataloader):
+        self.data_loader = data_loader
 
     def delete_existed_model(self):
         model_prefix = str(self.model_prefix)
@@ -158,12 +128,20 @@ if __name__ == "__main__":
         overwrite=not args.keep_exist_model,
     )
     if not args.test_only:
-        trainer.load_data(
-            source_collect=args.source_collect,
-            data_fields=args.data_fields,
-            max_batch=args.max_batch,
-            batch_size=10000,
+        logger.note("> Initiating data loader ...")
+        data_params = {
+            "dbname": args.dbname,
+            "collect_name": args.collect_name,
+            "data_fields": args.data_fields.split(",") if args.data_fields else None,
+            "max_batch": args.max_batch,
+            "batch_size": args.batch_size,
+            "estimate_count": args.estimate_count,
+        }
+        data_loader = SentencesDataloader(
+            **data_params, show_at_init=False, verbose=True
         )
+        logger.mesg(dict_to_str(data_params), indent=2)
+        trainer.init_data_loader(data_loader)
         with Runtimer() as timer:
             trainer.train()
     if args.edit_model:
