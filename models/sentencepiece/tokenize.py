@@ -93,23 +93,45 @@ class SentencePieceModelTokenizer:
         return tokens
 
 
-class SentencePostTokenizer:
-    PT_DIGITS_TAIL = re.compile(RE_DIGITS_TAIL)
-    PT_DIGITS_HEAD = re.compile(RE_DIGITS_HEAD)
-    PT_DIGITS_ZH_TAIL = re.compile(RE_DIGITS_ZH_TAIL)
-    PT_DIGITS_ZH_HEAD = re.compile(RE_DIGITS_ZH_HEAD)
-    PT_ATOZ_TAIL = re.compile(RE_ATOZ_TAIL)
-    PT_ATOZ_HEAD = re.compile(RE_ATOZ_HEAD)
-    PT_ATOZ_DIGITS_WORD = re.compile(RE_ATOZ_DIGITS_WORD)
+# post-tokenizer regex
+CH_ATOZ = r"a-zA-Z"
+RE_ATOZ = rf"[{CH_ATOZ}]+"
+RE_ATOZ_HEAD = rf"^{RE_ATOZ}"
+RE_ATOZ_TAIL = rf"{RE_ATOZ}$"
 
-    def is_same_type(self, a: str, b: str) -> bool:
-        if self.PT_DIGITS_TAIL.match(a) and self.PT_DIGITS_HEAD.match(b):
-            return True
-        if self.PT_ATOZ_TAIL.match(a) and self.PT_ATOZ_HEAD.match(b):
-            return True
-        if self.PT_DIGITS_ZH_TAIL.match(a) and self.PT_DIGITS_ZH_HEAD.match(b):
-            return True
-        return False
+RE_DIGITS_NUMBER_TAIL = rf"{RE_DIGITS_NUMBER}$"
+RE_DIGITS_NUMBER_HEAD = rf"^{RE_DIGITS_NUMBER}"
+
+RE_ATOZ_DIGITS_NUMBER = rf"({RE_ATOZ}|{RE_DIGITS_NUMBER})"
+
+RE_DIGITS_UNITS_TAIL = rf"[{CH_DIGIT_PREFIX}]?{RE_DIGITS_AND_DOTS}{RE_UNITS_ALL}?"
+RE_DIGITS_UNITS_HEAD = (
+    rf"{RE_DIGITS_AND_DOTS}?{RE_UNITS_ALL}|{RE_DIGITS_AND_DOTS}{RE_UNITS_ALL}?"
+)
+
+RE_DIGITS_ZH_UNITS_TAIL = rf"{RE_DIGITS_ZH}$"
+RE_DIGITS_ZH_UNITS_HEAD = (
+    rf"^({RE_DIGITS_ZH}{RE_UNITS_ALL}|{RE_DIGITS_ZH}|{RE_UNITS_ALL})$"
+)
+
+RE_WORD_EXCPET_ATOZ_OR_DIGITS = r"[^\da-zA-Z]+"
+RE_ATOZ_DIGITS_WORD = rf"(?P<atoz>{RE_ATOZ})|(?P<digits_with_unit>{RE_DIGITS_ALL})|(?P<digits_number>{RE_DIGITS_NUMBER})|(?P<digits_zh_with_unit>{RE_DIGITS_ZH_WITH_UNIT})|(?P<word>{RE_WORD_EXCPET_ATOZ_OR_DIGITS})"
+
+PT_ATOZ = re.compile(RE_ATOZ)
+PT_DIGITS_NUMBER = re.compile(RE_DIGITS_NUMBER)
+PT_ATOZ_DIGITS_NUMBER = re.compile(RE_ATOZ_DIGITS_NUMBER)
+PT_DIGITS_NUMBER_TAIL = re.compile(RE_DIGITS_NUMBER_TAIL)
+PT_DIGITS_NUMBER_HEAD = re.compile(RE_DIGITS_NUMBER_HEAD)
+PT_DIGITS_UNITS_TAIL = re.compile(RE_DIGITS_UNITS_TAIL)
+PT_DIGITS_UNITS_HEAD = re.compile(RE_DIGITS_UNITS_HEAD)
+PT_DIGITS_ZH_UNITS_TAIL = re.compile(RE_DIGITS_ZH_UNITS_TAIL)
+PT_DIGITS_ZH_UNITS_HEAD = re.compile(RE_DIGITS_ZH_UNITS_HEAD)
+PT_ATOZ_TAIL = re.compile(RE_ATOZ_TAIL)
+PT_ATOZ_HEAD = re.compile(RE_ATOZ_HEAD)
+PT_ATOZ_DIGITS_WORD = re.compile(RE_ATOZ_DIGITS_WORD)
+
+
+class SentencePostTokenizer:
 
     def split_atoz_and_digits(self, token: str) -> list[str]:
         """Examples:
