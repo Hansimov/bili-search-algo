@@ -78,6 +78,7 @@ class SentencesDataloader:
         max_batch: int = None,
         estimate_count: bool = True,
         iter_val: Literal["doc", "sentence"] = "sentence",
+        max_sentence_length: int = 2000,
         iter_epochs: int = None,
         show_at_init: bool = False,
         verbose: bool = False,
@@ -90,6 +91,7 @@ class SentencesDataloader:
         self.max_batch = max_batch
         self.estimate_count = estimate_count
         self.iter_val = iter_val
+        self.max_sentence_length = max_sentence_length
         self.iter_epochs = iter_epochs
         self.show_at_init = show_at_init
         self.verbose = verbose
@@ -180,6 +182,22 @@ class SentencesDataloader:
                 break
             yield res
 
+    def segment_sentence(self, sentence: str) -> Generator[str, None, None]:
+        """generate concat sentence segs without exceeding max_sentence_length, and must break at whitespaces"""
+        segs = sentence.split()
+        tmp_segs = []
+        sentence_len = -1
+        for seg in segs:
+            seg_len = len(seg)
+            if tmp_segs and sentence_len + seg_len + 1 >= self.max_sentence_length:
+                yield " ".join(tmp_segs)
+                tmp_segs = []
+                sentence_len = -1
+            tmp_segs.append(seg)
+            sentence_len += seg_len + 1
+        if tmp_segs:
+            yield " ".join(tmp_segs)
+
     def __iter__(self) -> Generator[str, None, None]:
         self.__epoch_start__()
         for batch_idx, batch in enumerate(self.doc_batch()):
@@ -187,12 +205,19 @@ class SentencesDataloader:
                 break
             self.sample_bar.total = len(batch)
             for doc in batch:
-                if self.iter_val == "sentence":
-                    res = self.doc_converter.convert(doc)
-                else:
-                    res = doc
                 self.sample_bar.update(increment=1)
-                yield res
+                if self.iter_val == "sentence":
+                    sentence = self.doc_converter.convert(doc)
+                    if (
+                        self.max_sentence_length
+                        and len(sentence) > self.max_sentence_length
+                    ):
+                        for seg in self.segment_sentence(sentence):
+                            yield seg
+                    else:
+                        yield sentence
+                else:
+                    yield doc
             self.sample_bar.reset()
         self.__epoch_end__()
 
