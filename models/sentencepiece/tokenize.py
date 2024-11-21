@@ -80,11 +80,15 @@ class SentencePreTokenizer:
         """Split sentence by multiple parts, non-word, digits and non-digits
         Output: list of tuple (part:str, type:str)
         - part: str: digits, non-word, normal string
-        - type: "non_word", "digits", "str"
+        - type: "non_word", "digits", "digits_zh_unit", "str"
         """
         parts = []
         for match in self.PT_DIGITS_ALL.finditer(sentence):
             parts.append((match.start(), match.end(), match.group(), "digits"))
+        for match in self.PT_DIGITS_ZH_WITH_UNIT.finditer(sentence):
+            parts.append(
+                (match.start(), match.end(), match.group(), "digits_zh_with_unit")
+            )
         for match in self.PT_NON_WORD.finditer(sentence):
             parts.append((match.start(), match.end(), match.group(), "non_word"))
         parts = self.fill_str_parts(parts, sentence)
@@ -127,16 +131,11 @@ class SentencePostTokenizer:
         - "1000" -> ["1000"]
         """
         parts = []
+        group_names = ["atoz", "digits", "digits_zh_with_unit", "word"]
         for match in self.PT_ATOZ_DIGITS_WORD.finditer(token):
-            atoz = match.group("atoz")
-            digits = match.group("digits")
-            word = match.group("word")
-            if atoz:
-                parts.append(atoz)
-            if digits:
-                parts.append(digits)
-            if word:
-                parts.append(word)
+            for name in group_names:
+                if match.group(name):
+                    parts.append(match.group(name))
         return parts
 
     def merge_same_types(self, tokens: list[str]) -> list[tuple[str, str]]:
@@ -185,10 +184,10 @@ class SentenceFullTokenizer:
     def tokenize_parts(self, parts: list[tuple]) -> list[str]:
         tokens = []
         for part, type in parts:
-            if type in ["non_word", "digits"]:
-                tokens.append(part)
-            else:
+            if type == "str":
                 tokens.extend(self.model_tokenizer.tokenize(part))
+            else:
+                tokens.append(part)
         return tokens
 
     def stringify(self, tokens: list[str]) -> str:
