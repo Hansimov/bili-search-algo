@@ -20,15 +20,17 @@ CH_RB = r"\)\]\}"
 CH_DIGIT_ZH = r"〇零一二两三四五六七八九十"
 CH_DIGIT_ZH_MUL = r"十百千万亿"
 
-RE_DIGITS_AND_DOTS = r"[\d\.]+(?<!\.)"
+RE_DIGITS_PURE = r"\d+"
 RE_DOT_DIGITS = r"\d*\.\d+"
+RE_DIGITS_AND_DOTS = r"[\d\.]+(?<!\.)"
+RE_DIGITS_NUMBER = rf"({RE_DOT_DIGITS}|{RE_DIGITS_AND_DOTS})"
 RE_DIGITS_AND_DOTS_WITH_PREFIX_AND_UNIT = (
     rf"[{CH_DIGIT_PREFIX}]?{RE_DIGITS_AND_DOTS}{RE_UNITS_ALL}"
 )
 RE_DIGITS_WITH_DOTS_AND_BRS = (
     rf"\[{RE_DIGITS_AND_DOTS}\]|\({RE_DIGITS_AND_DOTS}\)|{{{RE_DIGITS_AND_DOTS}}}"
 )
-RE_DIGITS_ALL = rf"(?:{RE_DIGITS_AND_DOTS_WITH_PREFIX_AND_UNIT}|{RE_DIGITS_WITH_DOTS_AND_BRS}|{RE_DOT_DIGITS})"
+RE_DIGITS_ALL = rf"(?:{RE_DIGITS_AND_DOTS_WITH_PREFIX_AND_UNIT}|{RE_DIGITS_WITH_DOTS_AND_BRS}|{RE_DIGITS_NUMBER})"
 
 RE_NON_WORD = rf"[^{CH_CJK}〇{CH_AB}\.{CH_LB}{CH_RB}]+"
 
@@ -37,27 +39,15 @@ RE_DIGITS_ZH = (
 )
 RE_DIGITS_ZH_WITH_UNIT = rf"[{CH_DIGIT_PREFIX}]?{RE_DIGITS_ZH}{RE_UNITS_ALL}"
 
-# post-tokenizer regex
-CH_ATOZ = r"a-zA-Z"
-RE_ATOZ = rf"[{CH_ATOZ}]+"
-RE_ATOZ_HEAD = rf"^{RE_ATOZ}"
-RE_ATOZ_TAIL = rf"{RE_ATOZ}$"
+RE_DIGITS_UNITS_AND_NON_WORD = rf"(?P<digits_with_unit>{RE_DIGITS_AND_DOTS_WITH_PREFIX_AND_UNIT})|(?P<digits_zh_with_unit>{RE_DIGITS_ZH_WITH_UNIT})|(?P<non_word>{RE_NON_WORD})"
 
-RE_DIGITS_TAIL = rf"{RE_DIGITS_ALL}$"
-RE_DIGITS_HEAD = rf"^{RE_DIGITS_ALL}"
-
-RE_DIGITS_ZH_TAIL = rf"{RE_DIGITS_ZH}$"
-RE_DIGITS_ZH_HEAD = rf"^({RE_DIGITS_ZH}{RE_UNITS_ALL}|{RE_DIGITS_ZH}|{RE_UNITS_ALL})$"
-
-RE_WORD_EXCPET_ATOZ_OR_DIGITS = r"[^\da-zA-Z]+"
-RE_ATOZ_DIGITS_WORD = rf"(?P<atoz>{RE_ATOZ})|(?P<digits>{RE_DIGITS_ALL})|(?P<digits_zh_with_unit>{RE_DIGITS_ZH_WITH_UNIT})|(?P<word>{RE_WORD_EXCPET_ATOZ_OR_DIGITS})"
+PT_NON_WORD = re.compile(RE_NON_WORD)
+PT_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
+PT_DIGITS_ZH_WITH_UNIT = re.compile(RE_DIGITS_ZH_WITH_UNIT)
+PT_DIGITS_UNITS_AND_NON_WORDS = re.compile(RE_DIGITS_UNITS_AND_NON_WORD)
 
 
 class SentencePreTokenizer:
-    PT_NON_WORD = re.compile(RE_NON_WORD)
-    PT_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
-    PT_DIGITS_ZH_WITH_UNIT = re.compile(RE_DIGITS_ZH_WITH_UNIT)
-
     def fill_str_parts(
         self, parts: list[tuple[int, int, str, str]], sentence: str
     ) -> list[tuple[str, str]]:
@@ -79,18 +69,15 @@ class SentencePreTokenizer:
     def tokenize(self, sentence: str) -> list[tuple]:
         """Split sentence by multiple parts, non-word, digits and non-digits
         Output: list of tuple (part:str, type:str)
-        - part: str: digits, non-word, normal string
-        - type: "non_word", "digits", "digits_zh_unit", "str"
+        - part: str: digits, non-word, other string
+        - type: "digits_with_unit", "digits_zh_with_unit", "non_word"
         """
         parts = []
-        for match in self.PT_DIGITS_ALL.finditer(sentence):
-            parts.append((match.start(), match.end(), match.group(), "digits"))
-        for match in self.PT_DIGITS_ZH_WITH_UNIT.finditer(sentence):
-            parts.append(
-                (match.start(), match.end(), match.group(), "digits_zh_with_unit")
-            )
-        for match in self.PT_NON_WORD.finditer(sentence):
-            parts.append((match.start(), match.end(), match.group(), "non_word"))
+        group_names = ["digits_with_unit", "digits_zh_with_unit", "non_word"]
+        for match in PT_DIGITS_UNITS_AND_NON_WORDS.finditer(sentence):
+            for name in group_names:
+                if match.group(name):
+                    parts.append((match.start(), match.end(), match.group(name), name))
         parts = self.fill_str_parts(parts, sentence)
         parts = [(part, type) for _, _, part, type in parts]
         return parts
