@@ -232,13 +232,14 @@ class SentenceFullTokenizer:
         self.model_tokenizer = SentencePieceModelTokenizer(model_path)
 
     def tokenize_parts(self, parts: list[tuple]) -> list[str]:
-        tokens = []
+        new_parts = []
         for part, type in parts:
             if type == "str":
-                tokens.extend(self.model_tokenizer.tokenize(part))
+                tokens = self.model_tokenizer.tokenize(part)
+                new_parts.extend([(token, "token") for token in tokens])
             else:
-                tokens.append(part)
-        return tokens
+                new_parts.append((part, type))
+        return new_parts
 
     def stringify(self, tokens: list[str]) -> str:
         tokens_str = f"{logstr.note('_')}".join(tokens)
@@ -247,8 +248,9 @@ class SentenceFullTokenizer:
     def tokenize(self, sentence: str) -> list[str]:
         sentence = sentence.lower()
         parts = self.pre_tokenizer.tokenize(sentence)
-        tokens = self.tokenize_parts(parts)
-        tokens = self.post_tokenizer.transform(tokens)
+        parts = self.tokenize_parts(parts)
+        parts = self.post_tokenizer.concat_same_types(parts)
+        tokens = self.post_tokenizer.merge_atoz_and_digits(parts)
         return tokens
 
 
