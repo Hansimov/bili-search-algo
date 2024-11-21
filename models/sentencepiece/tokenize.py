@@ -158,7 +158,39 @@ class SentencePostTokenizer:
                     parts.append((match.group(name), name))
         return parts
 
-    def merge_same_types(self, tokens: list[str]) -> list[tuple[str, str]]:
+    def get_token_type(self, token: str) -> str:
+        for pattern, name in [
+            (PT_ATOZ, "atoz"),
+            (PT_DIGITS_NUMBER, "digits_number"),
+            (PT_ATOZ_DIGITS_NUMBER, "atoz_digits_number"),
+        ]:
+            if pattern.fullmatch(token):
+                return name
+        return "raw"
+
+    def merge_atoz_and_digits(self, parts: list[tuple[str, str]]) -> list[str]:
+        merges: list[tuple[str, str]] = []
+        for part in parts:
+            token = part[0]
+            token_type = self.get_token_type(token)
+
+            if not merges:
+                merges.append((token, token_type))
+                continue
+
+            last_token, last_token_type = merges[-1]
+            if token_type in ["digits_number"] and last_token_type in [
+                "atoz",
+                "digits_number",
+                "atoz_digits_number",
+            ]:
+                merges[-1] = (last_token + token, "atoz_digits")
+            else:
+                merges.append((token, token_type))
+        merged_tokens = [token for token, type in merges]
+        return merged_tokens
+
+    def concat_same_types(self, parts: list[tuple[str, str]]) -> list[tuple[str, str]]:
         """Examples:
         - [hb,k0,8,是] -> [hbk,08,是]
         - [2024lbw,nb] -> [2024,lbwnb]
@@ -166,31 +198,29 @@ class SentencePostTokenizer:
         - [abc100,0, def123] -> [abc,1000,def123]
         - [5a10,0d, def123d,?] -> [5a,100,ddef,123,d,?]
         """
-        merges = []
-        for i in range(len(tokens)):
-            token = tokens[i]
+        merges: list[tuple[str, str]] = []
+        for i in range(len(parts)):
+            token, token_type = parts[i]
             if token == "":
                 continue
             if not merges:
                 merges.append((token, "raw"))
                 continue
             last_token = merges[-1][0]
-            if self.is_same_type(last_token, token):
+            is_same, same_type = self.is_same_type(last_token, token)
+            if is_same:
                 merges[-1] = (last_token + token, "merged")
             else:
-                merges.append((tokens[i], "raw"))
-        merged_tokens = []
-        for token, type in merges:
-            if type == "raw":
-                merged_tokens.append(token)
-            else:
-                split_tokens = self.split_atoz_and_digits(token)
-                merged_tokens.extend(split_tokens)
-        return merged_tokens
+                merges.append((token, "raw"))
 
-    def transform(self, tokens: list[str]) -> list[str]:
-        tokens = self.merge_same_types(tokens)
-        return tokens
+        splits: list[tuple[str, str]] = []
+        for token, type in merges:
+            if type == "merged":
+                split_tokens = self.split_atoz_and_digits(token)
+                splits.extend(split_tokens)
+            else:
+                splits.append((token, type))
+        return splits
 
 
 class SentenceFullTokenizer:
