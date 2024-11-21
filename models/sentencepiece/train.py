@@ -24,7 +24,7 @@ class SentencePieceModelTrainer:
         self,
         add_dummy_prefix: bool = False,
         character_coverage: float = 0.999,
-        input_sentence_size: int = 1000000,
+        input_sentence_size: int = 500000,
         minloglevel: int = 2,
         model_prefix="sentencepiece",
         model_type: Literal["unigram", "bpe", "char", "word"] = "unigram",
@@ -98,6 +98,7 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-cc", "--character-coverage", type=float, default=0.999)
+        self.add_argument("-is", "--input-sentence-size", type=int, default=500000)
         self.add_argument("-mp", "--model-prefix", type=str, default="sentencepiece")
         self.add_argument("-mt", "--model-type", type=str, default="unigram")
         self.add_argument("-sf", "--shrinking-factor", type=float, default=0.9)
@@ -152,4 +153,6 @@ if __name__ == "__main__":
     # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -mb 48000 -vs 400000 -cc 0.9995 -sf 0.9 -e
     # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -t
     # python -m models.sentencepiece.train -mp sp_users_1kw_10k -cn users -mb 1000 -vs 10000 -cc 1.0 -e
-    # python -m models.sentencepiece.train -mp sp_wiki_1w_10k -db zhwiki -cn pages -bs 1000 -ec -mb 10 -vs 10000 -e
+    # python -m models.sentencepiece.train -mp sp_wiki_1w_400k -db zhwiki -cn pages -bs 1000 -ec -mb 10 -vs 10000 -e
+    # python -m models.sentencepiece.train -mp sp_wiki_all_400k_0.9999 -db zhwiki -cn pages -bs 1000 -vs 400000 -cc 0.9999 -e
+    # python -m models.sentencepiece.train -mp sp_wiki_all_400k_0.9999 -t
