@@ -6,7 +6,7 @@ from typing import Literal, Union
 
 
 class HanlpTokenizer:
-    MODEL_LEVELS = {
+    MODELS = {
         "albert": hanlp.pretrained.tok.LARGE_ALBERT_BASE,
         "coarse": hanlp.pretrained.tok.COARSE_ELECTRA_SMALL_ZH,
         "fine": hanlp.pretrained.tok.FINE_ELECTRA_SMALL_ZH,
@@ -21,19 +21,22 @@ class HanlpTokenizer:
 
     def __init__(
         self,
-        level: Literal["coarse", "fine", "ctb9_base"] = "coarse",
+        model: Literal["coarse", "fine", "ctb9_base"] = "coarse",
+        vocab_dict: dict = None,
         verbose: bool = False,
     ):
-        self.level = level
+        self.model = model
+        self.vocab_dict = vocab_dict
         self.verbose = verbose
         self.load_tokenizer()
 
     def load_tokenizer(self):
         logger.note(
-            f"> Loading Hanlp tokenizer: {logstr.mesg(brk(self.level))}",
+            f"> Loading Hanlp tokenizer: {logstr.mesg(brk(self.model))}",
             verbose=self.verbose,
         )
-        self.tokenizer = hanlp.load(self.MODEL_LEVELS[self.level.lower()])
+        self.tokenizer = hanlp.load(self.MODELS[self.model.lower()])
+        self.tokenizer.dict_force = self.vocab_dict
 
     def stringify(self, tokens: list[str]) -> str:
         tokens_str = f"{logstr.note('_')}".join(tokens)
