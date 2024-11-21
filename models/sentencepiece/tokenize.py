@@ -132,19 +132,30 @@ PT_ATOZ_DIGITS_WORD = re.compile(RE_ATOZ_DIGITS_WORD)
 
 
 class SentencePostTokenizer:
+    def is_same_type(self, a: str, b: str) -> tuple[bool, str]:
+        if PT_ATOZ_TAIL.match(a) and PT_ATOZ_HEAD.match(b):
+            return True, "atoz"
+        if PT_DIGITS_UNITS_TAIL.match(a) and PT_DIGITS_UNITS_HEAD.match(b):
+            return True, "digits_with_unit"
+        if PT_DIGITS_NUMBER_TAIL.match(a) and PT_DIGITS_NUMBER_HEAD.match(b):
+            return True, "digits_number"
+        if PT_DIGITS_ZH_UNITS_TAIL.match(a) and PT_DIGITS_ZH_UNITS_HEAD.match(b):
+            return True, "digits_zh_with_unit"
+        return False, "word"
 
-    def split_atoz_and_digits(self, token: str) -> list[str]:
-        """Examples:
-        - "abc100" -> ["abc", "100"]
-        - "5a10" -> ["5", "a", "10"]
-        - "1000" -> ["1000"]
-        """
-        parts = []
-        group_names = ["atoz", "digits", "digits_zh_with_unit", "word"]
-        for match in self.PT_ATOZ_DIGITS_WORD.finditer(token):
+    def split_atoz_and_digits(self, token: str) -> list[tuple[str, str]]:
+        parts: list[tuple[str, str]] = []
+        group_names = [
+            "atoz",
+            "digits_with_unit",
+            "digits_number",
+            "digits_zh_with_unit",
+            "word",
+        ]
+        for match in PT_ATOZ_DIGITS_WORD.finditer(token):
             for name in group_names:
                 if match.group(name):
-                    parts.append(match.group(name))
+                    parts.append((match.group(name), name))
         return parts
 
     def merge_same_types(self, tokens: list[str]) -> list[tuple[str, str]]:
