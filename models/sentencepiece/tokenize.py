@@ -5,7 +5,7 @@ from pathlib import Path
 from tclogger import logger, logstr
 from typing import Union
 
-from models.sentencepiece.convert import DocSentenceConverter
+from models.sentencepiece.convert import CH_CJK, CH_AB, CH_DIGIT_PREFIX, RE_UNITS_ALL
 
 """Naming conventions by typings:
 - tokenize: str -> list[str]
@@ -13,34 +13,50 @@ from models.sentencepiece.convert import DocSentenceConverter
 - transform: list[str] -> list[str]
 """
 
+# pre-tokenizer regex
+CH_LB = r"\(\[\{"
+CH_RB = r"\)\]\}"
+
+CH_DIGIT_ZH = r"〇零一二两三四五六七八九十"
+CH_DIGIT_ZH_MUL = r"十百千万亿"
+
+RE_DIGITS_AND_DOTS = r"[\d\.]+(?<!\.)"
+RE_DOT_DIGITS = r"\d*\.\d+"
+RE_DIGITS_AND_DOTS_WITH_PREFIX_AND_UNIT = (
+    rf"[{CH_DIGIT_PREFIX}]?{RE_DIGITS_AND_DOTS}{RE_UNITS_ALL}"
+)
+RE_DIGITS_WITH_DOTS_AND_BRS = (
+    rf"\[{RE_DIGITS_AND_DOTS}\]|\({RE_DIGITS_AND_DOTS}\)|{{{RE_DIGITS_AND_DOTS}}}"
+)
+RE_DIGITS_ALL = rf"(?:{RE_DIGITS_AND_DOTS_WITH_PREFIX_AND_UNIT}|{RE_DIGITS_WITH_DOTS_AND_BRS}|{RE_DOT_DIGITS})"
+
+RE_NON_WORD = rf"[^{CH_CJK}〇{CH_AB}\.{CH_LB}{CH_RB}]+"
+
+RE_DIGITS_ZH = (
+    rf"(([{CH_DIGIT_ZH}][{CH_DIGIT_ZH_MUL}])+[{CH_DIGIT_ZH}]?|[{CH_DIGIT_ZH}]+)"
+)
+RE_DIGITS_ZH_WITH_UNIT = rf"[{CH_DIGIT_PREFIX}]?{RE_DIGITS_ZH}{RE_UNITS_ALL}"
+
+# post-tokenizer regex
+CH_ATOZ = r"a-zA-Z"
+RE_ATOZ = rf"[{CH_ATOZ}]+"
+RE_ATOZ_HEAD = rf"^{RE_ATOZ}"
+RE_ATOZ_TAIL = rf"{RE_ATOZ}$"
+
+RE_DIGITS_TAIL = rf"{RE_DIGITS_ALL}$"
+RE_DIGITS_HEAD = rf"^{RE_DIGITS_ALL}"
+
+RE_DIGITS_ZH_TAIL = rf"{RE_DIGITS_ZH}$"
+RE_DIGITS_ZH_HEAD = rf"^({RE_DIGITS_ZH}{RE_UNITS_ALL}|{RE_DIGITS_ZH}|{RE_UNITS_ALL})$"
+
+RE_WORD_EXCPET_ATOZ_OR_DIGITS = r"[^\da-zA-Z]+"
+RE_ATOZ_DIGITS_WORD = rf"(?P<atoz>{RE_ATOZ})|(?P<digits>{RE_DIGITS_ALL})|(?P<digits_zh_with_unit>{RE_DIGITS_ZH_WITH_UNIT})|(?P<word>{RE_WORD_EXCPET_ATOZ_OR_DIGITS})"
+
 
 class SentencePreTokenizer:
-    RE_CJK = DocSentenceConverter.RE_CJK
-    RE_EN = DocSentenceConverter.RE_EN
-    RE_LB = r"\(\[\{"
-    RE_RB = r"\)\]\}"
-
-    RE_DIGIT_PREFIX = DocSentenceConverter.RE_DIGIT_PREFIX
-    RE_UNITS = DocSentenceConverter.RE_UNITS
-
-    RE_DIGIT_ZH = r"[〇零一二两三四五六七八九十]"
-    RE_DIGIT_ZH_MULTI = r"[十百千万亿]"
-    RE_DIGITS_ZH = (
-        rf"(({RE_DIGIT_ZH}{RE_DIGIT_ZH_MULTI})+{RE_DIGIT_ZH}?|{RE_DIGIT_ZH}+)"
-    )
-    RE_DIGITS_ZH_UNIT = rf"{RE_DIGIT_PREFIX}?{RE_DIGITS_ZH}{RE_UNITS}"
-
-    RE_DIGITS = r"[\d\.]+(?<!\.)"
-    RE_DIGIT_DOTS = r"\d*\.\d+"
-    RE_DIGIT_UNIT = rf"{RE_DIGIT_PREFIX}?{RE_DIGITS}{RE_UNITS}"
-    RE_DIGIT_BRACKETS = rf"\[{RE_DIGITS}\]|\({RE_DIGITS}\)|{{RE_DIGITS}}"
-    RE_DIGITS_ALL = (
-        rf"(?:{RE_DIGIT_UNIT}|{RE_DIGIT_BRACKETS}|{RE_DIGIT_DOTS}|{RE_DIGITS_ZH_UNIT})"
-    )
-
-    RE_NON_WORD = rf"[^{RE_CJK}〇{RE_EN}\.{RE_LB}{RE_RB}]+"
     PT_NON_WORD = re.compile(RE_NON_WORD)
     PT_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
+    PT_DIGITS_ZH_WITH_UNIT = re.compile(RE_DIGITS_ZH_WITH_UNIT)
 
     def fill_str_parts(
         self, parts: list[tuple[int, int, str, str]], sentence: str
@@ -87,29 +103,12 @@ class SentencePieceModelTokenizer:
 
 
 class SentencePostTokenizer:
-    RE_ATOZ = r"[a-zA-Z]+"
-    RE_ATOZ_HEAD = rf"^{RE_ATOZ}"
-    RE_ATOZ_TAIL = rf"{RE_ATOZ}$"
-    PT_ATOZ_TAIL = re.compile(RE_ATOZ_TAIL)
-    PT_ATOZ_HEAD = re.compile(RE_ATOZ_HEAD)
-
-    RE_DIGITS = SentencePreTokenizer.RE_DIGITS
-    RE_DIGITS_TAIL = rf"{RE_DIGITS}$"
-    RE_DIGITS_HEAD = rf"^{RE_DIGITS}"
     PT_DIGITS_TAIL = re.compile(RE_DIGITS_TAIL)
     PT_DIGITS_HEAD = re.compile(RE_DIGITS_HEAD)
-
-    RE_UNITS = DocSentenceConverter.RE_UNITS
-    RE_DIGITS_ZH = SentencePreTokenizer.RE_DIGITS_ZH
-    RE_DIGITS_ZH_TAIL = rf"{RE_DIGITS_ZH}$"
-    RE_DIGITS_ZH_HEAD = rf"^{RE_DIGITS_ZH}{RE_UNITS}?$"
     PT_DIGITS_ZH_TAIL = re.compile(RE_DIGITS_ZH_TAIL)
     PT_DIGITS_ZH_HEAD = re.compile(RE_DIGITS_ZH_HEAD)
-
-    RE_WORD = r"[^\da-zA-Z]+"
-    RE_ATOZ_DIGITS_WORD = (
-        rf"(?P<atoz>{RE_ATOZ})|(?P<digits>{RE_DIGITS})|(?P<word>{RE_WORD})"
-    )
+    PT_ATOZ_TAIL = re.compile(RE_ATOZ_TAIL)
+    PT_ATOZ_HEAD = re.compile(RE_ATOZ_HEAD)
     PT_ATOZ_DIGITS_WORD = re.compile(RE_ATOZ_DIGITS_WORD)
 
     def is_same_type(self, a: str, b: str) -> bool:
