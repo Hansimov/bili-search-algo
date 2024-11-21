@@ -7,13 +7,22 @@ from typing import Literal, Union
 
 class HanlpTokenizer:
     MODEL_LEVELS = {
+        "albert": hanlp.pretrained.tok.LARGE_ALBERT_BASE,
         "coarse": hanlp.pretrained.tok.COARSE_ELECTRA_SMALL_ZH,
         "fine": hanlp.pretrained.tok.FINE_ELECTRA_SMALL_ZH,
         "msr": hanlp.pretrained.tok.MSR_TOK_ELECTRA_BASE_CRF,
+        "pku": hanlp.pretrained.tok.SIGHAN2005_PKU_BERT_BASE_ZH,
+        "ctb9_small": hanlp.pretrained.tok.CTB9_TOK_ELECTRA_SMALL,
+        "ctb9_base": hanlp.pretrained.tok.CTB9_TOK_ELECTRA_BASE,
+        "ctb9_base_crf": hanlp.pretrained.tok.CTB9_TOK_ELECTRA_BASE_CRF,
+        "ud_l6": hanlp.pretrained.tok.UD_TOK_MMINILMV2L6,
+        "ud_l12": hanlp.pretrained.tok.UD_TOK_MMINILMV2L12,
     }
 
     def __init__(
-        self, level: Literal["coarse", "fine", "msr"] = "coarse", verbose: bool = False
+        self,
+        level: Literal["coarse", "fine", "ctb9_base"] = "coarse",
+        verbose: bool = False,
     ):
         self.level = level
         self.verbose = verbose
