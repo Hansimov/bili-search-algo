@@ -4,7 +4,6 @@ import sentencepiece as spm
 import sys
 
 
-from collections.abc import Iterable
 from tclogger import logger, logstr, Runtimer, dict_to_str
 from typing import Literal
 
@@ -12,6 +11,7 @@ from models.sentencepiece.data import SentencesDataloader, DataLoaderArgParser
 from models.sentencepiece.edit import SentencePieceModelVocabEditor
 from models.sentencepiece.tokenize import SentenceFullTokenizer
 from models.sentencepiece.test import TEST_SENTENCES
+from models.hanlp.tokenize import HanlpTokenizer
 
 
 class SentencePieceModelTrainer:
@@ -88,10 +88,14 @@ class SentencePieceModelTrainer:
     def test(self, test_sentences: list[str]):
         logger.note("> Testing ...")
         tokenizer = SentenceFullTokenizer(self.model_file)
+        hanlp_tokenizer = HanlpTokenizer()
         for sentence in test_sentences:
             tokens = tokenizer.tokenize(sentence)
             pretty_tokens = tokenizer.stringify(tokens)
-            logger.mesg(f"  * {pretty_tokens}")
+            logger.file(f"  * {pretty_tokens}")
+            hanlp_tokens = hanlp_tokenizer.tokenize(sentence)
+            pretty_hanlp_tokens = tokenizer.stringify(hanlp_tokens)
+            logger.success(f"  * {pretty_hanlp_tokens}")
 
 
 class ModelTrainerArgParser(argparse.ArgumentParser):
@@ -154,5 +158,5 @@ if __name__ == "__main__":
     # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -t
     # python -m models.sentencepiece.train -mp sp_users_1kw_10k -cn users -mb 1000 -vs 10000 -cc 1.0 -e
     # python -m models.sentencepiece.train -mp sp_wiki_1w_400k -db zhwiki -cn pages -bs 1000 -ec -mb 10 -vs 10000 -e
-    # python -m models.sentencepiece.train -mp sp_wiki_all_400k_0.9999 -db zhwiki -cn pages -bs 1000 -vs 400000 -cc 0.9999 -e
+    # python -m models.sentencepiece.train -mp sp_wiki_all_400k_0.9995 -db zhwiki -cn pages -bs 1000 -vs 400000 -cc 0.9995 -e
     # python -m models.sentencepiece.train -mp sp_wiki_all_400k_0.9999 -t
