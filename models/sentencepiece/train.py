@@ -85,17 +85,19 @@ class SentencePieceModelTrainer:
             **self.train_params,
         )
 
-    def test(self, test_sentences: list[str]):
+    def test(self, test_sentences: list[str], compare_baseline: bool = False):
         logger.note("> Testing ...")
         tokenizer = SentenceFullTokenizer(self.model_file)
-        hanlp_tokenizer = HanlpTokenizer()
+        if compare_baseline:
+            hanlp_tokenizer = HanlpTokenizer()
         for sentence in test_sentences:
             tokens = tokenizer.tokenize(sentence)
             pretty_tokens = tokenizer.stringify(tokens)
             logger.file(f"  * {pretty_tokens}")
-            hanlp_tokens = hanlp_tokenizer.tokenize(sentence)
-            pretty_hanlp_tokens = tokenizer.stringify(hanlp_tokens)
-            logger.success(f"  * {pretty_hanlp_tokens}")
+            if compare_baseline:
+                hanlp_tokens = hanlp_tokenizer.tokenize(sentence)
+                pretty_hanlp_tokens = tokenizer.stringify(hanlp_tokens)
+                logger.success(f"  * {pretty_hanlp_tokens}")
 
 
 class ModelTrainerArgParser(argparse.ArgumentParser):
@@ -109,6 +111,7 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-vs", "--vocab-size", type=int, default=32000)
         self.add_argument("-k", "--keep-exist-model", action="store_true")
         self.add_argument("-t", "--test-only", action="store_true")
+        self.add_argument("-cb", "--compare-baseline", action="store_true")
         self.add_argument("-e", "--edit-model", action="store_true")
 
     def parse_args(self):
@@ -152,7 +155,7 @@ if __name__ == "__main__":
     if args.edit_model:
         editor = SentencePieceModelVocabEditor(trainer.model_file, verbose=True)
         editor.edit()
-    trainer.test(TEST_SENTENCES)
+    trainer.test(TEST_SENTENCES, compare_baseline=args.compare_baseline)
 
     # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -mb 48000 -vs 400000 -cc 0.9995 -sf 0.9 -e
     # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -t
@@ -160,3 +163,4 @@ if __name__ == "__main__":
     # python -m models.sentencepiece.train -mp sp_wiki_1w_400k -db zhwiki -cn pages -bs 1000 -ec -mb 10 -vs 10000 -e
     # python -m models.sentencepiece.train -mp sp_wiki_all_400k_0.9995 -db zhwiki -cn pages -bs 1000 -vs 400000 -cc 0.9995 -e
     # python -m models.sentencepiece.train -mp sp_wiki_all_400k_0.9999 -t
+    # python -m models.sentencepiece.train -mp sp_400k_merged -t
