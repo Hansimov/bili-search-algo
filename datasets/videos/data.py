@@ -6,7 +6,7 @@ from tclogger import logger, logstr, TCLogbar, TCLogbarGroup, dict_to_str
 from typing import Literal, Generator
 
 from configs.envs import MONGO_ENVS
-from models.sentencepiece.convert import DocSentenceConverter
+from datasets.videos.convert import DocSentenceConverter
 
 
 class VideosTagsAggregator:
@@ -257,5 +257,5 @@ if __name__ == "__main__":
     for doc in loader:
         continue
 
-    # python -m models.sentencepiece.data -db zhwiki -cn pages -bs 1000
-    # python -m models.sentencepiece.data -cn videos_texts -bs 10000 -mb 200 -ec
+    # python -m datasets.videos.data -db zhwiki -cn pages -bs 1000
+    # python -m datasets.videos.data -cn videos_texts -bs 10000 -mb 200 -ec

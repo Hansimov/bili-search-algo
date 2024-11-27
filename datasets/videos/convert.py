@@ -161,4 +161,4 @@ if __name__ == "__main__":
         sum_time += res
     logger.success(f"{sum_time/epochs:.6f}")
 
-    # python -m models.sentencepiece.convert
+    # python -m datasets.videos.convert

@@ -5,7 +5,7 @@ from pathlib import Path
 from tclogger import logger, logstr
 from typing import Union
 
-from models.sentencepiece.convert import CH_CJK, CH_AB, CH_DIGIT_PREFIX, RE_UNITS_ALL
+from datasets.videos.convert import CH_CJK, CH_AB, CH_DIGIT_PREFIX, RE_UNITS_ALL
 
 """Naming conventions by typings:
 - tokenize: str -> list[str]

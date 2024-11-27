@@ -7,7 +7,7 @@ import sys
 from tclogger import logger, logstr, Runtimer, dict_to_str
 from typing import Literal
 
-from models.sentencepiece.data import SentencesDataloader, DataLoaderArgParser
+from datasets.videos.data import SentencesDataloader, DataLoaderArgParser
 from models.sentencepiece.edit import SentencePieceModelVocabEditor
 from models.sentencepiece.tokenize import SentenceFullTokenizer
 from models.sentencepiece.test import TEST_SENTENCES
