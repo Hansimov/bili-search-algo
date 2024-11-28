@@ -76,8 +76,9 @@ class SentencesDataloader:
         mongo_filter: dict = {},
         batch_size: int = 10000,
         max_batch: int = None,
-        estimate_count: bool = True,
-        iter_val: Literal["doc", "sentence"] = "sentence",
+        estimate_count: bool = False,
+        iter_val: Literal["doc", "sentence", "tokens"] = "sentence",
+        tokenizer=None,
         max_sentence_length: int = 2000,
         iter_epochs: int = None,
         show_at_init: bool = False,
@@ -91,6 +92,7 @@ class SentencesDataloader:
         self.max_batch = max_batch
         self.estimate_count = estimate_count
         self.iter_val = iter_val
+        self.tokenizer = tokenizer
         self.max_sentence_length = max_sentence_length
         self.iter_epochs = iter_epochs
         self.show_at_init = show_at_init
@@ -206,16 +208,24 @@ class SentencesDataloader:
             self.sample_bar.total = len(batch)
             for doc in batch:
                 self.sample_bar.update(increment=1)
-                if self.iter_val == "sentence":
+                if self.iter_val == "sentence" or self.iter_val == "tokens":
                     sentence = self.doc_converter.convert(doc)
                     if (
                         self.max_sentence_length
                         and len(sentence) > self.max_sentence_length
                     ):
                         for seg in self.segment_sentence(sentence):
-                            yield seg
+                            yield (
+                                seg
+                                if self.iter_val == "sentence"
+                                else self.tokenizer.tokenize(seg)
+                            )
                     else:
-                        yield sentence
+                        yield (
+                            sentence
+                            if self.iter_val == "sentence"
+                            else self.tokenizer.tokenize(sentence)
+                        )
                 else:
                     yield doc
             self.sample_bar.reset()
