@@ -8,3 +8,4 @@ logs/
 *.old
 secrets.json
 *.crt
+*.prof

@@ -107,12 +107,21 @@ class FasttextModelTrainer:
                 self.model.save(str(self.model_path))
                 logger.success(f"  * [{self.model_path}]")
 
-    def test(self, test_words: list[str] = None, restrict_vocab: int = 10000):
+    def test(
+        self,
+        test_words: list[str] = None,
+        tokenizer: SentenceFullTokenizer = None,
+        restrict_vocab: int = 10000,
+    ):
         logger.note("> Testing model:")
         if not test_words:
             logger.warn("  × No test words provided")
         else:
             for word in test_words:
+                if tokenizer and len(word) >= 3:
+                    word = tokenizer.tokenize(word.lower())
+                else:
+                    word = word.lower()
                 results = self.model.wv.most_similar(
                     word, restrict_vocab=restrict_vocab
                 )[:6]
@@ -183,13 +192,16 @@ if __name__ == "__main__":
         use_local_model=args.use_local_model,
     )
 
+    tokenizer = SentenceFullTokenizer(Path("sp_400k_merged.model"), drop_non_word=True)
+
     if not args.test_only:
         logger.note("> Initiating data loader ...")
-        tokenizer = SentenceFullTokenizer(Path("sp_400k_merged.model"))
         data_params = {
             "dbname": args.dbname,
             "collect_name": args.collect_name,
             "data_fields": args.data_fields.split(",") if args.data_fields else None,
+            # "data_fields": ["title", "owner.name", "tags"],
+            # "data_fields": ["tags"],
             "mongo_filter": {"tid": 17},
             "max_batch": args.max_batch,
             "batch_size": args.batch_size,
@@ -203,9 +215,11 @@ if __name__ == "__main__":
         logger.mesg(dict_to_str(data_params), indent=2)
         trainer.init_data_loader(data_loader)
         trainer.build_vocab()
-    #     trainer.train()
+        trainer.train()
 
-    # trainer.test(TEST_KEYWORDS, restrict_vocab=50000)
+    trainer.test(TEST_KEYWORDS, tokenizer=tokenizer, restrict_vocab=50000)
 
     # python -m models.fasttext.train
     # python -m models.fasttext.train -t
+
+    # python -m models.fasttext.train -ep 3
