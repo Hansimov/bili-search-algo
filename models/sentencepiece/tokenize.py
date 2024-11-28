@@ -149,7 +149,7 @@ class SentencePostTokenizer:
                     parts.append((match.group(name), name))
         return parts
 
-    def concat_same_types(self, parts: list[tuple[str, str]]) -> list[str]:
+    def concat_same_types(self, tokens: list[str]) -> list[str]:
         """Examples:
         - [hb,k0,8,是] -> [hbk,08,是]
         - [2024lbw,nb] -> [2024,lbwnb]
@@ -157,19 +157,16 @@ class SentencePostTokenizer:
         - [abc100,0,def123] -> [abc,1000,def,123]
         - [5a10,0d,def123d,?] -> [5a,100,ddef,123,d,?]
         """
-        tokens = [token for token, _ in parts]
         spt_str = "<SPT>".join(tokens)
         res_str = spt_str
-
         for match in PT_CONCAT.finditer(spt_str):
             for name, value in match.groupdict().items():
                 if value:
                     new_value = value.replace("<SPT>", "")
-                    # new_value = "<SPT>".join(self.split_atoz_and_digits(new_value))
                     res_str = res_str.replace(value, new_value)
                     break
-        merged_tokens = res_str.split("<SPT>")
-        return merged_tokens
+        concat_tokens = res_str.split("<SPT>")
+        return concat_tokens
 
     def get_token_type(self, token: str) -> str:
         for pattern, name in [
@@ -182,17 +179,13 @@ class SentencePostTokenizer:
                 return name
         return "raw"
 
-    def merge_atoz_and_digits(
-        self, parts: list[tuple[str, str]]
-    ) -> list[tuple[str, str]]:
+    def merge_atoz_and_digits(self, tokens: list[str]) -> list[tuple[str, str]]:
         merges: list[tuple[str, str]] = []
-        for token, _ in parts:
+        for token in tokens:
             token_type = self.get_token_type(token)
-
             if not merges:
                 merges.append((token, token_type))
                 continue
-
             last_token, last_token_type = merges[-1]
             if token_type in ["digits_number"] and last_token_type in [
                 "atoz",
@@ -254,15 +247,15 @@ class SentenceFullTokenizer:
         self.post_tokenizer = SentencePostTokenizer()
         self.model_tokenizer = SentencePieceModelTokenizer(model_path)
 
-    def tokenize_parts(self, parts: list[tuple]) -> list[tuple]:
-        new_parts = []
-        for part, type in parts:
-            if type == "str":
-                tokens = self.model_tokenizer.tokenize(part)
-                new_parts.extend([(token, "token") for token in tokens])
+    def tokenize_parts(self, parts: list[tuple]) -> list[str]:
+        res: list[str] = []
+        for token, token_type in parts:
+            if token_type == "str":
+                segs = self.model_tokenizer.tokenize(token)
+                res.extend(segs)
             else:
-                new_parts.append((part, type))
-        return new_parts
+                res.append(token)
+        return res
 
     def stringify(self, tokens: list[str]) -> str:
         tokens_str = f"{logstr.note('_')}".join(tokens)
@@ -282,8 +275,8 @@ class SentenceFullTokenizer:
     def tokenize(self, sentence: str) -> list[str]:
         sentence = sentence.lower()
         parts = self.pre_tokenizer.tokenize(sentence)
-        parts = self.tokenize_parts(parts)
-        tokens = self.post_tokenizer.concat_same_types(parts)
+        tokens = self.tokenize_parts(parts)
+        tokens = self.post_tokenizer.concat_same_types(tokens)
         # parts = self.post_tokenizer.merge_atoz_and_digits(parts)
         # parts = self.post_tokenizer.merge_single_char_around_digits_zh_with_units(
         #     parts, self.model_tokenizer
