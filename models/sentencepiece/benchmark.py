@@ -5,7 +5,8 @@ import timeit
 from pathlib import Path
 from tclogger import logger
 
-from models.sentencepiece.tokenize import SentenceFullTokenizer
+# from models.sentencepiece.tokenizer import SentenceFullTokenizer
+from models.sentencepiece.tokenizerC import SentenceFullTokenizer
 from models.sentencepiece.test import TEST_SENTENCES
 
 
@@ -19,7 +20,7 @@ class SentenceTokenzierBenchmarker:
 
     def load_model(self):
         logger.note("> Loading tokenzier ...")
-        self.model_path = Path(f"{self.model_prefix}.model")
+        self.model_path = str(Path(f"{self.model_prefix}.model").resolve())
         logger.file(f"  * {self.model_path}")
         self.tokenizer = SentenceFullTokenizer(
             self.model_path, drop_non_word=self.drop_non_word, verbose=True

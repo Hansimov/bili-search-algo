@@ -1,5 +1,6 @@
 .vscode
 __pycache__
+build
 data/
 logs/
 *.npy
@@ -9,3 +10,5 @@ logs/
 secrets.json
 *.crt
 *.prof
+*.so
+*.c
