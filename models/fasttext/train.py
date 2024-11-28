@@ -8,7 +8,7 @@ from typing import Union
 
 from datasets.videos.data import SentencesDataloader, DataLoaderArgParser
 from models.fasttext.test import TEST_KEYWORDS
-from models.sentencepiece.tokenize import SentenceFullTokenizer
+from models.sentencepiece.tokenizer import SentenceFullTokenizer
 
 
 class FasttextModelTrainer:
@@ -69,7 +69,9 @@ class FasttextModelTrainer:
         else:
             self.model = FastText(**self.train_params)
             self.is_model_trained = False
-            logger.success("  ✓ new model created")
+            logger.success(
+                f"  ✓ new model created: {logstr.mesg(brk(self.model_prefix))}"
+            )
             logger.mesg(dict_to_str(self.train_params), indent=4)
 
     def init_data_loader(self, data_loader: SentencesDataloader):
@@ -88,6 +90,7 @@ class FasttextModelTrainer:
         if self.is_model_trained and self.skip_trained:
             logger.file("  * model already trained, skip train()")
         else:
+            self.data_loader.epoch_bar.reset()
             self.data_loader.iter_epochs = self.train_params["epochs"]
             self.model.train(
                 corpus_iterable=self.data_loader,
@@ -222,4 +225,4 @@ if __name__ == "__main__":
     # python -m models.fasttext.train
     # python -m models.fasttext.train -t
 
-    # python -m models.fasttext.train -ep 3
+    # python -m models.fasttext.train -ep 3 -m fasttext_tid_17_ep_3

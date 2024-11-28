@@ -290,4 +290,4 @@ if __name__ == "__main__":
         pretty_tokens = tokenizer.stringify(tokens)
         logger.mesg(f"  * {pretty_tokens}")
 
-    # python -m models.sentencepiece.tokenize
+    # python -m models.sentencepiece.tokenizer

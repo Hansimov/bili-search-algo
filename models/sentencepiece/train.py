@@ -9,7 +9,7 @@ from typing import Literal
 
 from datasets.videos.data import SentencesDataloader, DataLoaderArgParser
 from models.sentencepiece.edit import SentencePieceModelVocabEditor
-from models.sentencepiece.tokenize import SentenceFullTokenizer
+from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.test import TEST_SENTENCES
 from models.hanlp.tokenize import HanlpTokenizer
 
