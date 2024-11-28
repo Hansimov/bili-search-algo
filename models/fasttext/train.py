@@ -1,38 +1,59 @@
 import argparse
 import sys
 
-from copy import deepcopy
 from gensim.models import FastText, KeyedVectors
 from pathlib import Path
-from tclogger import logger, logstr, dict_to_str
+from tclogger import logger, logstr, dict_to_str, brk
 from typing import Union
 
-from models.fasttext.data import VideosTagsDataLoader
+from datasets.videos.data import SentencesDataloader, DataLoaderArgParser
+from models.fasttext.test import TEST_KEYWORDS
+from models.sentencepiece.tokenize import SentenceFullTokenizer
 
 
 class FasttextModelTrainer:
-    def __init__(self):
-        pass
-
-    def load_model(
+    def __init__(
         self,
-        model_path: Union[str, Path],
-        vector_size: int = 128,
-        window: int = 5,
-        shrink_windows: bool = False,
-        min_count: int = 5,
-        workers: int = 8,
+        model_prefix: Union[str, Path] = "fasttext",
         epochs: int = 5,
-        min_alpha: float = 0.0001,
         hs: int = 0,
-        sg: int = 0,
+        min_alpha: float = 0.0001,
+        min_count: int = 5,
         min_n: int = 3,
         max_n: int = 6,
+        shrink_windows: bool = False,
+        sg: int = 0,
+        vector_size: int = 128,
+        window: int = 5,
+        workers: int = 8,
+        keep_exist_model: bool = True,
+        skip_trained: bool = True,
         use_local_model: bool = True,
     ):
-        self.model_path = Path(model_path)
+        self.model_prefix = model_prefix
+        self.keep_exist_model = keep_exist_model
+        self.skip_trained = skip_trained
+        self.use_local_model = use_local_model
+
+        self.model_path = (
+            Path(__file__).parent / "checkpoints" / f"{model_prefix}.model"
+        )
         self.model = None
         self.is_model_trained = False
+
+        self.train_params = {
+            "epochs": epochs,
+            "hs": hs,
+            "min_alpha": min_alpha,
+            "min_count": min_count,
+            "min_n": min_n,
+            "max_n": max_n,
+            "shrink_windows": shrink_windows,
+            "sg": sg,
+            "vector_size": vector_size,
+            "window": window,
+            "workers": workers,
+        }
 
         logger.note("> Loading model:")
         if self.model:
@@ -40,67 +61,43 @@ class FasttextModelTrainer:
             self.is_model_trained = True
             return
 
-        if self.model_path.exists() and use_local_model:
-            logger.file(f"  * load from local: [{self.model_path}]")
+        if self.model_path.exists() and self.use_local_model:
+            logger.mesg(f"  * load from local:")
+            logger.file(f"    * {brk(self.model_path)}")
             self.model = FastText.load(str(self.model_path))
             self.is_model_trained = True
         else:
-            self.model_params = {
-                "vector_size": vector_size,
-                "window": window,
-                "shrink_windows": shrink_windows,
-                "min_count": min_count,
-                "workers": workers,
-                "epochs": epochs,
-                "min_alpha": min_alpha,
-                "hs": hs,
-                "sg": sg,
-                "min_n": min_n,
-                "max_n": max_n,
-            }
-            self.model = FastText(**self.model_params)
+            self.model = FastText(**self.train_params)
             self.is_model_trained = False
             logger.success("  ✓ new model created")
-            logger.mesg(dict_to_str(self.model_params), indent=4)
+            logger.mesg(dict_to_str(self.train_params), indent=4)
 
-    def load_data(self, max_count: int = None):
-        logger.note(f"> Loading data: [{logstr.mesg(max_count)}]")
-        if self.is_model_trained:
-            logger.file("  * model already trained, skip load_data()")
-        else:
-            self.data_loader_params = {
-                "collection": "videos_tags",
-                "max_count": max_count,
-                "iter_val": "tag_list",
-                "iter_log": True,
-            }
-            self.data_loader = VideosTagsDataLoader(**self.data_loader_params)
-            logger.success("  ✓ data loader created")
-            logger.mesg(dict_to_str(self.data_loader_params), indent=4)
+    def init_data_loader(self, data_loader: SentencesDataloader):
+        self.data_loader = data_loader
 
-    def build_vocab(self, skip_trained: bool = True):
+    def build_vocab(self):
         logger.note("> Building vocab:")
-        if self.is_model_trained and skip_trained:
+        if self.is_model_trained and self.skip_trained:
             logger.file("  * model already trained, skip build_vocab()")
         else:
             self.model.build_vocab(corpus_iterable=self.data_loader)
             logger.success(f"  ✓ vocab built")
 
-    def train(self, skip_trained: bool = True, save: bool = False):
+    def train(self):
         logger.note("> Training model:")
-        if self.is_model_trained and skip_trained:
+        if self.is_model_trained and self.skip_trained:
             logger.file("  * model already trained, skip train()")
         else:
-            self.data_loader.iter_epochs = self.model_params["epochs"]
+            self.data_loader.iter_epochs = self.train_params["epochs"]
             self.model.train(
                 corpus_iterable=self.data_loader,
-                total_examples=self.data_loader.max_count,
+                total_examples=self.model.corpus_count,
                 epochs=self.model.epochs,
                 # total_words=self.self.model.corpus_total_words,
             )
             logger.success(f"  ✓ model trained")
 
-            if self.model_path.exists() and not save:
+            if self.model_path.exists() and self.keep_exist_model:
                 logger.file(f"> Skip saving existed model")
                 logger.file(f"  * [{self.model_path}]")
             else:
@@ -124,79 +121,91 @@ class FasttextModelTrainer:
                     res_word, res_score = result
                     logger.success(f"    * {res_score:>.4f}: {res_word}")
 
-    def run(
-        self,
-        model_params: dict = {},
-        data_params: dict = {},
-        vocab_params: dict = {},
-        train_params: dict = {},
-        test_params: dict = {},
-    ):
-        self.load_model(**model_params)
-        self.load_data(**data_params)
-        self.build_vocab(**vocab_params)
-        self.train(**train_params)
-        self.test(**test_params)
 
-
-class ArgParser(argparse.ArgumentParser):
+class ModelTrainerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.add_argument("-m", "--model-prefix", type=str, default="fasttext")
+        self.add_argument("-ep", "--epochs", type=int, default=5)
+        self.add_argument("-hs", "--hs", type=int, default=0)
+        self.add_argument("-ma", "--min-alpha", type=float, default=0.0001)
+        self.add_argument("-ic", "--min-count", type=int, default=20)
+        self.add_argument("-in", "--min-n", type=int, default=2)
+        self.add_argument("-an", "--max-n", type=int, default=8)
+        self.add_argument("-sg", "--sg", type=int, default=0)
+        self.add_argument("-sw", "--shrink-windows", action="store_true")
+        self.add_argument("-vs", "--vector-size", type=int, default=256)
+        self.add_argument("-wd", "--window", type=int, default=5)
+        self.add_argument("-wk", "--workers", type=int, default=32)
         self.add_argument("-t", "--test-only", action="store_true")
+        self.add_argument("-k", "--keep-exist-model", action="store_false")
+        self.add_argument("-s", "--skip-trained", action="store_true")
+        self.add_argument("-u", "--use-local-model", action="store_true")
+        self.add_argument("-tm", "--tokenizer-model", type=str, default=None)
+
+    def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
+        return self.args
 
 
 if __name__ == "__main__":
-    args = ArgParser().args
-
-    max_count = 450000000
-    trainer = FasttextModelTrainer()
-    model_path = Path(__file__).parent / "checkpoints" / f"fasttext_{max_count}.model"
-
-    model_params = {
-        "model_path": model_path,
-        "vector_size": 256,
-        "window": 5,
-        "shrink_windows": False,
-        "min_count": 20,
-        "workers": 32,
-        "epochs": 5,
-        "hs": 0,
-        "min_n": 2,
-        "max_n": 8,
-    }
-    data_params = {
-        "max_count": max_count,
-    }
-    vocab_params = {}
-    train_params = {}
-    test_params = {
-        "test_words": [
-            *["东方之珠", "上海", "香港", "北京", "魔都", "帝都"],
-            *["搞笑", "萌宠", "GTA", "高数", "线代", "上海交大", "交大"],
-            *["界徐盛", "影视飓风", "雷军"],
-        ],
-        "restrict_vocab": 50000,
-    }
+    data_loader_parser = DataLoaderArgParser(add_help=False)
+    model_trainer_parser = ModelTrainerArgParser(add_help=False)
+    merged_parser = argparse.ArgumentParser(
+        parents=[data_loader_parser, model_trainer_parser]
+    )
+    args, unknown_args = merged_parser.parse_known_args(sys.argv[1:])
 
     if args.test_only:
-        model_params["use_local_model"] = True
-        vocab_params["skip_trained"] = True
-        train_params["skip_trained"] = True
-        train_params["save"] = False
+        args.keep_exist_model = True
+        args.skip_trained = True
+        args.use_local_model = True
     else:
-        model_params["use_local_model"] = False
-        vocab_params["skip_trained"] = False
-        train_params["skip_trained"] = False
-        train_params["save"] = True
+        args.keep_exist_model = False
+        args.skip_trained = False
+        args.use_local_model = False
 
-    trainer.run(
-        model_params=model_params,
-        data_params=data_params,
-        vocab_params=vocab_params,
-        train_params=train_params,
-        test_params=test_params,
+    trainer = FasttextModelTrainer(
+        model_prefix=args.model_prefix,
+        epochs=args.epochs,
+        hs=args.hs,
+        min_alpha=args.min_alpha,
+        min_count=args.min_count,
+        min_n=args.min_n,
+        max_n=args.max_n,
+        shrink_windows=args.shrink_windows,
+        sg=args.sg,
+        vector_size=args.vector_size,
+        window=args.window,
+        workers=args.workers,
+        keep_exist_model=args.keep_exist_model,
+        skip_trained=args.skip_trained,
+        use_local_model=args.use_local_model,
     )
+
+    if not args.test_only:
+        logger.note("> Initiating data loader ...")
+        tokenizer = SentenceFullTokenizer(Path("sp_400k_merged.model"))
+        data_params = {
+            "dbname": args.dbname,
+            "collect_name": args.collect_name,
+            "data_fields": args.data_fields.split(",") if args.data_fields else None,
+            "mongo_filter": {"tid": 17},
+            "max_batch": args.max_batch,
+            "batch_size": args.batch_size,
+            "estimate_count": args.estimate_count,
+            "iter_val": "tokens",
+            "tokenizer": tokenizer,
+        }
+        data_loader = SentencesDataloader(
+            **data_params, show_at_init=False, verbose=True
+        )
+        logger.mesg(dict_to_str(data_params), indent=2)
+        trainer.init_data_loader(data_loader)
+        trainer.build_vocab()
+    #     trainer.train()
+
+    # trainer.test(TEST_KEYWORDS, restrict_vocab=50000)
 
     # python -m models.fasttext.train
     # python -m models.fasttext.train -t
