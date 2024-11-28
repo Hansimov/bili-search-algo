@@ -126,14 +126,12 @@ PT_CONCAT = re.compile(RE_CONCAT)
 
 class SentencePostTokenizer:
     def is_same_type(self, a: str, b: str) -> tuple[bool, str]:
-        if PT_ATOZ_TAIL.match(a) and PT_ATOZ_HEAD.match(b):
-            return True, "atoz"
-        if PT_DIGITS_UNITS_TAIL.match(a) and PT_DIGITS_UNITS_HEAD.match(b):
-            return True, "digits_with_unit"
-        if PT_DIGITS_NUMBER_TAIL.match(a) and PT_DIGITS_NUMBER_HEAD.match(b):
-            return True, "digits_number"
-        if PT_DIGITS_ZH_UNITS_TAIL.match(a) and PT_DIGITS_ZH_UNITS_HEAD.match(b):
-            return True, "digits_zh_with_unit"
+        ab = f"{a}<SPT>{b}"
+        match = PT_CONCAT.match(ab)
+        if match:
+            for name, value in match.groupdict().items():
+                if value:
+                    return True, name
         return False, "word"
 
     def split_atoz_and_digits(self, token: str) -> list[tuple[str, str]]:
@@ -151,37 +149,27 @@ class SentencePostTokenizer:
                     parts.append((match.group(name), name))
         return parts
 
-    def concat_same_types(self, parts: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    def concat_same_types(self, parts: list[tuple[str, str]]) -> list[str]:
         """Examples:
         - [hb,k0,8,是] -> [hbk,08,是]
         - [2024lbw,nb] -> [2024,lbwnb]
-        - [2024lbw, ,nb]-> [2024lbw, ,nb] # no merge as adjacent token type not same
-        - [abc100,0, def123] -> [abc,1000,def123]
-        - [5a10,0d, def123d,?] -> [5a,100,ddef,123,d,?]
+        - [2024lbw, ,nb]-> [2024,lbw, ,nb] # no merge as adjacent token type not same
+        - [abc100,0,def123] -> [abc,1000,def,123]
+        - [5a10,0d,def123d,?] -> [5a,100,ddef,123,d,?]
         """
-        merges: list[tuple[str, str]] = []
-        for i in range(len(parts)):
-            token, token_type = parts[i]
-            if token == "":
-                continue
-            if not merges:
-                merges.append((token, "raw"))
-                continue
-            last_token = merges[-1][0]
-            is_same, same_type = self.is_same_type(last_token, token)
-            if is_same:
-                merges[-1] = (last_token + token, "merged")
-            else:
-                merges.append((token, "raw"))
+        tokens = [token for token, _ in parts]
+        spt_str = "<SPT>".join(tokens)
+        res_str = spt_str
 
-        splits: list[tuple[str, str]] = []
-        for token, type in merges:
-            if type == "merged":
-                split_tokens = self.split_atoz_and_digits(token)
-                splits.extend(split_tokens)
-            else:
-                splits.append((token, type))
-        return splits
+        for match in PT_CONCAT.finditer(spt_str):
+            for name, value in match.groupdict().items():
+                if value:
+                    new_value = value.replace("<SPT>", "")
+                    # new_value = "<SPT>".join(self.split_atoz_and_digits(new_value))
+                    res_str = res_str.replace(value, new_value)
+                    break
+        merged_tokens = res_str.split("<SPT>")
+        return merged_tokens
 
     def get_token_type(self, token: str) -> str:
         for pattern, name in [
@@ -198,8 +186,7 @@ class SentencePostTokenizer:
         self, parts: list[tuple[str, str]]
     ) -> list[tuple[str, str]]:
         merges: list[tuple[str, str]] = []
-        for part in parts:
-            token = part[0]
+        for token, _ in parts:
             token_type = self.get_token_type(token)
 
             if not merges:
@@ -296,12 +283,12 @@ class SentenceFullTokenizer:
         sentence = sentence.lower()
         parts = self.pre_tokenizer.tokenize(sentence)
         parts = self.tokenize_parts(parts)
-        parts = self.post_tokenizer.concat_same_types(parts)
-        parts = self.post_tokenizer.merge_atoz_and_digits(parts)
-        parts = self.post_tokenizer.merge_single_char_around_digits_zh_with_units(
-            parts, self.model_tokenizer
-        )
-        tokens = self.parts_to_tokens(parts)
+        tokens = self.post_tokenizer.concat_same_types(parts)
+        # parts = self.post_tokenizer.merge_atoz_and_digits(parts)
+        # parts = self.post_tokenizer.merge_single_char_around_digits_zh_with_units(
+        #     parts, self.model_tokenizer
+        # )
+        # tokens = self.parts_to_tokens(parts)
         return tokens
 
 
