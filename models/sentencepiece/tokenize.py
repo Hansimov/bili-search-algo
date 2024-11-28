@@ -55,20 +55,19 @@ class SentencePreTokenizer:
         Input: list of tuple: [(start:int, end:int, part:str, type:str), ...]
         Output: list of tuple: [(part:str, type:str), ...]
         """
+        res: list[tuple[str, str]] = []
         parts.sort()
         start = 0
-        for i in range(len(parts)):
-            end, _, part, type = parts[i]
-            if start < end:
-                parts.append((start, end, sentence[start:end], "str"))
-            start = end + len(part)
+        for part_start, part_end, part, part_type in parts:
+            if start < part_start:
+                res.append((sentence[start:part_start], "str"))
+            res.append((part, part_type))
+            start = part_end
         if start < len(sentence):
-            parts.append((start, len(sentence), sentence[start:], "str"))
-        parts.sort()
-        parts = [(part, type) for _, _, part, type in parts]
-        return parts
+            res.append((sentence[start:], "str"))
+        return res
 
-    def tokenize(self, sentence: str) -> list[tuple]:
+    def tokenize(self, sentence: str) -> list[tuple[str, str]]:
         """Split sentence by multiple parts, non-word, digits and non-digits
         Output: list of tuple (part:str, type:str)
         - part: str: digits, non-word, other string
@@ -80,8 +79,9 @@ class SentencePreTokenizer:
             for name in group_names:
                 if match.group(name):
                     parts.append((match.start(), match.end(), match.group(name), name))
-        parts = self.fill_str_parts(parts, sentence)
-        return parts
+                    break
+        res = self.fill_str_parts(parts, sentence)
+        return res
 
 
 class SentencePieceModelTokenizer:
