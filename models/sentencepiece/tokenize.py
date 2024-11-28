@@ -123,6 +123,13 @@ RE_DIGITS_ZH_UNITS_CONCAT = rf"{RE_DIGITS_ZH}<SPT>{RE_DIGITS_ZH_UNITS_HEAD}(?:<S
 RE_CONCAT = rf"(?P<atoz>{RE_ATOZ_CONCAT})|(?P<digits_with_unit>{RE_DIGITS_UNITS_CONCAT})|(?P<digits_number>{RE_DIGITS_NUMBER_CONCAT})|(?P<digits_zh_with_unit>{RE_DIGITS_ZH_UNITS_CONCAT})"
 PT_CONCAT = re.compile(RE_CONCAT)
 
+RE_SINGLE_CJK_HEAD = rf"(^|<SPT>)[{CH_CJK}]"
+RE_SINGLE_CJK_TAIL = rf"[{CH_CJK}](<SPT>|$)"
+RE_DIGITS_ZH_WITH_UNIT_SPT = rf"<SPT>{RE_DIGITS_ZH_WITH_UNIT}<SPT>"
+RE_DIGITS_ZH_WITH_UNIT_SINGLE_CHAR = rf"{RE_SINGLE_CJK_HEAD}{RE_DIGITS_ZH_WITH_UNIT_SPT}{RE_SINGLE_CJK_TAIL}|{RE_SINGLE_CJK_HEAD}{RE_DIGITS_ZH_WITH_UNIT_SPT}|{RE_DIGITS_ZH_WITH_UNIT_SPT}{RE_SINGLE_CJK_TAIL}"
+
+PT_DIGITS_ZH_WITH_UNIT_SINGLE_CHAR = re.compile(RE_DIGITS_ZH_WITH_UNIT_SINGLE_CHAR)
+
 
 class SentencePostTokenizer:
     def is_same_type(self, a: str, b: str) -> tuple[bool, str]:
@@ -197,40 +204,20 @@ class SentencePostTokenizer:
                 merges.append((token, token_type))
         return merges
 
-    def merge_single_char_around_digits_zh_with_units(
-        self, parts: list[tuple[str, str]], model_tokenizer: SentencePieceModelTokenizer
-    ) -> list[tuple[str, str]]:
-        merges: list[tuple[str, str]] = []
-        for part in parts:
-            token, token_type = part
-            if not merges:
-                merges.append((token, token_type))
-                continue
-            last_token, last_token_type = merges[-1]
-            if (
-                len(last_token) == 1
-                and last_token_type == "raw"
-                and token_type == "digits_zh_with_unit"
-            ) or (
-                len(token) == 1
-                and token_type == "raw"
-                and last_token_type
-                in ["digits_zh_with_unit", "raw_digits_zh_with_unit"]
-            ):
-                new_tokens = model_tokenizer.tokenize(last_token + token)
-                if len(new_tokens) == 1:
-                    new_tokens_str = "".join(new_tokens)
-                    if token_type == "raw":
-                        new_token_type = "digits_zh_with_unit_raw"
-                    else:
-                        new_token_type = "raw_digits_zh_with_unit"
-                    merges[-1] = (new_tokens_str, new_token_type)
-                else:
-                    merges.append((token, token_type))
-            else:
-                merges.append((token, token_type))
-
-        return merges
+    def concat_digits_zh_units_single_chars(
+        self, tokens: list[str], model_tokenizer: SentencePieceModelTokenizer
+    ) -> list[str]:
+        spt_str = "<SPT>".join(tokens)
+        res_str = spt_str
+        for match in PT_DIGITS_ZH_WITH_UNIT_SINGLE_CHAR.finditer(spt_str):
+            value = match.group()
+            raw_value = value.replace("<SPT>", "")
+            new_tokens = model_tokenizer.tokenize(raw_value)
+            if len(new_tokens) == 1:
+                new_value = "<SPT>" + "".join(new_tokens) + "<SPT>"
+                res_str = res_str.replace(value, new_value)
+        concat_tokens = res_str.split("<SPT>")
+        return concat_tokens
 
 
 class SentenceFullTokenizer:
@@ -277,10 +264,10 @@ class SentenceFullTokenizer:
         parts = self.pre_tokenizer.tokenize(sentence)
         tokens = self.tokenize_parts(parts)
         tokens = self.post_tokenizer.concat_same_types(tokens)
-        # parts = self.post_tokenizer.merge_atoz_and_digits(parts)
-        # parts = self.post_tokenizer.merge_single_char_around_digits_zh_with_units(
-        #     parts, self.model_tokenizer
-        # )
+        # parts = self.post_tokenizer.merge_atoz_and_digits(tokens)
+        tokens = self.post_tokenizer.concat_digits_zh_units_single_chars(
+            tokens, self.model_tokenizer
+        )
         # tokens = self.parts_to_tokens(parts)
         return tokens
 
