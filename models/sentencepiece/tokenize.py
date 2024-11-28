@@ -262,14 +262,20 @@ class SentencePostTokenizer:
 
 
 class SentenceFullTokenizer:
-    def __init__(self, model_path: Union[Path, str], verbose: bool = False):
+    def __init__(
+        self,
+        model_path: Union[Path, str],
+        drop_non_word: bool = False,
+        verbose: bool = False,
+    ):
         self.model_path = model_path
+        self.drop_non_word = drop_non_word
         self.verbose = verbose
         self.pre_tokenizer = SentencePreTokenizer()
         self.post_tokenizer = SentencePostTokenizer()
         self.model_tokenizer = SentencePieceModelTokenizer(model_path)
 
-    def tokenize_parts(self, parts: list[tuple]) -> list[str]:
+    def tokenize_parts(self, parts: list[tuple]) -> list[tuple]:
         new_parts = []
         for part, type in parts:
             if type == "str":
@@ -283,6 +289,17 @@ class SentenceFullTokenizer:
         tokens_str = f"{logstr.note('_')}".join(tokens)
         return tokens_str
 
+    def parts_to_tokens(self, parts: list[tuple]) -> list[str]:
+        if not self.drop_non_word:
+            tokens = [part for part, type in parts]
+        else:
+            tokens = []
+            for part, type in parts:
+                token = PT_NON_WORD.sub("", part)
+                if token:
+                    tokens.append(token)
+        return tokens
+
     def tokenize(self, sentence: str) -> list[str]:
         sentence = sentence.lower()
         parts = self.pre_tokenizer.tokenize(sentence)
@@ -292,7 +309,7 @@ class SentenceFullTokenizer:
         parts = self.post_tokenizer.merge_single_char_around_digits_zh_with_units(
             parts, self.model_tokenizer
         )
-        tokens = [token for token, type in parts]
+        tokens = self.parts_to_tokens(parts)
         return tokens
 
 
@@ -307,8 +324,8 @@ if __name__ == "__main__":
     logger.success(parts)
 
     logger.note("> Full-Tokenizing ...")
-    model_path = str(Path(__file__).parents[2] / "sp_10m_10k.model")
-    tokenizer = SentenceFullTokenizer(model_path, verbose=True)
+    model_path = str(Path(__file__).parents[2] / "sp_400k_merged.model")
+    tokenizer = SentenceFullTokenizer(model_path, drop_non_word=True, verbose=True)
     for sentence in TEST_SENTENCES:
         tokens = tokenizer.tokenize(sentence)
         pretty_tokens = tokenizer.stringify(tokens)
