@@ -1,3 +1,5 @@
+# cython: profile=True
+
 import re
 import sentencepiece as spm
 
@@ -113,7 +115,7 @@ cdef unicode RE_DIGITS_UNITS_CONCAT = f"{RE_DIGITS_UNITS_TAIL}<SPT>{RE_DIGITS_UN
 cdef unicode RE_DIGITS_NUMBER_CONCAT = f"{RE_DIGITS_NUMBER}(?:<SPT>{RE_DIGITS_NUMBER})+"
 cdef unicode RE_DIGITS_ZH_UNITS_CONCAT = f"{RE_DIGITS_ZH}<SPT>{RE_DIGITS_ZH_UNITS_HEAD}(?:<SPT>|$)"
 
-cdef unicode RE_CONCAT = f"(?P<atoz>{RE_ATOZ_CONCAT})|(?P<digits_with_unit>{RE_DIGITS_UNITS_CONCAT})|(?P<digits_number>{RE_DIGITS_NUMBER_CONCAT})|(?P<digits_zh_with_unit>{RE_DIGITS_ZH_UNITS_CONCAT})"
+cdef unicode RE_CONCAT = f"(?P<atoz>{RE_ATOZ_CONCAT})|(?P<digits_number>{RE_DIGITS_NUMBER_CONCAT})"
 cdef object PT_CONCAT = re.compile(RE_CONCAT)
 
 cdef unicode RE_SINGLE_CJK_HEAD = f"(^|<SPT>)[{CH_CJK}]"
@@ -129,13 +131,10 @@ class SentencePostTokenizer:
         cdef str spt_str = "<SPT>".join(tokens)
         cdef str res_str = spt_str
         cdef str new_value
-        # Iterate over matches of PT_CONCAT using a regex search
         for match in PT_CONCAT.finditer(spt_str):
-            for name, value in match.groupdict().items():
-                if value:
-                    new_value = value.replace("<SPT>", "")
-                    res_str = res_str.replace(value, new_value)
-                    break
+            value = match.group()
+            new_value = value.replace("<SPT>", "")
+            res_str = res_str.replace(value, new_value)
         return res_str.split("<SPT>")
 
     def concat_digits_zh_units_single_chars(
@@ -147,7 +146,6 @@ class SentencePostTokenizer:
         cdef str raw_value
         cdef List[str] new_tokens
         cdef str new_value
-        # Iterate over matches of PT_DIGITS_ZH_WITH_UNIT_SINGLE_CHAR using a regex search
         for match in PT_DIGITS_ZH_WITH_UNIT_SINGLE_CHAR.finditer(spt_str):
             value = match.group()
             raw_value = value.replace("<SPT>", "")

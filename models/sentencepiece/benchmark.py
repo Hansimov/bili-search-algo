@@ -5,8 +5,8 @@ import timeit
 from pathlib import Path
 from tclogger import logger
 
-# from models.sentencepiece.tokenizer import SentenceFullTokenizer
-from models.sentencepiece.tokenizerC import SentenceFullTokenizer
+# from models.sentencepiece.tokenizerC import SentenceFullTokenizer
+from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.test import TEST_SENTENCES
 
 

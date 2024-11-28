@@ -120,7 +120,7 @@ RE_DIGITS_UNITS_CONCAT = rf"{RE_DIGITS_UNITS_TAIL}<SPT>{RE_DIGITS_UNITS_HEAD}"
 RE_DIGITS_NUMBER_CONCAT = rf"{RE_DIGITS_NUMBER}(?:<SPT>{RE_DIGITS_NUMBER})+"
 RE_DIGITS_ZH_UNITS_CONCAT = rf"{RE_DIGITS_ZH}<SPT>{RE_DIGITS_ZH_UNITS_HEAD}(?:<SPT>|$)"
 
-RE_CONCAT = rf"(?P<atoz>{RE_ATOZ_CONCAT})|(?P<digits_with_unit>{RE_DIGITS_UNITS_CONCAT})|(?P<digits_number>{RE_DIGITS_NUMBER_CONCAT})|(?P<digits_zh_with_unit>{RE_DIGITS_ZH_UNITS_CONCAT})"
+RE_CONCAT = rf"(?P<atoz>{RE_ATOZ_CONCAT})|(?P<digits_number>{RE_DIGITS_NUMBER_CONCAT})"
 PT_CONCAT = re.compile(RE_CONCAT)
 
 RE_SINGLE_CJK_HEAD = rf"(^|<SPT>)[{CH_CJK}]"
@@ -167,13 +167,11 @@ class SentencePostTokenizer:
         spt_str = "<SPT>".join(tokens)
         res_str = spt_str
         for match in PT_CONCAT.finditer(spt_str):
-            for name, value in match.groupdict().items():
-                if value:
-                    new_value = value.replace("<SPT>", "")
-                    res_str = res_str.replace(value, new_value)
-                    break
-        concat_tokens = res_str.split("<SPT>")
-        return concat_tokens
+            value = match.group()
+            new_value = value.replace("<SPT>", "")
+            res_str = res_str.replace(value, new_value)
+            break
+        return res_str.split("<SPT>")
 
     def get_token_type(self, token: str) -> str:
         for pattern, name in [
