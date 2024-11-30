@@ -7,7 +7,7 @@ from pathlib import Path
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 
 
-class Worker:
+class TokenizerWorker:
     def __init__(
         self,
         model_path: Union[Path, str],
@@ -25,25 +25,19 @@ class Worker:
         return self.tokenizer.stringify(tokens)
 
 
-def worker_process(
-    model_path: str,
-    input_queue: mp.Queue,
-    output_queue: mp.Queue,
-    verbose: bool = False,
-    drop_non_word: bool = False,
-):
-    worker = Worker(model_path, drop_non_word=drop_non_word, verbose=verbose)
+def worker_process(worker_params: dict, input_queue: mp.Queue, output_queue: mp.Queue):
+    worker = TokenizerWorker(**worker_params)
     while True:
         task = input_queue.get()
-        if task is None:  # Sentinel to terminate the worker
+        if task is None:
             break
         task_id, sentence = task
         tokens = worker.tokenize(sentence)
         tokens_str = worker.stringify(tokens)
-        result = {}
-        result["tokens"] = tokens
-        result["str"] = tokens_str
-
+        result = {
+            "tokens": tokens,
+            "string": tokens_str,
+        }
         output_queue.put((task_id, result))
 
 
@@ -59,57 +53,53 @@ class ParallelSentenceFullTokenizer:
         self.drop_non_word = drop_non_word
         self.verbose = verbose
         self.workers_num = workers_num or mp.cpu_count() // 2
+        self.create_workers()
+
+    def create_workers(self):
         self.input_queue = mp.Queue()
         self.output_queue = mp.Queue()
         self.workers = []
-
+        self.worker_params = {
+            "model_path": self.model_path,
+            "drop_non_word": self.drop_non_word,
+            "verbose": self.verbose,
+        }
         for _ in range(self.workers_num):
             p = mp.Process(
                 target=worker_process,
-                args=(
-                    self.model_path,
-                    self.input_queue,
-                    self.output_queue,
-                    self.drop_non_word,
-                    self.verbose,
-                ),
+                args=(self.worker_params, self.input_queue, self.output_queue),
             )
             p.start()
             self.workers.append(p)
 
     def tokenize(self, sentences: List[str]) -> List[List[str]]:
-        """Tokenize a list of sentences using multiple workers."""
-        # Submit tasks
-        task_ids = {}
+        tasks = {}
         for idx, sentence in enumerate(sentences):
             self.input_queue.put((idx, sentence))
-            task_ids[idx] = sentence
+            tasks[idx] = sentence
 
-        # Collect results
         results = {}
         for _ in range(len(sentences)):
             task_id, result = self.output_queue.get()
             results[task_id] = result
 
-        # Sort results by original order
-        return [results[idx] for idx in sorted(results.keys())]
+        sorted_results = [results[idx] for idx in sorted(results.keys())]
+        return sorted_results
 
-    def close(self):
-        """Terminate worker processes."""
+    def terminate(self):
         for _ in self.workers:
-            self.input_queue.put(None)  # Send sentinel to terminate workers
+            self.input_queue.put(None)
         for p in self.workers:
             p.join()
 
 
-# Example usage
 if __name__ == "__main__":
-
     from models.sentencepiece.test import TEST_SENTENCES
 
-    model_path = str(Path(__file__).parents[2] / "sp_400k_merged.model")
+    model_prefix = "sp_400k_merged"
+    model_path = str(Path(__file__).parents[2] / f"{model_prefix}.model")
     tokenizer = ParallelSentenceFullTokenizer(
-        model_path, drop_non_word=True, verbose=False
+        model_path, drop_non_word=True, verbose=False, workers_num=8
     )
 
     logger.note(
@@ -119,8 +109,8 @@ if __name__ == "__main__":
     results = tokenizer.tokenize(sentences)
 
     for sentence, result in zip(sentences, results):
-        logger.mesg(f"  * {result['str']}")
+        logger.mesg(f"  * {result['string']}")
 
-    tokenizer.close()
+    tokenizer.terminate()
 
     # python -m models.sentencepiece.tokenizer_parallel
