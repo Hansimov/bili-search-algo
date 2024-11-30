@@ -70,11 +70,46 @@ class SentenceTokenzierBenchmarker:
             total_time += epoch_time
         self.log_total_stats(total_time, epochs, iterations, test_sentence_len)
 
+    def benchmark_parallel(
+        self,
+        epochs: int = 5,
+        iterations: int = 100000,
+        workers_num=16,
+        batch_size=100000,
+    ):
+        self.parallel_tokenizer = ParallelSentenceFullTokenizer(
+            **self.tokenizer_params, workers_num=workers_num, batch_size=batch_size
+        )
+        logger.note("> Benchmarking parallel ...")
+        test_sentence = TEST_SENTENCES[-1]
+        test_sentence_len = len(test_sentence)
+
+        def test_sentence_generator() -> Generator[str, None, None]:
+            for i in range(iterations):
+                yield test_sentence
+
+        total_time = 0
+
+        def iterate_test_sentence_generator():
+            sentence_generator = test_sentence_generator()
+            for results in self.parallel_tokenizer.tokenize_iter(sentence_generator):
+                pass
+
+        for i in range(epochs):
+            epoch_time = timeit.timeit(
+                lambda: iterate_test_sentence_generator(), number=1
+            )
+            self.log_epoch_stats(epoch_time, epochs, iterations, test_sentence_len)
+            total_time += epoch_time
+        self.parallel_tokenizer.terminate()
+        self.log_total_stats(total_time, epochs, iterations, test_sentence_len)
+
 
 class ArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-t", "--test", action="store_true")
+        self.add_argument("-p", "--parallel", action="store_true")
 
     def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
@@ -87,11 +122,14 @@ if __name__ == "__main__":
 
     if args.test:
         benchmarker.test()
+    elif args.parallel:
+        benchmarker.benchmark_parallel()
     else:
         benchmarker.benchmark()
 
     # python -m models.sentencepiece.benchmark
     # python -m models.sentencepiece.benchmark -t
+    # python -m models.sentencepiece.benchmark -p
 
     # python -m cProfile -o sentencepiece_benchmark.prof -m models.sentencepiece.benchmark
     # snakeviz sentencepiece_benchmark.prof -H 0.0.0.0 -p 10888
