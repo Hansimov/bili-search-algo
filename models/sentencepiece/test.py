@@ -43,4 +43,5 @@ TEST_SENTENCES = [
     "首先不进入隐藏地图打二郎神直接打大圣残躯达成第一个结局，之后在主菜单点击继续游戏会回到打大圣残躯之前，这样一周目即可达成双结局",
     "Dark Souls即将推出极具话题性及代表性的系列新作。做好准备，再次拥抱黑暗！",
     "消息源 Jukanlosreve 透露，苹果公司已为 2026 年推出的 iPhone 18 Pro / Max 手机设定线路图，系列机型将引入全新 LTPO + 屏幕面板技术，以与标准版数字系列 iPhone 18 产生差异。",
+    "CS2, CS1.6, C4, AK47, M4A1, XM1014, P90, https://www.bilibili.com/read/readlist/rl251395",
 ]

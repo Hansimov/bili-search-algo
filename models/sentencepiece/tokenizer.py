@@ -158,11 +158,11 @@ class SentencePostTokenizer:
 
     def concat_same_types(self, tokens: list[str]) -> list[str]:
         """Examples:
-        - [hb,k0,8,是] -> [hbk,08,是]
-        - [2024lbw,nb] -> [2024,lbwnb]
-        - [2024lbw, ,nb]-> [2024,lbw, ,nb] # no merge as adjacent token type not same
-        - [abc100,0,def123] -> [abc,1000,def,123]
-        - [5a10,0d,def123d,?] -> [5a,100,ddef,123,d,?]
+        - [hb,k0,8,是] -> [hbk08,是]
+        - [2024lbw,nb] -> [2024lbwnb]
+        - [2024lbw, ,nb]-> [2024,lbw, ,nb]
+        - [abc100,0,def123] -> [abc1000,def123]
+        - [5a10,0d,def123d,?] -> [5a100,ddef123,d,?]
         """
         spt_str = "<SPT>".join(tokens)
         res_str = spt_str
@@ -170,7 +170,6 @@ class SentencePostTokenizer:
             value = match.group()
             new_value = value.replace("<SPT>", "")
             res_str = res_str.replace(value, new_value)
-            break
         return res_str.split("<SPT>")
 
     def get_token_type(self, token: str) -> str:
