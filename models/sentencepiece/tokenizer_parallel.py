@@ -15,10 +15,14 @@ class TokenizerWorker:
         self,
         model_path: Union[Path, str],
         drop_non_word: bool = False,
+        drop_whitespace: bool = False,
         verbose: bool = False,
     ):
         self.tokenizer = SentenceFullTokenizer(
-            model_path=model_path, drop_non_word=drop_non_word, verbose=verbose
+            model_path=model_path,
+            drop_non_word=drop_non_word,
+            drop_whitespace=drop_whitespace,
+            verbose=verbose,
         )
 
     def tokenize(self, sentence: str) -> list[str]:
@@ -50,12 +54,14 @@ class ParallelSentenceFullTokenizer:
         self,
         model_path: Union[Path, str],
         drop_non_word: bool = False,
+        drop_whitespace: bool = False,
         verbose: bool = False,
         workers_num: int = None,
         batch_size: int = 1000,
     ):
         self.model_path = str(model_path)
         self.drop_non_word = drop_non_word
+        self.drop_whitespace = drop_whitespace
         self.verbose = verbose
         self.workers_num = workers_num or mp.cpu_count() // 2
         self.batch_size = batch_size
@@ -69,6 +75,7 @@ class ParallelSentenceFullTokenizer:
         self.worker_params = {
             "model_path": self.model_path,
             "drop_non_word": self.drop_non_word,
+            "drop_whitespace": self.drop_whitespace,
             "verbose": self.verbose,
         }
         for _ in range(self.workers_num):

@@ -222,10 +222,12 @@ class SentenceFullTokenizer:
         self,
         model_path: Union[Path, str],
         drop_non_word: bool = False,
+        drop_whitespace: bool = False,
         verbose: bool = False,
     ):
         self.model_path = model_path
         self.drop_non_word = drop_non_word
+        self.drop_whitespace = drop_whitespace
         self.verbose = verbose
         self.pre_tokenizer = SentencePreTokenizer()
         self.post_tokenizer = SentencePostTokenizer()
@@ -246,14 +248,35 @@ class SentenceFullTokenizer:
         return tokens_str
 
     def parts_to_tokens(self, parts: list[tuple]) -> list[str]:
-        if not self.drop_non_word:
+        if not self.drop_non_word and not self.drop_whitespace:
             tokens = [part for part, type in parts]
         else:
             tokens = []
             for part, type in parts:
-                token = PT_NON_WORD.sub("", part)
+                if self.drop_non_word:
+                    token = PT_NON_WORD.sub("", part)
+                if self.drop_whitespace:
+                    token = token.strip()
                 if token:
                     tokens.append(token)
+        return tokens
+
+    def remove_non_words(self, tokens: list[str]):
+        res = []
+        for token in tokens:
+            token = PT_NON_WORD.sub("", token)
+            if token:
+                res.append(token)
+        return res
+
+    def remove_whitespaces(self, tokens: list[str]):
+        return [token for token in tokens if token.strip()]
+
+    def clean_tokens(self, tokens: list[str]):
+        if self.drop_non_word:
+            tokens = self.remove_non_words(tokens)
+        if self.drop_whitespace:
+            tokens = self.remove_whitespaces(tokens)
         return tokens
 
     def tokenize(self, sentence: str) -> list[str]:
@@ -265,7 +288,7 @@ class SentenceFullTokenizer:
         tokens = self.post_tokenizer.concat_digits_zh_units_single_chars(
             tokens, self.model_tokenizer
         )
-        # tokens = self.parts_to_tokens(parts)
+        tokens = self.clean_tokens(tokens)
         return tokens
 
 
