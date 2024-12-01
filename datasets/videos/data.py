@@ -3,7 +3,7 @@ import sys
 
 from sedb import MongoOperator
 from tclogger import logger, logstr, TCLogbar, TCLogbarGroup, dict_to_str
-from typing import Literal, Generator
+from typing import Literal, Generator, Union
 
 from configs.envs import MONGO_ENVS
 from datasets.videos.convert import DocSentenceConverter
@@ -188,18 +188,6 @@ class SentencesDataloader:
         else:
             print()
 
-    def doc_batch(self) -> Generator[dict, None, None]:
-        while True:
-            res = []
-            for idx, doc in enumerate(self.cursor):
-                res.append(doc)
-                if (idx + 1) % self.batch_size == 0:
-                    self.batch_bar.update(increment=1)
-                    break
-            if not res:
-                break
-            yield res
-
     def segment_sentence(self, sentence: str) -> Generator[str, None, None]:
         """generate concat sentence segs without exceeding max_sentence_length, and must break at whitespaces"""
         segs = sentence.split()
@@ -216,9 +204,43 @@ class SentencesDataloader:
         if tmp_segs:
             yield " ".join(tmp_segs)
 
+    def format_docs(
+        self, docs: list[dict], doc_type: Literal["doc", "sentence"]
+    ) -> Union[list[dict], list[str]]:
+        if doc_type == "sentence":
+            if self.max_sentence_length:
+                res = []
+                for doc in docs:
+                    sentence = self.doc_converter.convert(doc)
+                    if len(sentence) > self.max_sentence_length:
+                        for seg in self.segment_sentence(sentence):
+                            res.append(seg)
+                    else:
+                        res.append(sentence)
+            else:
+                res = [self.doc_converter.convert(doc) for doc in docs]
+            return res
+        else:
+            return docs
+
+    def doc_batch_generator(
+        self, doc_type: Literal["doc", "sentence"]
+    ) -> Generator[Union[list[dict], list[str]], None, None]:
+        batch = []
+        for idx, doc in enumerate(self.cursor):
+            batch.append(doc)
+            if (idx + 1) % self.batch_size == 0:
+                self.batch_bar.update(increment=1)
+                yield self.format_docs(batch, doc_type=doc_type)
+                batch = []
+        if batch:
+            self.batch_bar.update(increment=1)
+            yield self.format_docs(batch, doc_type=doc_type)
+            batch = []
+
     def __iter__(self) -> Generator[str, None, None]:
         self.__epoch_start__()
-        for batch_idx, batch in enumerate(self.doc_batch()):
+        for batch_idx, batch in enumerate(self.doc_batch_generator()):
             if self.max_batch is not None and batch_idx >= self.max_batch:
                 break
             self.sample_bar.total = len(batch)
