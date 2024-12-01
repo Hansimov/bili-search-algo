@@ -82,6 +82,7 @@ class SentencesDataloader:
         max_sentence_length: int = 2000,
         iter_epochs: int = None,
         show_at_init: bool = False,
+        show_epoch_bar: bool = True,
         verbose: bool = False,
     ):
         self.dbname = dbname
@@ -96,6 +97,7 @@ class SentencesDataloader:
         self.max_sentence_length = max_sentence_length
         self.iter_epochs = iter_epochs
         self.show_at_init = show_at_init
+        self.show_epoch_bar = show_epoch_bar
         self.verbose = verbose
         self.init_mongo()
         self.init_cursor()
@@ -122,13 +124,22 @@ class SentencesDataloader:
         self.cursor = self.samples_collect.find(self.mongo_filter)
 
     def init_progress_bars(self):
-        self.epoch_bar = TCLogbar(head=logstr.note("> Epoch:"))
-        self.batch_bar = TCLogbar(head=logstr.note("  * Batch:"))
-        self.sample_bar = TCLogbar(head=logstr.note("  * Sample:"))
+        if self.show_epoch_bar:
+            subbar_indent = 2
+        else:
+            subbar_indent = 0
+        batch_bar_head_str = " " * subbar_indent + "* Batch:"
+        sample_bar_head_str = " " * subbar_indent + "* Sample:"
+        self.batch_bar = TCLogbar(head=logstr.note(batch_bar_head_str))
+        self.sample_bar = TCLogbar(head=logstr.note(sample_bar_head_str))
+        if self.show_epoch_bar:
+            self.epoch_bar = TCLogbar(head=logstr.note("> Epoch:"))
+            self.logbars = [self.epoch_bar, self.batch_bar, self.sample_bar]
+        else:
+            self.epoch_bar = None
+            self.logbars = [self.batch_bar, self.sample_bar]
         TCLogbarGroup(
-            [self.epoch_bar, self.batch_bar, self.sample_bar],
-            show_at_init=self.show_at_init,
-            verbose=self.verbose,
+            self.logbars, show_at_init=self.show_at_init, verbose=self.verbose
         )
 
     def init_doc_converter(self):
@@ -136,6 +147,7 @@ class SentencesDataloader:
             collect_name=self.collect_name,
             fields=self.data_fields,
             simplify_chinese=True,
+            is_multiply_sentence=False,
         )
 
     def init_total(self):
@@ -149,7 +161,8 @@ class SentencesDataloader:
             logger.mesg(f"[{self.samples_count}]")
             if self.mongo_filter:
                 logger.file(dict_to_str(self.mongo_filter), indent=2)
-        self.epoch_bar.total = self.iter_epochs or 1
+        if self.epoch_bar:
+            self.epoch_bar.total = self.iter_epochs or 1
         if self.max_batch:
             self.batch_bar.total = self.max_batch
         else:
@@ -157,13 +170,16 @@ class SentencesDataloader:
 
     def __epoch_start__(self):
         self.init_total()
-        self.epoch_bar.update(0, flush=True)
+        if self.epoch_bar:
+            self.epoch_bar.update(0, flush=True)
 
     def __epoch_end__(self):
-        self.epoch_bar.update(increment=1)
+        if self.epoch_bar:
+            self.epoch_bar.update(increment=1)
         if (
             self.iter_epochs
             and self.iter_epochs > 1
+            and self.epoch_bar
             and self.epoch_bar.count < self.iter_epochs
         ):
             self.batch_bar.reset()
