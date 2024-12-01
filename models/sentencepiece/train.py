@@ -144,6 +144,7 @@ if __name__ == "__main__":
             "max_batch": args.max_batch,
             "batch_size": args.batch_size,
             "estimate_count": args.estimate_count,
+            "max_sentence_len": 2000,
         }
         data_loader = SentencesDataloader(
             **data_params, show_at_init=False, verbose=True

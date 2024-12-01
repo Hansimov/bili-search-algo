@@ -79,7 +79,7 @@ class SentencesDataloader:
         estimate_count: bool = False,
         iter_val: Literal["doc", "sentence", "tokens"] = "sentence",
         tokenizer=None,
-        max_sentence_length: int = 2000,
+        max_sentence_length: int = None,
         iter_epochs: int = None,
         show_at_init: bool = False,
         show_epoch_bar: bool = True,
