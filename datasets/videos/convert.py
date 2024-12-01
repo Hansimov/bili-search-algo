@@ -54,6 +54,7 @@ class DocSentenceConverter:
         collect_name: Literal["videos_texts", "users", "pages"] = "videos_texts",
         fields: Union[str, list[str]] = None,
         simplify_chinese: bool = False,
+        is_multiply_sentence: bool = False,
     ):
         self.collect_name = collect_name
         if fields:
@@ -61,6 +62,7 @@ class DocSentenceConverter:
         else:
             self.fields = None
         self.simplify_chinese = simplify_chinese
+        self.is_multiply_sentence = is_multiply_sentence
         self.init_doc_to_sentence()
 
     def init_doc_to_sentence(self):
@@ -135,7 +137,8 @@ class DocSentenceConverter:
     def convert(self, doc: dict) -> str:
         sentence = self.doc_to_sentence(doc)
         sentence = self.convert_sentence(sentence)
-        sentence = self.multiply_sentence(doc, sentence)
+        if self.is_multiply_sentence:
+            sentence = self.multiply_sentence(doc, sentence)
         return sentence
 
 
