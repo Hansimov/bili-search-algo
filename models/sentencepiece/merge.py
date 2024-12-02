@@ -1,10 +1,28 @@
-import models.sentencepiece.sentencepiece_model_pb2 as spm_pb2
+import re
 
 from pathlib import Path
 from tclogger import logger, logstr, brk, chars_len
 from typing import Union
 
+import models.sentencepiece.sentencepiece_model_pb2 as spm_pb2
 from models.sentencepiece.proto import SentencePieceModelProtor
+
+
+RE_START_WITH_DE = rf"^的"
+CH_VALID_DE = r"确士卢"
+RE_VALID_DE = rf"^的[{CH_VALID_DE}]?$"
+
+RE_START_WITH_LE = rf"^了"
+CH_VALID_LE = r"断解得结却然如若无事悟了不"
+WD_VALID_LE = "不得|不起(的.+)?"
+RE_VALID_LE = rf"^了([{CH_VALID_LE}]|{WD_VALID_LE})?$"
+
+RE_START_WITH_HE = rf"^和"
+RE_START_WITH_ZAI = rf"^在"
+RE_START_WITH_SHI = rf"^是"
+RE_START_WITH_YU = rf"^与"
+RE_START_WITH_JI = rf"^及"
+RE_START_WITH_BING = rf"^并"
 
 
 class SentencePieceModelMerger:
@@ -29,10 +47,18 @@ class SentencePieceModelMerger:
             self.protors.append(protor)
             logger.file(f"  * {path}", verbose=self.verbose)
 
+    def is_prune(self, token: str) -> bool:
+        if re.match(RE_START_WITH_DE, token):
+            return not re.fullmatch(RE_VALID_DE, token)
+        if re.match(RE_START_WITH_LE, token):
+            return not re.fullmatch(RE_VALID_LE, token)
+
     def merge_vocabs(self):
         logger.note("> Merge sentencepiece models:", verbose=self.verbose)
         merged_pieces = {}
         vocab_count_total = 0
+        pruned_count = 0
+        duplicated_count = 0
 
         # merge vocab pieces from all models
         for protor in self.protors:
@@ -42,19 +68,25 @@ class SentencePieceModelMerger:
             logger.file(f"  * {protor.model_path}", verbose=self.verbose)
             logger.file(f"    * vocab size: {vocab_size_str}", verbose=self.verbose)
             for piece in model.pieces:
-                if piece.piece not in merged_pieces:
-                    merged_pieces[piece.piece] = piece
+                piece_str = piece.piece
+                if self.is_prune(piece_str):
+                    pruned_count += 1
+                    continue
+                if piece_str not in merged_pieces:
+                    merged_pieces[piece_str] = piece
                 else:
-                    merged_pieces[piece.piece].score = max(
-                        merged_pieces[piece.piece].score, piece.score
+                    duplicated_count += 1
+                    merged_pieces[piece_str].score = max(
+                        merged_pieces[piece_str].score, piece.score
                     )
 
         # log merged vocab size and duplicated vocab count
         self.merged_vocab_size = len(merged_pieces)
         merged_vocab_size_str = logstr.mesg(brk(self.merged_vocab_size))
-        duplicated_vocab_count = vocab_count_total - self.merged_vocab_size
-        duplicated_vocab_count_str = logstr.mesg(brk(duplicated_vocab_count))
-        logger.warn(f"  - duplicated vocab count: {duplicated_vocab_count_str}")
+        duplicated_count_str = logstr.mesg(brk(duplicated_count))
+        pruned_count_str = logstr.mesg(brk(pruned_count))
+        logger.warn(f"  - pruned vocab count: {pruned_count_str}")
+        logger.warn(f"  - duplicated vocab count: {duplicated_count_str}")
         logger.success(f"  + merged vocab size: {merged_vocab_size_str}")
 
         # sort pieces by score in desc order
