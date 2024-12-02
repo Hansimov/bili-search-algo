@@ -104,12 +104,28 @@ class VideoTextsTokenFreqCounter:
         df.to_csv(output_path, index=False)
 
 
+class FreqCounterArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("-o", "--output-prefix", type=str, default="video_texts_freq")
+        self.add_argument("-mcb", "--max-count-batch", type=int, default=None)
+
+    def parse_args(self):
+        self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
+        return self.args
+
+
 if __name__ == "__main__":
     data_loader_parser = DataLoaderArgParser(add_help=False)
-    merged_parser = argparse.ArgumentParser(parents=[data_loader_parser])
+    freq_counter_parser = FreqCounterArgParser(add_help=False)
+    merged_parser = argparse.ArgumentParser(
+        parents=[data_loader_parser, freq_counter_parser]
+    )
     args, unknown_args = merged_parser.parse_known_args(sys.argv[1:])
 
-    mongo_filter = {"tid": 17}
+    # mongo_filter = {"tid": 231}
+    mongo_filter = {}
+
     logger.note("> Initiating data loader ...")
     data_params = {
         "dbname": args.dbname,
@@ -122,7 +138,11 @@ if __name__ == "__main__":
     }
     logger.mesg(dict_to_str(data_params), indent=2)
     data_loader = SentencesDataloader(
-        **data_params, show_at_init=False, show_epoch_bar=False, verbose=True
+        **data_params,
+        show_at_init=False,
+        task_type="freq",
+        show_epoch_bar=False,
+        verbose=True,
     )
     tokenizer = ParallelSentenceFullTokenizer(
         Path("sp_400k_merged.model"),
@@ -132,7 +152,11 @@ if __name__ == "__main__":
         batch_size=args.batch_size * 2,
     )
 
-    counter = VideoTextsTokenFreqCounter(data_loader=data_loader, tokenizer=tokenizer)
+    counter = VideoTextsTokenFreqCounter(
+        data_loader=data_loader,
+        tokenizer=tokenizer,
+        max_count_batch=args.max_count_batch,
+    )
 
     logger.note("> Counting tokens frequency ...")
     counter.count()
@@ -142,8 +166,10 @@ if __name__ == "__main__":
     logger.success(dict_to_str(percentile_res), indent=2)
 
     logger.note("> Dumping to csv ...")
-    csv_path = Path("video_texts_freq.csv")
-    counter.dump("video_texts_freq.csv")
+    csv_path = Path(f"{args.output_prefix}.csv")
+    counter.dump(csv_path)
     logger.file(f"  * {str(csv_path.resolve())}")
 
     # python -m datasets.videos.freq
+    # python -m datasets.videos.freq -o video_texts_freq_all -ec
+    # python -m datasets.videos.freq -o video_texts_freq_all -ec -mcb 1
