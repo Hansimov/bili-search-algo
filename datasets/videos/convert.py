@@ -153,26 +153,43 @@ class DocSentenceConverter:
         return sentence
 
 
+class ArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("-t", "--test", action="store_true")
+
+    def parse_args(self):
+        self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
+        return self.args
+
+
 if __name__ == "__main__":
     from tclogger import logger
-    from models.sentencepiece.test import TEST_TOKENS
+    from models.sentencepiece.test import TEST_TOKENS, TEST_SENTENCES
     import timeit
 
-    sentence = TEST_TOKENS
-    logger.note(sentence)
-    converter = DocSentenceConverter()
-    sentence = converter.convert_sentence(sentence)
-    logger.success(sentence)
+    args = ArgParser().parse_args()
+    converter = DocSentenceConverter(is_simplify_chinese=True, is_replace_non_word=True)
 
-    logger.note("> Benchmarking ...")
-    sum_time = 0
-    epochs, iterations = 5, 10000
-    for i in range(epochs):
-        res = timeit.timeit(
-            lambda: converter.convert_sentence(sentence), number=iterations
-        )
-        logger.file(f"* {res:.6f}")
-        sum_time += res
-    logger.success(f"{sum_time/epochs:.6f}")
+    if args.test:
+        logger.note("> Testing ...")
+        sentence = TEST_TOKENS
+        logger.note(sentence)
+        sentence = converter.convert_sentence(sentence)
+        logger.success(sentence)
+        for sentence in TEST_SENTENCES:
+            converted_sentence = converter.convert_sentence(sentence)
+            logger.mesg(f"  * {converted_sentence}")
+    else:
+        logger.note("> Benchmarking ...")
+        sum_time = 0
+        epochs, iterations = 5, 10000
+        for i in range(epochs):
+            res = timeit.timeit(
+                lambda: converter.convert_sentence(sentence), number=iterations
+            )
+            logger.file(f"* {res:.6f}")
+            sum_time += res
+        logger.success(f"{sum_time/epochs:.6f}")
 
     # python -m datasets.videos.convert
