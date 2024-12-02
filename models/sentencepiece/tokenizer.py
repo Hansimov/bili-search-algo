@@ -21,25 +21,31 @@ CH_DIGIT_ZH = r"〇零一二两三四五六七八九十"
 CH_DIGIT_ZH_MUL = r"十百千万亿"
 
 RE_DIGITS_PURE = r"\d+"
-RE_DOT_DIGITS = r"\d*\.\d+"
-RE_DIGITS_AND_DOTS = r"[\d\.]+(?<!\.)"
-RE_DIGITS_NUMBER = rf"({RE_DOT_DIGITS}|{RE_DIGITS_AND_DOTS})"
-RE_DIGITS_AND_DOTS_WITH_PREFIX_AND_UNIT = (
-    rf"[{CH_DIGIT_PREFIX}]?\s*{RE_DIGITS_AND_DOTS}\s*{RE_UNITS_ALL}"
+RE_DOT_DIGITS = r"\d*(\.\d+)+"
+RE_COMMA_DIGITS = r"\d+(\,\d+)+"
+RE_DASHED_DIGITS = r"\d+(\-\d+)+"
+RE_PERCENT = r"[%‰]*"
+RE_DIGITS_AND_DOTS = rf"{RE_DOT_DIGITS}|{RE_DIGITS_PURE}"
+RE_DIGITS_NUMBER = rf"(({RE_DOT_DIGITS}|{RE_COMMA_DIGITS}|{RE_DASHED_DIGITS}|{RE_DIGITS_PURE}){RE_PERCENT})"
+RE_DIGITS_NUMBER_WITH_PREFIX_AND_UNIT = (
+    rf"[{CH_DIGIT_PREFIX}]?\s*{RE_DIGITS_NUMBER}\s*{RE_UNITS_ALL}"
 )
 RE_DIGITS_WITH_DOTS_AND_BRS = (
     rf"\[{RE_DIGITS_AND_DOTS}\]|\({RE_DIGITS_AND_DOTS}\)|{{{RE_DIGITS_AND_DOTS}}}"
 )
-RE_DIGITS_ALL = rf"(?:{RE_DIGITS_AND_DOTS_WITH_PREFIX_AND_UNIT}|{RE_DIGITS_WITH_DOTS_AND_BRS}|{RE_DIGITS_NUMBER})"
+RE_DIGITS_ALL = rf"(?:{RE_DIGITS_NUMBER_WITH_PREFIX_AND_UNIT}|{RE_DIGITS_WITH_DOTS_AND_BRS}|{RE_DIGITS_NUMBER})"
 
-RE_NON_WORD = rf"[^{CH_CJK}〇{CH_AB}\.{CH_LB}{CH_RB}]+"
+RE_NOT_DIGIT_DOT = r"\.(?!\d)"
+RE_NON_WORD = rf"[^{CH_CJK}〇{CH_AB}\-\.%‰{CH_LB}{CH_RB}]+|{RE_NOT_DIGIT_DOT}"
 
 RE_DIGITS_ZH = (
     rf"(([{CH_DIGIT_ZH}][{CH_DIGIT_ZH_MUL}])+[{CH_DIGIT_ZH}]?|[{CH_DIGIT_ZH}]+)"
 )
 RE_DIGITS_ZH_WITH_UNIT = rf"[{CH_DIGIT_PREFIX}]?{RE_DIGITS_ZH}{RE_UNITS_ALL}"
 
-RE_DIGITS_UNITS_AND_NON_WORD = rf"(?P<digits_with_unit>{RE_DIGITS_AND_DOTS_WITH_PREFIX_AND_UNIT})|(?P<digits_zh_with_unit>{RE_DIGITS_ZH_WITH_UNIT})|(?P<non_word>{RE_NON_WORD})"
+RE_DASHED_ATOZ_AND_DIGITS = rf"[a-z0-9]+(\-[a-z0-9]+)+"
+
+RE_DIGITS_UNITS_AND_NON_WORD = rf"(?P<dashed_atoz_and_digits>{RE_DASHED_ATOZ_AND_DIGITS}{RE_UNITS_ALL}?)|(?P<digits_with_unit>{RE_DIGITS_NUMBER_WITH_PREFIX_AND_UNIT})|(?P<digits_zh_with_unit>{RE_DIGITS_ZH_WITH_UNIT})|(?P<non_word>{RE_NON_WORD})"
 
 PT_NON_WORD = re.compile(RE_NON_WORD)
 PT_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
@@ -74,7 +80,12 @@ class SentencePreTokenizer:
         - type: "digits_with_unit", "digits_zh_with_unit", "non_word"
         """
         parts = []
-        group_names = ["digits_with_unit", "digits_zh_with_unit", "non_word"]
+        group_names = [
+            "dashed_atoz_and_digits",
+            "digits_with_unit",
+            "digits_zh_with_unit",
+            "non_word",
+        ]
         for match in PT_DIGITS_UNITS_AND_NON_WORDS.finditer(sentence):
             for name in group_names:
                 if match.group(name):
@@ -100,7 +111,7 @@ RE_ATOZ = rf"[{CH_ATOZ}]+"
 
 RE_ATOZ_DIGITS_NUMBER = rf"({RE_ATOZ}|{RE_DIGITS_NUMBER})"
 
-RE_DIGITS_UNITS_TAIL = rf"[{CH_DIGIT_PREFIX}]?{RE_DIGITS_AND_DOTS}"
+RE_DIGITS_UNITS_TAIL = rf"[{CH_DIGIT_PREFIX}]?{RE_DIGITS_NUMBER}"
 RE_DIGITS_UNITS_HEAD = rf"{RE_UNITS_ALL}"
 
 RE_DIGITS_ZH_UNITS_HEAD = (
