@@ -78,6 +78,7 @@ class SentencesDataloader:
         max_batch: int = None,
         estimate_count: bool = False,
         iter_val: Literal["doc", "sentence", "tokens"] = "sentence",
+        task_type: Literal["fasttext", "freq", "sentencepiece"] = "fasttext",
         tokenizer=None,
         max_sentence_length: int = None,
         iter_epochs: int = None,
@@ -93,6 +94,7 @@ class SentencesDataloader:
         self.max_batch = max_batch
         self.estimate_count = estimate_count
         self.iter_val = iter_val
+        self.task_type = task_type
         self.tokenizer = tokenizer
         self.max_sentence_length = max_sentence_length
         self.iter_epochs = iter_epochs
@@ -143,11 +145,26 @@ class SentencesDataloader:
         )
 
     def init_doc_converter(self):
+        if self.task_type in ["fasttext", "freq"]:
+            converter_params = {
+                "is_replace_non_word": True,
+                "is_replace_digits": False,
+                "is_simplify_chinese": False,
+                "is_multiply_sentence": False,
+            }
+        elif self.task_type == "sentencepiece":
+            converter_params = {
+                "is_replace_non_word": True,
+                "is_replace_digits": True,
+                "is_simplify_chinese": False,
+                "is_multiply_sentence": True,
+            }
+        else:
+            converter_params = {}
         self.doc_converter = DocSentenceConverter(
             collect_name=self.collect_name,
             fields=self.data_fields,
-            simplify_chinese=True,
-            is_multiply_sentence=False,
+            **converter_params,
         )
 
     def init_total(self):
