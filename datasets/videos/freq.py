@@ -14,10 +14,14 @@ from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenize
 
 class VideoTextsTokenFreqCounter:
     def __init__(
-        self, data_loader: SentencesDataloader, tokenizer: ParallelSentenceFullTokenizer
+        self,
+        data_loader: SentencesDataloader,
+        tokenizer: ParallelSentenceFullTokenizer,
+        max_count_batch: int = None,
     ):
         self.data_loader = data_loader
         self.tokenizer = tokenizer
+        self.max_count_batch = max_count_batch
         self.term_freqs: dict[str, int] = {}
         self.doc_freqs: dict[str, int] = {}
 
@@ -34,15 +38,22 @@ class VideoTextsTokenFreqCounter:
         for batch_idx, sentence_batch in enumerate(
             self.data_loader.doc_batch_generator(doc_type="sentence")
         ):
+            if self.max_count_batch and batch_idx >= self.max_count_batch:
+                break
             tokenize_results = self.tokenizer.tokenize_list(sentence_batch)
             for result in tokenize_results:
                 self.count_tokens_freq(result["tokens"])
             batch_bar_desc = logstr.mesg(f"tokens: {brk(len(self.term_freqs))}")
             self.data_loader.batch_bar.update(desc=batch_bar_desc)
+        print()
+        logger.hint(dict_to_str(result), indent=2)
         self.tokenizer.terminate()
 
     def calc_percentiles(self) -> dict:
-        percentiles = [0, 0.2, 0.4, 0.5, 0.6, 0.75, 0.8, 0.9, 0.95, 0.99, 0.999, 1]
+        percentiles = [
+            *[0, 0.2, 0.4, 0.5, 0.6, 0.75],
+            *[0.8, 0.85, 0.9, 0.95, 0.99, 0.999, 1],
+        ]
         percentiles_np = np.array(percentiles) * 100
 
         def freq_dict_to_percentiles(d: dict) -> tuple[list[int], dict[float, int]]:
@@ -61,12 +72,12 @@ class VideoTextsTokenFreqCounter:
         self.percentiles = percentiles
         res = {
             "percentiles": self.percentiles,
-            "term_freq": self.term_freq_percentiles,
             "doc_freq": self.doc_freq_percentiles,
+            "term_freq": self.term_freq_percentiles,
         }
         return res
 
-    def dump(self, output_path: Union[str, Path], percentile_threshold: float = 0.75):
+    def dump(self, output_path: Union[str, Path], percentile_threshold: float = 0.85):
         percentiles = sorted(self.percentiles)
         for i in range(len(percentiles) - 1):
             if (
@@ -82,14 +93,14 @@ class VideoTextsTokenFreqCounter:
         freq_list = [
             {
                 "token": token,
-                "term_freq": self.term_freqs[token],
                 "doc_freq": self.doc_freqs[token],
+                "term_freq": self.term_freqs[token],
             }
             for token in self.term_freqs
             if self.doc_freqs[token] >= doc_freq_threshold
         ]
         df = pd.DataFrame(freq_list)
-        df = df.sort_values(by=["term_freq", "doc_freq"], ascending=False)
+        df = df.sort_values(by=["doc_freq", "term_freq"], ascending=False)
         df.to_csv(output_path, index=False)
 
 
