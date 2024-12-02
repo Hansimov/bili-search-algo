@@ -1,31 +1,96 @@
 import argparse
+import numpy as np
+import pandas as pd
 import sys
+
 
 from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk
+from typing import Union
 
 from datasets.videos.data import SentencesDataloader, DataLoaderArgParser
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
 
 
-class VideoTextsTokenFrequencyCounter:
+class VideoTextsTokenFreqCounter:
     def __init__(
         self, data_loader: SentencesDataloader, tokenizer: ParallelSentenceFullTokenizer
     ):
         self.data_loader = data_loader
         self.tokenizer = tokenizer
+        self.term_freqs: dict[str, int] = {}
+        self.doc_freqs: dict[str, int] = {}
+
+    def count_tokens_freq(self, tokens: list[str]):
+        recorded_doc_tokens = set()
+        for token in tokens:
+            self.term_freqs[token] = self.term_freqs.get(token, 0) + 1
+            if token not in recorded_doc_tokens:
+                self.doc_freqs[token] = self.doc_freqs.get(token, 0) + 1
+                recorded_doc_tokens.add(token)
 
     def count(self):
         self.data_loader.__epoch_start__()
         for batch_idx, sentence_batch in enumerate(
             self.data_loader.doc_batch_generator(doc_type="sentence")
         ):
-            tokenize_results: list[dict[str]] = self.tokenizer.tokenize_list(
-                sentence_batch
-            )
-            logger.success(dict_to_str(tokenize_results[-2]), indent=2)
-            break
+            tokenize_results = self.tokenizer.tokenize_list(sentence_batch)
+            for result in tokenize_results:
+                self.count_tokens_freq(result["tokens"])
+            batch_bar_desc = logstr.mesg(f"tokens: {brk(len(self.term_freqs))}")
+            self.data_loader.batch_bar.update(desc=batch_bar_desc)
         self.tokenizer.terminate()
+
+    def calc_percentiles(self) -> dict:
+        percentiles = [0, 0.2, 0.4, 0.5, 0.6, 0.75, 0.8, 0.9, 0.95, 0.99, 0.999, 1]
+        percentiles_np = np.array(percentiles) * 100
+
+        def freq_dict_to_percentiles(d: dict) -> tuple[list[int], dict[float, int]]:
+            percentile_list = (
+                np.percentile(list(d.values()), percentiles_np).astype(int).tolist()
+            )
+            percentile_dict = {p: f for p, f in zip(percentiles, percentile_list)}
+            return percentile_list, percentile_dict
+
+        self.term_freq_percentiles, self.term_freq_percentiles_dict = (
+            freq_dict_to_percentiles(self.term_freqs)
+        )
+        self.doc_freq_percentiles, self.doc_freq_percentiles_dict = (
+            freq_dict_to_percentiles(self.doc_freqs)
+        )
+        self.percentiles = percentiles
+        res = {
+            "percentiles": self.percentiles,
+            "term_freq": self.term_freq_percentiles,
+            "doc_freq": self.doc_freq_percentiles,
+        }
+        return res
+
+    def dump(self, output_path: Union[str, Path], percentile_threshold: float = 0.75):
+        percentiles = sorted(self.percentiles)
+        for i in range(len(percentiles) - 1):
+            if (
+                percentiles[i] >= percentile_threshold
+                and percentiles[i + 1] <= percentile_threshold
+            ):
+                percentile_threshold = percentiles[i]
+                break
+        logger.mesg(f"  * percentile_threshold: {brk(percentile_threshold)}")
+
+        doc_freq_threshold = self.doc_freq_percentiles_dict[percentile_threshold]
+        df = pd.DataFrame()
+        freq_list = [
+            {
+                "token": token,
+                "term_freq": self.term_freqs[token],
+                "doc_freq": self.doc_freqs[token],
+            }
+            for token in self.term_freqs
+            if self.doc_freqs[token] >= doc_freq_threshold
+        ]
+        df = pd.DataFrame(freq_list)
+        df = df.sort_values(by=["term_freq", "doc_freq"], ascending=False)
+        df.to_csv(output_path, index=False)
 
 
 if __name__ == "__main__":
@@ -55,10 +120,19 @@ if __name__ == "__main__":
         workers_num=16,
         batch_size=args.batch_size * 2,
     )
-    counter = VideoTextsTokenFrequencyCounter(
-        data_loader=data_loader, tokenizer=tokenizer
-    )
+
+    counter = VideoTextsTokenFreqCounter(data_loader=data_loader, tokenizer=tokenizer)
+
     logger.note("> Counting tokens frequency ...")
     counter.count()
+
+    logger.note("> Calculating percentiles ...")
+    percentile_res = counter.calc_percentiles()
+    logger.success(dict_to_str(percentile_res), indent=2)
+
+    logger.note("> Dumping to csv ...")
+    csv_path = Path("video_texts_freq.csv")
+    counter.dump("video_texts_freq.csv")
+    logger.file(f"  * {str(csv_path.resolve())}")
 
     # python -m datasets.videos.freq

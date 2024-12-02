@@ -3,12 +3,13 @@ __pycache__
 build
 data/
 logs/
+secrets.json
 *.npy
 *.model
 *.vocab
 *.old
-secrets.json
 *.crt
 *.prof
 *.so
 *.c
+*.csv
