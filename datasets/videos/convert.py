@@ -1,5 +1,7 @@
+import argparse
 import math
 import re
+import sys
 import zhconv
 
 from functools import partial
@@ -21,9 +23,13 @@ Unicode Kanji Table:
 CH_CJK = r"\u4E00-\u9FFF\u3040-\u30FF"
 CH_AB = r"0-9a-zA-Zα-ωΑ-Ω"
 CH_DASH = r"\-\_\."
+CH_LB = r"\(\[\{"
+CH_RB = r"\)\]\}"
 
 RE_SPACE_IN_CJK = rf"(?<=[{CH_CJK}])\s+(?=[{CH_CJK}])"
-RE_NON_WORD = rf"[^{CH_CJK}{CH_AB}]+"
+# RE_NON_WORD = rf"[^{CH_CJK}{CH_AB}]+"
+RE_NOT_DIGIT_DOT = r"\.(?!\d)"
+RE_NON_WORD = rf"[^{CH_CJK}〇{CH_AB}\-\.%‰]+|{RE_NOT_DIGIT_DOT}"
 RE_WHITESPACES = r"\s{2,}"
 
 CH_DIGIT_PREFIX = r"第前这那每"
@@ -41,17 +47,20 @@ RE_DIGITS_WITH_BOUND = r"(^|\b)\d+(\b|$)"
 RE_DIGITS_ALL = rf"({RE_DIGITS_WITH_PREFIX_AND_UNIT}|{RE_DIGITS_WITH_BOUND})"
 
 
-class DocSentenceConverter:
-    PT_SPACE_IN_CJK = re.compile(RE_SPACE_IN_CJK)
-    PT_NON_WORD = re.compile(RE_NON_WORD)
-    PT_WHITESPACES = re.compile(RE_WHITESPACES)
-    PT_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
+PT_SPACE_IN_CJK = re.compile(RE_SPACE_IN_CJK)
+PT_NON_WORD = re.compile(RE_NON_WORD)
+PT_WHITESPACES = re.compile(RE_WHITESPACES)
+PT_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
 
+
+class DocSentenceConverter:
     def __init__(
         self,
         collect_name: Literal["videos_texts", "users", "pages"] = "videos_texts",
         fields: Union[str, list[str]] = None,
-        simplify_chinese: bool = False,
+        is_replace_non_word: bool = False,
+        is_replace_digits: bool = False,
+        is_simplify_chinese: bool = False,
         is_multiply_sentence: bool = False,
     ):
         self.collect_name = collect_name
@@ -59,7 +68,9 @@ class DocSentenceConverter:
             self.fields = fields
         else:
             self.fields = None
-        self.simplify_chinese = simplify_chinese
+        self.is_replace_non_word = is_replace_non_word
+        self.is_replace_digits = is_replace_digits
+        self.is_simplify_chinese = is_simplify_chinese
         self.is_multiply_sentence = is_multiply_sentence
         self.init_doc_to_sentence()
 
@@ -93,16 +104,16 @@ class DocSentenceConverter:
         )
 
     def remove_whitespaces_among_cjk(self, sentence: str) -> str:
-        return self.PT_SPACE_IN_CJK.sub("", sentence)
+        return PT_SPACE_IN_CJK.sub("", sentence)
 
     def replace_non_word_with_whitespaces(self, sentence: str) -> str:
-        return self.PT_NON_WORD.sub(" ", sentence)
+        return PT_NON_WORD.sub(" ", sentence)
 
     def replace_digits(self, sentence: str) -> str:
-        return self.PT_DIGITS_ALL.sub("", sentence)
+        return PT_DIGITS_ALL.sub("", sentence)
 
     def merge_whitespaces(self, sentence: str) -> str:
-        return self.PT_WHITESPACES.sub(" ", sentence).strip()
+        return PT_WHITESPACES.sub(" ", sentence).strip()
 
     def multiply_sentence_by_stat_view(self, doc: dict, sentence: str) -> str:
         view = dict_get(doc, "stat.view", 0)
@@ -125,9 +136,11 @@ class DocSentenceConverter:
     def convert_sentence(self, sentence: str) -> str:
         sentence = sentence.lower()
         # sentence = self.remove_whitespaces_among_cjk(sentence)
-        sentence = self.replace_non_word_with_whitespaces(sentence)
-        sentence = self.replace_digits(sentence)
-        if self.simplify_chinese:
+        if self.is_replace_non_word:
+            sentence = self.replace_non_word_with_whitespaces(sentence)
+        if self.is_replace_digits:
+            sentence = self.replace_digits(sentence)
+        if self.is_simplify_chinese:
             sentence = zhconv.convert(sentence, "zh-cn")
         # sentence = self.merge_whitespaces(sentence)
         return sentence
