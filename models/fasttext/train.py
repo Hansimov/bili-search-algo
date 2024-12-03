@@ -41,6 +41,22 @@ class FasttextModelVocabLoader:
         return self.vocab_dict
 
 
+class FasttextModelDataLoader(SentencesDataloader):
+    def __iter__(self):
+        self.__epoch_start__()
+        for batch_idx, batch in enumerate(
+            self.doc_batch_generator(doc_type="sentence")
+        ):
+            if self.max_batch is not None and batch_idx >= self.max_batch:
+                break
+            tokenize_results: list[dict[str, str]] = self.tokenizer.tokenize_list(
+                batch, sort=False
+            )
+            for result in tokenize_results:
+                yield result["tokens"]
+        self.__epoch_end__()
+
+
 class FasttextModelTrainer:
     def __init__(
         self,
@@ -158,6 +174,8 @@ class FasttextModelTrainer:
             for word in test_words:
                 if tokenizer and len(word) >= 3:
                     word = tokenizer.tokenize(word.lower())
+                elif isinstance(word, list):
+                    word = [w.lower() for w in word]
                 else:
                     word = word.lower()
                 results = self.model.wv.most_similar(
@@ -176,7 +194,7 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-ep", "--epochs", type=int, default=5)
         self.add_argument("-hs", "--hs", type=int, default=0)
         self.add_argument("-ma", "--min-alpha", type=float, default=0.0001)
-        self.add_argument("-ic", "--min-count", type=int, default=20)
+        self.add_argument("-mc", "--min-count", type=int, default=20)
         self.add_argument("-in", "--min-n", type=int, default=2)
         self.add_argument("-an", "--max-n", type=int, default=8)
         self.add_argument("-sg", "--sg", type=int, default=0)
@@ -241,35 +259,41 @@ if __name__ == "__main__":
         vocab_dict=vocab_dict,
     )
 
-    tokenizer = SentenceFullTokenizer(Path("sp_400k_merged.model"), drop_non_word=True)
+    tokenizer = ParallelSentenceFullTokenizer(
+        Path("sp_400k_merged.model"),
+        drop_non_word=True,
+        workers_num=16,
+        batch_size=args.batch_size * 2,
+    )
 
     if not args.test_only:
         logger.note("> Initiating data loader ...")
+        mongo_filter = {"tid": 17}
+        data_fields = args.data_fields.split(",") if args.data_fields else None
         data_params = {
             "dbname": args.dbname,
             "collect_name": args.collect_name,
-            "data_fields": args.data_fields.split(",") if args.data_fields else None,
-            # "data_fields": ["title", "owner.name", "tags"],
-            # "data_fields": ["tags"],
-            "mongo_filter": {"tid": 17},
+            "data_fields": data_fields,
+            "mongo_filter": mongo_filter,
             "max_batch": args.max_batch,
             "batch_size": args.batch_size,
             "estimate_count": args.estimate_count,
-            "iter_val": "tokens",
-            "tokenizer": tokenizer,
+            "iter_val": "sentence",
+            "task_type": "fasttext",
         }
-        data_loader = SentencesDataloader(
-            **data_params, show_at_init=False, verbose=True
+        data_loader = FasttextModelDataLoader(
+            **data_params, tokenizer=tokenizer, show_at_init=False, verbose=True
         )
         logger.mesg(dict_to_str(data_params), indent=2)
         trainer.init_data_loader(data_loader)
         trainer.build_vocab()
         trainer.train()
 
-    trainer.test(TEST_KEYWORDS, tokenizer=tokenizer, restrict_vocab=50000)
+    trainer.test(TEST_KEYWORDS, tokenizer=None, restrict_vocab=50000)
 
     # python -m models.fasttext.train
     # python -m models.fasttext.train -t
 
     # python -m models.fasttext.train -ep 3 -m fasttext_tid_17_ep_3
     # python -m models.fasttext.train -m fasttext_tid_17_ep_3_parallel -ep 3 -vf "video_texts_freq_all.csv" -vm 1200000
+    # python -m models.fasttext.train -m fasttext_tid_17_ep_3_parallel -ep 3 -mc 50

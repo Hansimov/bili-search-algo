@@ -241,7 +241,7 @@ class SentencesDataloader:
             return docs
 
     def doc_batch_generator(
-        self, doc_type: Literal["doc", "sentence"]
+        self, doc_type: Literal["doc", "sentence"] = "doc"
     ) -> Generator[Union[list[dict], list[str]], None, None]:
         batch = []
         for idx, doc in enumerate(self.cursor):
