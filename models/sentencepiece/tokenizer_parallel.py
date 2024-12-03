@@ -87,12 +87,16 @@ class ParallelSentenceFullTokenizer:
             self.workers.append(p)
 
     def format_results(
-        self, results: list[tuple[int, dict[str, str]]]
+        self, results: list[tuple[int, dict[str, str]]], sort: bool = True
     ) -> list[dict[str, str]]:
-        sorted_results = sorted(results, key=lambda x: x[0])
-        return [result for _, result in sorted_results]
+        if sort:
+            return [result for _, result in sorted(results, key=lambda x: x[0])]
+        else:
+            return [result for _, result in results]
 
-    def tokenize_list(self, sentences: list[str]) -> list[dict[str, str]]:
+    def tokenize_list(
+        self, sentences: list[str], sort: bool = True
+    ) -> list[dict[str, str]]:
         for idx, sentence in enumerate(sentences):
             self.input_queue.put((idx, sentence))
 
@@ -101,7 +105,7 @@ class ParallelSentenceFullTokenizer:
             task_id, result = self.output_queue.get()
             results.append((task_id, result))
 
-        return self.format_results(results)
+        return self.format_results(results, sort)
 
     def tokenize_iter(
         self,
