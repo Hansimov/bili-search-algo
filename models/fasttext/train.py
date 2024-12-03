@@ -1,4 +1,5 @@
 import argparse
+import pandas as pd
 import sys
 
 from gensim.models import FastText, KeyedVectors
@@ -8,7 +9,36 @@ from typing import Union
 
 from datasets.videos.data import SentencesDataloader, DataLoaderArgParser
 from models.fasttext.test import TEST_KEYWORDS
+
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
+from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
+
+
+class FasttextModelVocabLoader:
+    def __init__(
+        self, vocab_path: Union[str, Path], max_count: int = None, verbose: bool = False
+    ):
+        self.vocab_path = Path(vocab_path)
+        self.max_count = max_count
+        self.verbose = verbose
+        self.vocab_dict = {}
+
+    def load(self) -> dict[str, int]:
+        if self.verbose:
+            logger.note("> Loading vocab from file:")
+            logger.file(f"  * {self.vocab_path}")
+        df = pd.read_csv(self.vocab_path)
+        # df = df.sort_values(by="doc_freq", ascending=False)
+        if self.max_count:
+            df = df.head(self.max_count)
+        df = df.sort_values(by="term_freq", ascending=False)
+        self.vocab_dict = dict(zip(df["token"], df["term_freq"]))
+        if self.verbose:
+            tokens_count_str = brk(logstr.file(df.shape[0]))
+            logger.mesg(f"  * tokens count: {tokens_count_str}")
+            min_term_freq_str = brk(logstr.file(df.tail(1)["term_freq"].values[0]))
+            logger.mesg(f"  * min term_freq: {min_term_freq_str}")
+        return self.vocab_dict
 
 
 class FasttextModelTrainer:
@@ -29,11 +59,13 @@ class FasttextModelTrainer:
         keep_exist_model: bool = True,
         skip_trained: bool = True,
         use_local_model: bool = True,
+        vocab_dict: dict[str, int] = None,
     ):
         self.model_prefix = model_prefix
         self.keep_exist_model = keep_exist_model
         self.skip_trained = skip_trained
         self.use_local_model = use_local_model
+        self.vocab_dict = vocab_dict
 
         self.model_path = (
             Path(__file__).parent / "checkpoints" / f"{model_prefix}.model"
@@ -81,6 +113,9 @@ class FasttextModelTrainer:
         logger.note("> Building vocab:")
         if self.is_model_trained and self.skip_trained:
             logger.file("  * model already trained, skip build_vocab()")
+        elif self.vocab_dict:
+            self.model.build_vocab_from_freq(self.vocab_dict)
+            logger.success("  ✓ build vocab from provided freq dict")
         else:
             self.model.build_vocab(corpus_iterable=self.data_loader)
             logger.success(f"  ✓ vocab built")
@@ -147,6 +182,8 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-sg", "--sg", type=int, default=0)
         self.add_argument("-sw", "--shrink-windows", action="store_true")
         self.add_argument("-vs", "--vector-size", type=int, default=256)
+        self.add_argument("-vf", "--vocab-file", type=str, default=None)
+        self.add_argument("-vm", "--vocab-max-count", type=int, default=None)
         self.add_argument("-wd", "--window", type=int, default=5)
         self.add_argument("-wk", "--workers", type=int, default=32)
         self.add_argument("-t", "--test-only", action="store_true")
@@ -177,6 +214,14 @@ if __name__ == "__main__":
         args.skip_trained = False
         args.use_local_model = False
 
+    if args.vocab_file:
+        vocab_loader = FasttextModelVocabLoader(
+            args.vocab_file, args.vocab_max_count, verbose=True
+        )
+        vocab_dict = vocab_loader.load()
+    else:
+        vocab_dict = None
+
     trainer = FasttextModelTrainer(
         model_prefix=args.model_prefix,
         epochs=args.epochs,
@@ -193,6 +238,7 @@ if __name__ == "__main__":
         keep_exist_model=args.keep_exist_model,
         skip_trained=args.skip_trained,
         use_local_model=args.use_local_model,
+        vocab_dict=vocab_dict,
     )
 
     tokenizer = SentenceFullTokenizer(Path("sp_400k_merged.model"), drop_non_word=True)
@@ -226,3 +272,4 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -t
 
     # python -m models.fasttext.train -ep 3 -m fasttext_tid_17_ep_3
+    # python -m models.fasttext.train -m fasttext_tid_17_ep_3_parallel -ep 3 -vf "video_texts_freq_all.csv" -vm 1200000
