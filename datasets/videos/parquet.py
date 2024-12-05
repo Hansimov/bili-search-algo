@@ -1,9 +1,11 @@
 import argparse
+import gc
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import sys
 
+from collections.abc import Generator
 from pathlib import Path
 from tclogger import logger, logstr, brk, int_bits
 from typing import Union
@@ -160,9 +162,54 @@ class VideoTextsParquetReader:
         self.parquet_prefix = parquet_prefix
         self.verbose = verbose
         self.init_paths()
+        self.init_total()
 
     def init_paths(self):
         self.dataset_dir = self.data_root / self.dataset_name
+        if self.parquet_prefix:
+            pattern = f"{self.parquet_prefix}*.parquet"
+        else:
+            pattern = "*.parquet"
+        self.parquet_files = sorted(self.dataset_dir.glob(pattern))
+
+    def init_total(self):
+        self.total_file_count = len(self.parquet_files)
+        self.file_row_counts = {
+            parquet_file: pq.read_metadata(parquet_file).num_rows
+            for parquet_file in self.parquet_files
+        }
+        self.total_row_count = sum(self.file_row_counts.values())
+
+    def table_generator(self) -> Generator[pa.Table, None, None]:
+        for parquet_file in self.parquet_files:
+            table = pq.read_table(parquet_file)
+            self.current_table_row_count = table.num_rows
+            if self.verbose:
+                row_count_str = logstr.mesg(brk(table.num_rows))
+                logger.note(f"  > Read parquet: {row_count_str}")
+                logger.file(f"    * {parquet_file}")
+            yield table
+            del table
+            gc.collect()
+
+    def batch_generator(
+        self, column: str = None, batch_size: int = 10000
+    ) -> Generator[Union[list[dict], list, pa.Table], None, None]:
+        for table in self.table_generator():
+            for i in range(0, table.num_rows, batch_size):
+                if not column:
+                    yield table.slice(i, batch_size).to_pylist()
+                else:
+                    yield table.column(column).slice(i, batch_size)
+            del table
+            gc.collect()
+
+    def row_generator(self) -> Generator[dict, None, None]:
+        for table in self.table_generator():
+            for row in table.to_pydict().values():
+                yield row
+            del table
+            gc.collect()
 
 
 class ParquetOperatorArgParser(argparse.ArgumentParser):
