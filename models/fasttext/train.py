@@ -261,7 +261,8 @@ if __name__ == "__main__":
 
     tokenizer = ParallelSentenceFullTokenizer(
         Path("sp_400k_merged.model"),
-        drop_non_word=True,
+        # drop_non_word=True, # This param is not needed as doc_coverter in data_loader already does this
+        drop_whitespace=True,
         workers_num=16,
         batch_size=args.batch_size * 2,
     )
@@ -288,6 +289,7 @@ if __name__ == "__main__":
         trainer.init_data_loader(data_loader)
         trainer.build_vocab()
         trainer.train()
+        data_loader.tokenizer.terminate()
 
     trainer.test(TEST_KEYWORDS, tokenizer=None, restrict_vocab=50000)
 
@@ -296,4 +298,4 @@ if __name__ == "__main__":
 
     # python -m models.fasttext.train -ep 3 -m fasttext_tid_17_ep_3
     # python -m models.fasttext.train -m fasttext_tid_17_ep_3_parallel -ep 3 -vf "video_texts_freq_all.csv" -vm 1200000
-    # python -m models.fasttext.train -m fasttext_tid_17_ep_3_parallel -ep 3 -mc 50
+    # python -m models.fasttext.train -m fasttext_tid_17_ep_2_parallel -ep 2 -mc 20
