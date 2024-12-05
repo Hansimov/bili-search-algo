@@ -7,7 +7,10 @@ from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk
 from typing import Union
 
-from datasets.videos.data import SentencesDataloader, DataLoaderArgParser
+from datasets.videos.data import CommonDataLoaderArgParser
+from datasets.videos.data import SentencesDataloader, SentencesDataLoaderArgParser
+from datasets.videos.data import ParquetRowsDataLoader, ParquetRowsDataLoaderArgParser
+from datasets.videos.parquet import VideoTextsParquetReader, ParquetOperatorArgParser
 from models.fasttext.test import TEST_KEYWORDS
 
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
@@ -54,6 +57,24 @@ class FasttextModelDataLoader(SentencesDataloader):
             )
             for result in tokenize_results:
                 yield result["tokens"]
+        self.__epoch_end__()
+
+
+class FasttextModelParquetDataLoader(ParquetRowsDataLoader):
+    def __iter__(self):
+        self.__epoch_start__()
+        self.batch_bar.reset()
+        self.batch_bar.update(flush=True)
+        for batch_idx, tokens_batch in enumerate(self.batch_generator):
+            self.batch_bar.update(increment=1, flush=True)
+            if self.max_batch is not None and batch_idx >= self.max_batch:
+                break
+            self.sample_bar.total = len(tokens_batch)
+            self.sample_bar.update(flush=True)
+            for tokens in tokens_batch:
+                self.sample_bar.update(1)
+                yield tokens
+            self.sample_bar.reset()
         self.__epoch_end__()
 
 
@@ -138,6 +159,7 @@ class FasttextModelTrainer:
 
     def train(self):
         logger.note("> Training model:")
+        self.data_loader.epoch_bar.reset()
         if self.is_model_trained and self.skip_trained:
             logger.file("  * model already trained, skip train()")
         else:
