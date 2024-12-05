@@ -372,7 +372,19 @@ class ParquetRowsDataLoader:
         else:
             print("\n\r\n")
 
-class DataLoaderArgParser(argparse.ArgumentParser):
+
+class CommonDataLoaderArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("-bs", "--batch-size", type=int, default=10000)
+        self.add_argument("-mb", "--max-batch", type=int, default=None)
+
+    def parse_args(self):
+        self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
+        return self.args
+
+
+class SentencesDataLoaderArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-db", "--dbname", type=str, default=None)
@@ -384,8 +396,6 @@ class DataLoaderArgParser(argparse.ArgumentParser):
             default="videos_texts",
         )
         self.add_argument("-df", "--data-fields", type=str, default=None)
-        self.add_argument("-bs", "--batch-size", type=int, default=10000)
-        self.add_argument("-mb", "--max-batch", type=int, default=None)
         self.add_argument("-ec", "--estimate-count", action="store_true")
 
     def parse_args(self):
@@ -393,8 +403,19 @@ class DataLoaderArgParser(argparse.ArgumentParser):
         return self.args
 
 
+class ParquetRowsDataLoaderArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("-mr", "--max-rows", type=int, default=None)
+        self.add_argument("-mt", "--max-tables", type=int, default=None)
+
+    def parse_args(self):
+        self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
+        return self.args
+
+
 if __name__ == "__main__":
-    args = DataLoaderArgParser().parse_args()
+    args = SentencesDataLoaderArgParser().parse_args()
     data_loader_params = {
         "dbname": args.dbname,
         "collect_name": args.collect_name,
