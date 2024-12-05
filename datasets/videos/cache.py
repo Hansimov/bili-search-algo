@@ -5,7 +5,8 @@ import sys
 from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk
 
-from datasets.videos.data import SentencesDataloader, DataLoaderArgParser
+from datasets.videos.data import CommonDataLoaderArgParser
+from datasets.videos.data import SentencesDataloader, SentencesDataLoaderArgParser
 from datasets.videos.parquet import VideoTextsParquetWriter
 from datasets.videos.parquet import ParquetOperatorArgParser, ParquetWriterArgParser
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
@@ -60,6 +61,8 @@ class TokenCacherArgParser(argparse.ArgumentParser):
         self.add_argument(
             "-o", "--output-prefix", type=str, default="video_texts_tokens"
         )
+        self.add_argument("-td", "--tid", type=int, default=None)
+        self.add_argument("-pd", "--ptid", type=int, default=None)
         self.add_argument("-mcb", "--max-count-batch", type=int, default=None)
 
     def parse_args(self):
@@ -68,14 +71,16 @@ class TokenCacherArgParser(argparse.ArgumentParser):
 
 
 if __name__ == "__main__":
-    data_loader_parser = DataLoaderArgParser(add_help=False)
+    common_data_loader_parser = CommonDataLoaderArgParser(add_help=False)
+    sentences_data_loader_parser = SentencesDataLoaderArgParser(add_help=False)
     parquet_operator_parser = ParquetOperatorArgParser(add_help=False)
     parquet_writer_parser = ParquetWriterArgParser(add_help=False)
     token_cacher_parser = TokenCacherArgParser(add_help=False)
 
     merged_parser = argparse.ArgumentParser(
         parents=[
-            data_loader_parser,
+            common_data_loader_parser,
+            sentences_data_loader_parser,
             parquet_operator_parser,
             parquet_writer_parser,
             token_cacher_parser,
@@ -83,8 +88,12 @@ if __name__ == "__main__":
     )
     args, unknown_args = merged_parser.parse_known_args(sys.argv[1:])
 
-    mongo_filter = {"tid": 201}
-    # mongo_filter = {}
+    if args.tid:
+        mongo_filter = {"tid": args.tid}
+    elif args.ptid:
+        mongo_filter = {"ptid": args.ptid}
+    else:
+        mongo_filter = {}
 
     logger.note("> Initiating data loader ...")
     data_loader_params = {
@@ -145,4 +154,4 @@ if __name__ == "__main__":
     # python -m datasets.videos.cache -ec -mcb 22 -bw 5 -fw 10
     # python -m datasets.videos.cache -dn video_texts_tid_17
     # python -m datasets.videos.cache -dn video_texts_tid_201
-    # parquet-tools rowcount ./data/video_texts/0000.parquet
+    # python -m datasets.videos.cache -ec -dn video_texts_tid_all -fw 200 -bw 100

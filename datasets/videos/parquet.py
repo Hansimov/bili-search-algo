@@ -36,9 +36,9 @@ class VideoTextsParquetWriter:
         dataset_name: str = "video_texts",
         parquet_prefix: str = "",
         col_types: dict[str, type] = None,
-        dataset_max_rows: int = int(1e4 * 1e6),
-        file_max_rows: int = int(1e4 * 100),
-        buffer_max_rows: int = int(1e4 * 10),
+        dataset_max_rows: int = int(1e6 * 1e4),
+        file_max_rows: int = int(100 * 1e4),
+        buffer_max_rows: int = int(10 * 1e4),
         verbose: bool = False,
     ):
         self.data_root = Path(dataset_root or DATA_ROOT)
