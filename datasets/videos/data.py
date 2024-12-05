@@ -7,6 +7,7 @@ from typing import Literal, Generator, Union
 
 from configs.envs import MONGO_ENVS
 from datasets.videos.convert import DocSentenceConverter
+from datasets.videos.parquet import VideoTextsParquetReader
 
 
 class VideosTagsAggregator:
@@ -286,6 +287,90 @@ class SentencesDataloader:
             self.sample_bar.reset()
         self.__epoch_end__()
 
+
+class ParquetRowsDataLoader:
+    def __init__(
+        self,
+        parquet_reader: VideoTextsParquetReader = None,
+        column: str = None,
+        iter_epochs: int = None,
+        batch_size: int = 10000,
+        max_batch: int = None,
+        max_rows: int = None,
+        max_tables: int = None,
+        show_at_init: bool = False,
+        show_epoch_bar: bool = True,
+        verbose: bool = False,
+    ):
+        self.parquet_reader = parquet_reader
+        self.column = column
+        self.iter_epochs = iter_epochs
+        self.batch_size = batch_size
+        self.max_batch = max_batch
+        self.max_rows = max_rows
+        self.max_tables = max_tables
+        self.show_at_init = show_at_init
+        self.show_epoch_bar = show_epoch_bar
+        self.verbose = verbose
+        self.init_progress_bars()
+        self.init_generators()
+
+    def init_progress_bars(self):
+        if self.show_epoch_bar:
+            subbar_indent = 2
+        else:
+            subbar_indent = 0
+        batch_bar_head_str = " " * subbar_indent + "* Batch:"
+        sample_bar_head_str = " " * subbar_indent + "* Sample:"
+        self.batch_bar = TCLogbar(head=logstr.note(batch_bar_head_str))
+        self.sample_bar = TCLogbar(head=logstr.note(sample_bar_head_str))
+        if self.show_epoch_bar:
+            self.epoch_bar = TCLogbar(head=logstr.note("> Epoch:"))
+            self.logbars = [self.epoch_bar, self.batch_bar, self.sample_bar]
+        else:
+            self.epoch_bar = None
+            self.logbars = [self.batch_bar, self.sample_bar]
+        TCLogbarGroup(
+            self.logbars, show_at_init=self.show_at_init, verbose=self.verbose
+        )
+
+    def init_total(self):
+        self.file_idx = 0
+        if self.epoch_bar:
+            self.epoch_bar.total = self.iter_epochs or 1
+        if self.max_batch:
+            self.batch_bar.total = self.max_batch
+        else:
+            self.batch_bar.total = (
+                self.parquet_reader.total_row_count // self.batch_size + 1
+            )
+
+    def init_generators(self):
+        self.table_generator = self.parquet_reader.table_generator()
+        self.row_generator = self.parquet_reader.row_generator()
+        self.batch_generator = self.parquet_reader.batch_generator(
+            column=self.column, batch_size=self.batch_size
+        )
+
+    def __epoch_start__(self):
+        self.init_total()
+        if self.epoch_bar:
+            self.epoch_bar.update(0, flush=True)
+
+    def __epoch_end__(self):
+        if self.epoch_bar and self.epoch_bar.total >= 1:
+            self.epoch_bar.update(increment=1)
+        if (
+            self.iter_epochs
+            and self.iter_epochs > 1
+            and self.epoch_bar
+            and self.epoch_bar.count < self.iter_epochs
+        ):
+            self.batch_bar.reset()
+            self.sample_bar.reset()
+            self.init_generators()
+        else:
+            print("\n\r\n")
 
 class DataLoaderArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
