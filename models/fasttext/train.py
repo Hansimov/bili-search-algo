@@ -213,6 +213,13 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-m", "--model-prefix", type=str, default="fasttext")
+        self.add_argument(
+            "-ds",
+            "--data-source",
+            type=str,
+            choices=["mongo", "parquet"],
+            default="parquet",
+        )
         self.add_argument("-ep", "--epochs", type=int, default=5)
         self.add_argument("-hs", "--hs", type=int, default=0)
         self.add_argument("-ma", "--min-alpha", type=float, default=0.0001)
@@ -238,10 +245,19 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
 
 
 if __name__ == "__main__":
-    data_loader_parser = DataLoaderArgParser(add_help=False)
+    common_data_loader_parser = CommonDataLoaderArgParser(add_help=False)
+    sentences_data_loader_parser = SentencesDataLoaderArgParser(add_help=False)
+    parquet_operator_parser = ParquetOperatorArgParser(add_help=False)
+    parquet_rows_data_loader_parser = ParquetRowsDataLoaderArgParser(add_help=False)
     model_trainer_parser = ModelTrainerArgParser(add_help=False)
     merged_parser = argparse.ArgumentParser(
-        parents=[data_loader_parser, model_trainer_parser]
+        parents=[
+            common_data_loader_parser,
+            sentences_data_loader_parser,
+            parquet_operator_parser,
+            parquet_rows_data_loader_parser,
+            model_trainer_parser,
+        ]
     )
     args, unknown_args = merged_parser.parse_known_args(sys.argv[1:])
 
@@ -281,37 +297,64 @@ if __name__ == "__main__":
         vocab_dict=vocab_dict,
     )
 
-    tokenizer = ParallelSentenceFullTokenizer(
-        Path("sp_400k_merged.model"),
-        # drop_non_word=True, # This param is not needed as doc_coverter in data_loader already does this
-        drop_whitespace=True,
-        workers_num=16,
-        batch_size=args.batch_size * 2,
-    )
-
     if not args.test_only:
-        logger.note("> Initiating data loader ...")
-        mongo_filter = {"tid": 17}
-        data_fields = args.data_fields.split(",") if args.data_fields else None
-        data_params = {
-            "dbname": args.dbname,
-            "collect_name": args.collect_name,
-            "data_fields": data_fields,
-            "mongo_filter": mongo_filter,
-            "max_batch": args.max_batch,
-            "batch_size": args.batch_size,
-            "estimate_count": args.estimate_count,
-            "iter_val": "sentence",
-            "task_type": "fasttext",
-        }
-        data_loader = FasttextModelDataLoader(
-            **data_params, tokenizer=tokenizer, show_at_init=False, verbose=True
-        )
-        logger.mesg(dict_to_str(data_params), indent=2)
+        data_source_str = logstr.mesg(brk(args.data_source))
+        logger.note(f"> Initiating data loader: {data_source_str}")
+        if args.data_source == "mongo":
+            tokenizer = ParallelSentenceFullTokenizer(
+                Path("sp_400k_merged.model"),
+                # drop_non_word=True, # This param is not needed as doc_coverter in data_loader already does this
+                drop_whitespace=True,
+                workers_num=16,
+                batch_size=args.batch_size * 2,
+            )
+            mongo_filter = {"tid": 17}
+            data_fields = args.data_fields.split(",") if args.data_fields else None
+            data_params = {
+                "dbname": args.dbname,
+                "collect_name": args.collect_name,
+                "data_fields": data_fields,
+                "mongo_filter": mongo_filter,
+                "max_batch": args.max_batch,
+                "batch_size": args.batch_size,
+                "estimate_count": args.estimate_count,
+                "iter_val": "sentence",
+                "task_type": "fasttext",
+                "show_at_init": False,
+                "show_epoch_bar": True,
+                "verbose": True,
+            }
+            data_loader = FasttextModelDataLoader(**data_params, tokenizer=tokenizer)
+            logger.mesg(dict_to_str(data_params), indent=2)
+        elif args.data_source == "parquet":
+            parquet_params = {
+                "dataset_root": args.dataset_root,
+                "dataset_name": args.dataset_name,
+                "parquet_prefix": args.parquet_prefix,
+            }
+            parquet_reader = VideoTextsParquetReader(**parquet_params)
+            logger.mesg(dict_to_str(parquet_params), indent=2)
+            data_params = {
+                "column": "tokens",
+                "max_batch": args.max_batch,
+                "batch_size": args.batch_size,
+                "max_rows": args.max_rows,
+                "max_tables": args.max_tables,
+                "show_at_init": False,
+                "show_epoch_bar": True,
+                "verbose": True,
+            }
+            data_loader = FasttextModelParquetDataLoader(
+                **data_params, parquet_reader=parquet_reader
+            )
+            logger.mesg(dict_to_str(data_params), indent=2)
+        else:
+            raise ValueError(f"Unknown data source: {args.data_source}")
         trainer.init_data_loader(data_loader)
         trainer.build_vocab()
         trainer.train()
-        data_loader.tokenizer.terminate()
+        if args.data_source == "mongo":
+            data_loader.tokenizer.terminate()
 
     trainer.test(TEST_KEYWORDS, tokenizer=None, restrict_vocab=50000)
 
@@ -321,3 +364,5 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -ep 3 -m fasttext_tid_17_ep_3
     # python -m models.fasttext.train -m fasttext_tid_17_ep_3_parallel -ep 3 -vf "video_texts_freq_all.csv" -vm 1200000
     # python -m models.fasttext.train -m fasttext_tid_17_ep_2_parallel -ep 2 -mc 20
+
+    # python -m models.fasttext.train -m fasttext_tid_17_ep_4 -ep 4 -dn "video_texts_tid_17" -mc 20 -bs 100000
