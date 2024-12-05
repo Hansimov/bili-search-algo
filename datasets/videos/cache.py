@@ -1,15 +1,13 @@
 import argparse
-import numpy as np
-import pandas as pd
 import sys
 
 
 from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk
-from typing import Union
 
 from datasets.videos.data import SentencesDataloader, DataLoaderArgParser
-from datasets.videos.parquet import VideoTextsParquetOperator, ParquetOperatorArgParser
+from datasets.videos.parquet import VideoTextsParquetWriter
+from datasets.videos.parquet import ParquetOperatorArgParser, ParquetWriterArgParser
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
 
 
@@ -18,16 +16,16 @@ class VideoTextsTokenCacher:
         self,
         data_loader: SentencesDataloader,
         tokenizer: ParallelSentenceFullTokenizer,
-        parquet_operator: VideoTextsParquetOperator,
+        parquet_writer: VideoTextsParquetWriter,
         max_count_batch: int = None,
     ):
         self.data_loader = data_loader
         self.tokenizer = tokenizer
-        self.parquet_operator = parquet_operator
+        self.parquet_writer = parquet_writer
         self.max_count_batch = max_count_batch
 
     def write(self):
-        self.parquet_operator.clear_dataset()
+        self.parquet_writer.clear_dataset()
         self.data_loader.__epoch_start__()
         for batch_idx, doc_batch in enumerate(
             self.data_loader.doc_batch_generator(doc_type="doc")
@@ -51,8 +49,8 @@ class VideoTextsTokenCacher:
                     doc_batch, sentence_batch, tokens_batch
                 )
             ]
-            self.parquet_operator.append_buffer(rows_batch)
-        self.parquet_operator.flush_buffer()
+            self.parquet_writer.append_buffer(rows_batch)
+        self.parquet_writer.flush_buffer()
         self.tokenizer.terminate()
 
 
@@ -72,14 +70,20 @@ class TokenCacherArgParser(argparse.ArgumentParser):
 if __name__ == "__main__":
     data_loader_parser = DataLoaderArgParser(add_help=False)
     parquet_operator_parser = ParquetOperatorArgParser(add_help=False)
+    parquet_writer_parser = ParquetWriterArgParser(add_help=False)
     token_cacher_parser = TokenCacherArgParser(add_help=False)
 
     merged_parser = argparse.ArgumentParser(
-        parents=[data_loader_parser, parquet_operator_parser, token_cacher_parser]
+        parents=[
+            data_loader_parser,
+            parquet_operator_parser,
+            parquet_writer_parser,
+            token_cacher_parser,
+        ]
     )
     args, unknown_args = merged_parser.parse_known_args(sys.argv[1:])
 
-    mongo_filter = {"tid": 17}
+    mongo_filter = {"tid": 201}
     # mongo_filter = {}
 
     logger.note("> Initiating data loader ...")
@@ -110,7 +114,7 @@ if __name__ == "__main__":
     )
 
     logger.note("> Initiating parquet operator ...")
-    parquet_operator_params = {
+    parquet_writer_params = {
         "dataset_root": args.dataset_root,
         "dataset_name": args.dataset_name,
         "parquet_prefix": args.parquet_prefix,
@@ -125,15 +129,13 @@ if __name__ == "__main__":
         "file_max_rows": int(args.file_max_w_rows * 1e4),
         "buffer_max_rows": int(args.buffer_max_w_rows * 1e4),
     }
-    logger.mesg(dict_to_str(parquet_operator_params), indent=2)
-    parquet_operator = VideoTextsParquetOperator(
-        **parquet_operator_params, verbose=True
-    )
+    logger.mesg(dict_to_str(parquet_writer_params), indent=2)
+    parquet_writer = VideoTextsParquetWriter(**parquet_writer_params, verbose=True)
 
     cacher = VideoTextsTokenCacher(
         data_loader=data_loader,
         tokenizer=tokenizer,
-        parquet_operator=parquet_operator,
+        parquet_writer=parquet_writer,
         max_count_batch=args.max_count_batch,
     )
 
@@ -142,4 +144,5 @@ if __name__ == "__main__":
 
     # python -m datasets.videos.cache -ec -mcb 22 -bw 5 -fw 10
     # python -m datasets.videos.cache -dn video_texts_tid_17
+    # python -m datasets.videos.cache -dn video_texts_tid_201
     # parquet-tools rowcount ./data/video_texts/0000.parquet
