@@ -17,17 +17,17 @@ PYARROW_TYPES = {
     list[str]: pa.list_(pa.string()),
 }
 
+DATA_ROOT = Path(__file__).parents[2] / "data"
+COL_TYPES = {
+    "bvid": str,
+    "ptid": int,
+    "tid": int,
+    "sentence": str,
+    "tokens": list[str],
+}
 
-class VideoTextsParquetOperator:
-    DATA_ROOT = Path(__file__).parents[2] / "data"
-    COL_TYPES = {
-        "bvid": str,
-        "ptid": int,
-        "tid": int,
-        "sentence": str,
-        "tokens": list[str],
-    }
 
+class VideoTextsParquetWriter:
     def __init__(
         self,
         dataset_root: Union[Path, str] = None,
@@ -39,13 +39,13 @@ class VideoTextsParquetOperator:
         buffer_max_rows: int = int(1e4 * 10),
         verbose: bool = False,
     ):
-        self.data_root = Path(dataset_root or self.DATA_ROOT)
+        self.data_root = Path(dataset_root or DATA_ROOT)
         self.dataset_name = dataset_name
         self.parquet_prefix = parquet_prefix
         self.dataset_max_rows = dataset_max_rows
         self.file_max_rows = file_max_rows
         self.buffer_max_rows = buffer_max_rows
-        self.col_types = col_types or self.COL_TYPES
+        self.col_types = col_types or COL_TYPES
         self.verbose = verbose
         self.buffer: pa.Table = None
         self.init_paths()
@@ -53,8 +53,6 @@ class VideoTextsParquetOperator:
 
     def init_paths(self):
         self.dataset_dir = self.data_root / self.dataset_name
-        if not self.dataset_dir.exists():
-            self.dataset_dir.mkdir(parents=True, exist_ok=True)
         self.pq_idx_bits = int_bits(self.dataset_max_rows // self.file_max_rows)
 
     def init_schema(self) -> dict:
@@ -67,6 +65,9 @@ class VideoTextsParquetOperator:
 
     def clear_dataset(self):
         dataset_name_str = logstr.note(brk(self.dataset_name))
+        if not self.dataset_dir.exists():
+            logger.mesg(f"  * Skip clear non-existed dataset: {dataset_name_str}")
+            return
         logger.warn(f"  ! WARNING: You are deleting dataset: {dataset_name_str}")
         confirmation = input(
             logstr.mesg(
@@ -126,6 +127,8 @@ class VideoTextsParquetOperator:
 
     def write_parquet(self, table: pa.Table = None):
         self.parquet_path = self.next_parquet_path()
+        if not self.parquet_path.parent.exists():
+            self.parquet_path.parent.mkdir(parents=True)
         if self.verbose:
             print()
             row_count_str = logstr.mesg(brk(table.num_rows))
@@ -144,12 +147,39 @@ class VideoTextsParquetOperator:
             self.buffer = None
 
 
+class VideoTextsParquetReader:
+    def __init__(
+        self,
+        dataset_root: Union[Path, str] = None,
+        dataset_name: str = "video_texts",
+        parquet_prefix: str = "",
+        verbose: bool = False,
+    ):
+        self.data_root = Path(dataset_root or DATA_ROOT)
+        self.dataset_name = dataset_name
+        self.parquet_prefix = parquet_prefix
+        self.verbose = verbose
+        self.init_paths()
+
+    def init_paths(self):
+        self.dataset_dir = self.data_root / self.dataset_name
+
+
 class ParquetOperatorArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-dr", "--dataset-root", type=str, default=None)
         self.add_argument("-dn", "--dataset-name", type=str, default="video_texts")
         self.add_argument("-pp", "--parquet-prefix", type=str, default="")
+
+    def parse_args(self):
+        self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
+        return self.args
+
+
+class ParquetWriterArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.add_argument("-dw", "--dataset-max-w-rows", type=int, default=1e6)
         self.add_argument("-fw", "--file-max-w-rows", type=int, default=100)
         self.add_argument("-bw", "--buffer-max-w-rows", type=int, default=10)
