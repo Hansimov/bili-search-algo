@@ -6,20 +6,25 @@ import sys
 
 from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk
-from typing import Union
+from typing import Union, Literal
 
-from datasets.videos.data import SentencesDataloader, DataLoaderArgParser
+from datasets.videos.data import SentencesDataloader
+from datasets.videos.data import ParquetRowsDataLoader
+from datasets.videos.parquet import VideoTextsParquetReader
+from datasets.args import DATA_LOADER_ARG_PARSER
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
 
 
 class VideoTextsTokenFreqCounter:
     def __init__(
         self,
-        data_loader: SentencesDataloader,
-        tokenizer: ParallelSentenceFullTokenizer,
+        data_loader: Union[ParquetRowsDataLoader, SentencesDataloader],
+        data_source: Literal["mongo", "parquet"] = "parquet",
+        tokenizer: ParallelSentenceFullTokenizer = None,
         max_count_batch: int = None,
     ):
         self.data_loader = data_loader
+        self.data_source = data_source
         self.tokenizer = tokenizer
         self.max_count_batch = max_count_batch
         self.term_freqs: dict[str, int] = {}
@@ -35,19 +40,35 @@ class VideoTextsTokenFreqCounter:
 
     def count(self):
         self.data_loader.__epoch_start__()
-        for batch_idx, sentence_batch in enumerate(
-            self.data_loader.doc_batch_generator(doc_type="sentence")
-        ):
-            if self.max_count_batch and batch_idx >= self.max_count_batch:
-                break
-            tokenize_results = self.tokenizer.tokenize_list(sentence_batch)
-            for result in tokenize_results:
-                self.count_tokens_freq(result["tokens"])
-            batch_bar_desc = logstr.mesg(f"tokens: {brk(len(self.term_freqs))}")
-            self.data_loader.batch_bar.update(desc=batch_bar_desc)
-        print()
-        logger.hint(dict_to_str(result), indent=2)
-        self.tokenizer.terminate()
+        if self.data_source == "mongo":
+            for batch_idx, sentence_batch in enumerate(
+                self.data_loader.doc_batch_generator(doc_type="sentence")
+            ):
+                if self.max_count_batch and batch_idx >= self.max_count_batch:
+                    break
+                tokenize_results = self.tokenizer.tokenize_list(sentence_batch)
+                for result in tokenize_results:
+                    self.count_tokens_freq(result["tokens"])
+                batch_bar_desc = logstr.mesg(f"tokens: {brk(len(self.term_freqs))}")
+                self.data_loader.batch_bar.update(desc=batch_bar_desc)
+            print()
+            logger.hint(dict_to_str(result), indent=2)
+            self.tokenizer.terminate()
+        elif self.data_source == "parquet":
+            for batch_idx, tokens_batch in enumerate(self.data_loader.batch_generator):
+                if self.max_count_batch and batch_idx >= self.max_count_batch:
+                    break
+                self.data_loader.sample_bar.total = len(tokens_batch)
+                for tokens in tokens_batch:
+                    self.count_tokens_freq(tokens)
+                    self.data_loader.sample_bar.update(increment=1)
+                self.data_loader.sample_bar.reset()
+                batch_bar_desc = logstr.mesg(f"tokens: {brk(len(self.term_freqs))}")
+                self.data_loader.batch_bar.update(increment=1, desc=batch_bar_desc)
+            print()
+            logger.hint(tokens, indent=2)
+        else:
+            raise ValueError(f"Unknown data source: {self.data_source}")
 
     def calc_percentiles(self) -> dict:
         percentiles = [
@@ -109,6 +130,13 @@ class FreqCounterArgParser(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
         self.add_argument("-o", "--output-prefix", type=str, default="video_texts_freq")
         self.add_argument("-mcb", "--max-count-batch", type=int, default=None)
+        self.add_argument(
+            "-ds",
+            "--data-source",
+            type=str,
+            choices=["mongo", "parquet"],
+            default="parquet",
+        )
 
     def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])

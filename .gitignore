@@ -13,3 +13,4 @@ secrets.json
 *.so
 *.c
 *.csv
+*.jsonv
