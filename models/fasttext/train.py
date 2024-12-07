@@ -96,17 +96,20 @@ class FasttextModelTrainer:
         keep_exist_model: bool = True,
         skip_trained: bool = True,
         use_local_model: bool = True,
+        use_kv: bool = False,
         vocab_dict: dict[str, int] = None,
     ):
         self.model_prefix = model_prefix
         self.keep_exist_model = keep_exist_model
         self.skip_trained = skip_trained
         self.use_local_model = use_local_model
+        self.use_kv = use_kv
         self.vocab_dict = vocab_dict
 
         self.model_path = (
             Path(__file__).parent / "checkpoints" / f"{model_prefix}.model"
         )
+        self.kv_path = self.model_path.with_suffix(".kv")
         self.model = None
         self.is_model_trained = False
 
@@ -123,24 +126,37 @@ class FasttextModelTrainer:
             "window": window,
             "workers": workers,
         }
+        self.init_model()
 
-        logger.note("> Loading model:")
+    def load_model(self):
+        if self.use_kv:
+            if not self.kv_path.exists():
+                self.model = FastText.load(str(self.model_path))
+                self.model.wv.save(str(self.kv_path))
+            self.wv = KeyedVectors.load(str(self.kv_path))
+        else:
+            self.model = FastText.load(str(self.model_path))
+            self.wv = self.model.wv
+
+    def init_model(self):
+        logger.note("> Initializing model:")
         if self.model:
             logger.file("  * model already in memory")
             self.is_model_trained = True
             return
-
         if self.model_path.exists() and self.use_local_model:
             logger.mesg(f"  * load from local:")
-            logger.file(f"    * {brk(self.model_path)}")
-            self.model = FastText.load(str(self.model_path))
+            if self.use_kv:
+                logger.file(f"    * {brk(self.kv_path)}")
+            else:
+                logger.file(f"    * {brk(self.model_path)}")
+            self.load_model()
             self.is_model_trained = True
         else:
             self.model = FastText(**self.train_params)
             self.is_model_trained = False
-            logger.success(
-                f"  ✓ new model created: {logstr.mesg(brk(self.model_prefix))}"
-            )
+            model_prefix_str = logstr.mesg(brk(self.model_prefix))
+            logger.success(f"  ✓ new model created: {model_prefix_str}")
             logger.mesg(dict_to_str(self.train_params), indent=4)
 
     def init_data_loader(self, data_loader: SentencesDataloader):
@@ -156,6 +172,32 @@ class FasttextModelTrainer:
         else:
             self.model.build_vocab(corpus_iterable=self.data_loader)
             logger.success(f"  ✓ vocab built")
+
+    def delete_model(self):
+        model_prefix_str = logstr.note(brk(self.model_prefix))
+        if not self.model_path.exists():
+            logger.mesg(f"  * Skip delete non-existed model: {model_prefix_str}")
+            return
+        logger.warn(f"  ! WARNING: You are deleting model: {model_prefix_str}")
+        confirmation = input(
+            logstr.mesg(
+                f'  > Type "{logstr.note(self.model_prefix)}" to confirm deletion: '
+            )
+        )
+        if confirmation != self.model_prefix:
+            logger.mesg(f"  * Skip delete model: {model_prefix_str}")
+        else:
+            logger.warn(f"  ! Deleting model: {model_prefix_str}")
+            model_files = sorted(self.model_path.parent.glob(f"{self.model_prefix}.*"))
+            for model_file in model_files:
+                model_file.unlink()
+
+    def save_model(self):
+        if not self.model_path.parent.exists():
+            self.model_path.parent.mkdir(parents=True, exist_ok=True)
+        self.model.save(str(self.model_path))
+        if self.use_kv:
+            self.model.wv.save(str(self.model_path.with_suffix(".kv")))
 
     def train(self):
         logger.note("> Training model:")
@@ -178,9 +220,7 @@ class FasttextModelTrainer:
                 logger.file(f"  * [{self.model_path}]")
             else:
                 logger.note("> Saving model:")
-                if not self.model_path.parent.exists():
-                    self.model_path.parent.mkdir(parents=True, exist_ok=True)
-                self.model.save(str(self.model_path))
+                self.save_model()
                 logger.success(f"  * [{self.model_path}]")
 
     def test(
@@ -200,9 +240,7 @@ class FasttextModelTrainer:
                     word = [w.lower() for w in word]
                 else:
                     word = word.lower()
-                results = self.model.wv.most_similar(
-                    word, restrict_vocab=restrict_vocab
-                )[:6]
+                results = self.wv.most_similar(word, restrict_vocab=restrict_vocab)[:6]
                 logger.mesg(f"  * [{logstr.file(word)}]:")
                 for result in results:
                     res_word, res_score = result
@@ -234,9 +272,10 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-wd", "--window", type=int, default=5)
         self.add_argument("-wk", "--workers", type=int, default=32)
         self.add_argument("-t", "--test-only", action="store_true")
-        self.add_argument("-k", "--keep-exist-model", action="store_false")
-        self.add_argument("-s", "--skip-trained", action="store_true")
-        self.add_argument("-u", "--use-local-model", action="store_true")
+        self.add_argument("-km", "--keep-exist-model", action="store_false")
+        self.add_argument("-st", "--skip-trained", action="store_true")
+        self.add_argument("-lm", "--use-local-model", action="store_true")
+        self.add_argument("-kv", "--use-kv", action="store_true")
         self.add_argument("-tm", "--tokenizer-model", type=str, default=None)
 
     def parse_args(self):
@@ -294,6 +333,7 @@ if __name__ == "__main__":
         keep_exist_model=args.keep_exist_model,
         skip_trained=args.skip_trained,
         use_local_model=args.use_local_model,
+        use_kv=args.use_kv,
         vocab_dict=vocab_dict,
     )
 
