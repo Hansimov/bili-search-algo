@@ -167,41 +167,63 @@ class FreqCounterArgParser(argparse.ArgumentParser):
 
 
 if __name__ == "__main__":
-    data_loader_parser = DataLoaderArgParser(add_help=False)
-    freq_counter_parser = FreqCounterArgParser(add_help=False)
-    merged_parser = argparse.ArgumentParser(
-        parents=[data_loader_parser, freq_counter_parser]
-    )
-    args, unknown_args = merged_parser.parse_known_args(sys.argv[1:])
-
-    # mongo_filter = {"tid": 231}
-    mongo_filter = {}
+    arg_parser = DATA_LOADER_ARG_PARSER
+    arg_parser.add_parser_class(FreqCounterArgParser)
+    args = arg_parser.parse_args()
 
     logger.note("> Initiating data loader ...")
-    data_params = {
-        "dbname": args.dbname,
-        "collect_name": args.collect_name,
-        "data_fields": args.data_fields.split(",") if args.data_fields else None,
-        "mongo_filter": mongo_filter,
-        "max_batch": args.max_batch,
-        "batch_size": args.batch_size,
-        "estimate_count": args.estimate_count,
-    }
-    logger.mesg(dict_to_str(data_params), indent=2)
-    data_loader = SentencesDataloader(
-        **data_params,
-        show_at_init=False,
-        task_type="freq",
-        show_epoch_bar=False,
-        verbose=True,
-    )
-    tokenizer = ParallelSentenceFullTokenizer(
-        Path("sp_400k_merged.model"),
-        # drop_non_word=True, # This param is not needed as doc_coverter in data_loader already does this
-        drop_whitespace=True,
-        workers_num=16,
-        batch_size=args.batch_size * 2,
-    )
+    if args.data_source == "mongo":
+        # mongo_filter = {"tid": 231}
+        mongo_filter = {}
+        data_params = {
+            "dbname": args.dbname,
+            "collect_name": args.collect_name,
+            "data_fields": args.data_fields.split(",") if args.data_fields else None,
+            "mongo_filter": mongo_filter,
+            "max_batch": args.max_batch,
+            "batch_size": args.batch_size,
+            "estimate_count": args.estimate_count,
+        }
+        logger.mesg(dict_to_str(data_params), indent=2)
+        data_loader = SentencesDataloader(
+            **data_params,
+            show_at_init=False,
+            task_type="freq",
+            show_epoch_bar=False,
+            verbose=True,
+        )
+        tokenizer = ParallelSentenceFullTokenizer(
+            Path("sp_400k_merged.model"),
+            # drop_non_word=True, # This param is not needed as doc_coverter in data_loader already does this
+            drop_whitespace=True,
+            workers_num=16,
+            batch_size=args.batch_size * 2,
+        )
+    elif args.data_source == "parquet":
+        parquet_params = {
+            "dataset_root": args.dataset_root,
+            "dataset_name": args.dataset_name,
+            "parquet_prefix": args.parquet_prefix,
+        }
+        parquet_reader = VideoTextsParquetReader(**parquet_params)
+        logger.mesg(dict_to_str(parquet_params), indent=2)
+        data_params = {
+            "column": "tokens",
+            "max_batch": args.max_batch,
+            "batch_size": args.batch_size,
+            "max_rows": args.max_rows,
+            "max_tables": args.max_tables,
+            "show_at_init": False,
+            "show_epoch_bar": False,
+            "verbose": True,
+        }
+        data_loader = ParquetRowsDataLoader(
+            **data_params, parquet_reader=parquet_reader
+        )
+        logger.mesg(dict_to_str(data_params), indent=2)
+        tokenizer = None
+    else:
+        raise ValueError(f"Unknown data source: {args.data_source}")
 
     counter = VideoTextsTokenFreqCounter(
         data_loader=data_loader,
@@ -216,11 +238,10 @@ if __name__ == "__main__":
     percentile_res = counter.calc_percentiles()
     logger.success(dict_to_str(percentile_res), indent=2)
 
-    logger.note("> Dumping to csv ...")
+    logger.note("> Dumping ...")
     csv_path = Path(f"{args.output_prefix}.csv")
     counter.dump(csv_path)
-    logger.file(f"  * {str(csv_path.resolve())}")
 
     # python -m datasets.videos.freq
-    # python -m datasets.videos.freq -o video_texts_freq_all -ec
     # python -m datasets.videos.freq -o video_texts_freq_all -ec -mcb 1
+    # python -m datasets.videos.freq -o video_texts_freq_all -dn "video_texts_tid_all"
