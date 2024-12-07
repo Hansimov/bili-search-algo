@@ -1,4 +1,5 @@
 import argparse
+import json
 import numpy as np
 import pandas as pd
 import sys
@@ -91,25 +92,41 @@ class VideoTextsTokenFreqCounter:
             freq_dict_to_percentiles(self.doc_freqs)
         )
         self.percentiles = percentiles
-        res = {
+        self.percentile_info = {
             "percentiles": self.percentiles,
             "doc_freq": self.doc_freq_percentiles,
             "term_freq": self.term_freq_percentiles,
         }
-        return res
+        self.percentile_info_list = [
+            {"percentile": percentile, "doc_freq": doc_freq, "term_freq": term_freq}
+            for percentile, doc_freq, term_freq in zip(
+                self.percentiles, self.doc_freq_percentiles, self.term_freq_percentiles
+            )
+        ]
+        return self.percentile_info
 
-    def dump(self, output_path: Union[str, Path], percentile_threshold: float = 0.85):
+    def dump(
+        self,
+        output_path: Union[str, Path],
+        percent_threshold: float = 0.85,
+        count_threshold: int = 20,
+    ):
         percentiles = sorted(self.percentiles)
         for i in range(len(percentiles) - 1):
             if (
-                percentiles[i] >= percentile_threshold
-                and percentiles[i + 1] <= percentile_threshold
+                percentiles[i] >= percent_threshold
+                and percentiles[i + 1] <= percent_threshold
             ):
-                percentile_threshold = percentiles[i]
+                percent_threshold = percentiles[i]
                 break
-        logger.mesg(f"  * percentile_threshold: {brk(percentile_threshold)}")
 
-        doc_freq_threshold = self.doc_freq_percentiles_dict[percentile_threshold]
+        doc_freq_threshold = self.doc_freq_percentiles_dict[percent_threshold]
+        min_threshold = min(count_threshold, doc_freq_threshold)
+
+        logger.mesg(f"  * percent_threshold  : {logstr.file(brk(percent_threshold))}")
+        logger.mesg(f"  * doc_freq_threshold : {logstr.file(brk(doc_freq_threshold))}")
+        logger.mesg(f"  * count_threshold    : {logstr.file(brk(count_threshold))}")
+
         df = pd.DataFrame()
         freq_list = [
             {
@@ -118,11 +135,17 @@ class VideoTextsTokenFreqCounter:
                 "term_freq": self.term_freqs[token],
             }
             for token in self.term_freqs
-            if self.doc_freqs[token] >= doc_freq_threshold
+            if self.doc_freqs[token] >= min_threshold
         ]
         df = pd.DataFrame(freq_list)
         df = df.sort_values(by=["doc_freq", "term_freq"], ascending=False)
         df.to_csv(output_path, index=False)
+        logger.file(f"  * {str(output_path.resolve())}")
+
+        percentile_info_path = Path(output_path).with_suffix(".jsonv")
+        with open(percentile_info_path, "w") as wf:
+            json.dump(self.percentile_info_list, wf, indent=4)
+        logger.file(f"  * {str(percentile_info_path.resolve())}")
 
 
 class FreqCounterArgParser(argparse.ArgumentParser):
