@@ -159,7 +159,7 @@ class FasttextModelTrainer:
             logger.success(f"  ✓ new model created: {model_prefix_str}")
             logger.mesg(dict_to_str(self.train_params), indent=4)
 
-    def init_data_loader(self, data_loader: SentencesDataloader):
+    def init_data_loader(self, data_loader: ParquetRowsDataLoader):
         self.data_loader = data_loader
 
     def build_vocab(self):
@@ -172,6 +172,11 @@ class FasttextModelTrainer:
         else:
             self.model.build_vocab(corpus_iterable=self.data_loader)
             logger.success(f"  ✓ vocab built")
+
+    def refresh_data_loader_status(self):
+        self.data_loader.iter_epochs = self.train_params["epochs"]
+        self.data_loader.epoch_bar.reset()
+        self.data_loader.init_generators()
 
     def delete_model(self):
         model_prefix_str = logstr.note(brk(self.model_prefix))
@@ -201,12 +206,10 @@ class FasttextModelTrainer:
 
     def train(self):
         logger.note("> Training model:")
-        self.data_loader.epoch_bar.reset()
         if self.is_model_trained and self.skip_trained:
             logger.file("  * model already trained, skip train()")
         else:
-            self.data_loader.epoch_bar.reset()
-            self.data_loader.iter_epochs = self.train_params["epochs"]
+            self.refresh_data_loader_status()
             self.model.train(
                 corpus_iterable=self.data_loader,
                 total_examples=self.model.corpus_count,
@@ -406,3 +409,4 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_tid_17_ep_2_parallel -ep 2 -mc 20
 
     # python -m models.fasttext.train -m fasttext_tid_17_ep_4 -ep 4 -dn "video_texts_tid_17" -mc 20 -bs 100000
+    # python -m models.fasttext.train -m fasttext_tid_all -ep 1 -dn "video_texts_tid_all" -mc 20 -bs 20000
