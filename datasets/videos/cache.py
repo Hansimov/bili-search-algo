@@ -154,4 +154,4 @@ if __name__ == "__main__":
     # python -m datasets.videos.cache -ec -mcb 22 -bw 5 -fw 10
     # python -m datasets.videos.cache -dn video_texts_tid_17
     # python -m datasets.videos.cache -dn video_texts_tid_201
-    # python -m datasets.videos.cache -ec -dn video_texts_tid_all -fw 200 -bw 100
+    # python -m datasets.videos.cache -ec -dn video_texts_tid_all -fw 200 -bw 100 -bs 10000

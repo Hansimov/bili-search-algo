@@ -121,7 +121,7 @@ class VideoTextsTokenFreqCounter:
                 break
 
         doc_freq_threshold = self.doc_freq_percentiles_dict[percent_threshold]
-        min_threshold = min(count_threshold, doc_freq_threshold)
+        max_threshold = max(count_threshold, doc_freq_threshold)
 
         logger.mesg(f"  * percent_threshold  : {logstr.file(brk(percent_threshold))}")
         logger.mesg(f"  * doc_freq_threshold : {logstr.file(brk(doc_freq_threshold))}")
@@ -135,7 +135,7 @@ class VideoTextsTokenFreqCounter:
                 "term_freq": self.term_freqs[token],
             }
             for token in self.term_freqs
-            if self.doc_freqs[token] >= min_threshold
+            if self.doc_freqs[token] >= max_threshold
         ]
         df = pd.DataFrame(freq_list)
         df = df.sort_values(by=["doc_freq", "term_freq"], ascending=False)

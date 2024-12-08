@@ -111,6 +111,7 @@ class FasttextModelTrainer:
         )
         self.kv_path = self.model_path.with_suffix(".kv")
         self.model = None
+        self.wv = None
         self.is_model_trained = False
 
         self.train_params = {
@@ -243,6 +244,8 @@ class FasttextModelTrainer:
                     word = [w.lower() for w in word]
                 else:
                     word = word.lower()
+                if not self.wv:
+                    self.wv = self.model.wv
                 results = self.wv.most_similar(word, restrict_vocab=restrict_vocab)[:6]
                 logger.mesg(f"  * [{logstr.file(word)}]:")
                 for result in results:
@@ -409,4 +412,6 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_tid_17_ep_2_parallel -ep 2 -mc 20
 
     # python -m models.fasttext.train -m fasttext_tid_17_ep_4 -ep 4 -dn "video_texts_tid_17" -mc 20 -bs 100000
+    # python -m models.fasttext.train -m fasttext_tid_all -ep 1 -dn "video_texts_tid_all" -mc 20 -bs 20000
+
     # python -m models.fasttext.train -m fasttext_tid_all -ep 1 -dn "video_texts_tid_all" -mc 20 -bs 20000
