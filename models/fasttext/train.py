@@ -4,7 +4,7 @@ import sys
 
 from gensim.models import FastText, KeyedVectors
 from pathlib import Path
-from tclogger import logger, logstr, dict_to_str, brk
+from tclogger import logger, logstr, dict_to_str, brk, Runtimer
 from typing import Union
 
 from datasets.videos.data import SentencesDataloader, ParquetRowsDataLoader
@@ -87,6 +87,7 @@ class FasttextModelTrainer:
         min_count: int = 5,
         min_n: int = 3,
         max_n: int = 6,
+        max_final_vocab: int = None,
         shrink_windows: bool = False,
         sg: int = 0,
         vector_size: int = 128,
@@ -120,6 +121,7 @@ class FasttextModelTrainer:
             "min_count": min_count,
             "min_n": min_n,
             "max_n": max_n,
+            "max_final_vocab": max_final_vocab,
             "shrink_windows": shrink_windows,
             "sg": sg,
             "vector_size": vector_size,
@@ -230,9 +232,10 @@ class FasttextModelTrainer:
         self,
         test_words: list[str] = None,
         tokenizer: SentenceFullTokenizer = None,
-        restrict_vocab: int = 10000,
+        restrict_vocab: int = 150000,
     ):
-        logger.note("> Testing model:")
+        restrict_vocab_str = logstr.mesg(brk(restrict_vocab))
+        logger.note(f"> Testing model: {restrict_vocab_str}")
         if not test_words:
             logger.warn("  × No test words provided")
         else:
@@ -243,9 +246,8 @@ class FasttextModelTrainer:
                     word = [w.lower() for w in word]
                 else:
                     word = word.lower()
-                if not self.wv:
-                    self.wv = self.model.wv
-                results = self.wv.most_similar(word, restrict_vocab=restrict_vocab)[:6]
+                wv = self.wv or self.model.wv
+                results = wv.most_similar(word, restrict_vocab=restrict_vocab)[:6]
                 logger.mesg(f"  * [{logstr.file(word)}]:")
                 for result in results:
                     res_word, res_score = result
@@ -267,8 +269,9 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-hs", "--hs", type=int, default=0)
         self.add_argument("-ma", "--min-alpha", type=float, default=0.0001)
         self.add_argument("-mc", "--min-count", type=int, default=20)
-        self.add_argument("-in", "--min-n", type=int, default=2)
-        self.add_argument("-an", "--max-n", type=int, default=8)
+        self.add_argument("-mv", "--max-final-vocab", type=int, default=None)
+        self.add_argument("-minn", "--min-n", type=int, default=2)
+        self.add_argument("-maxn", "--max-n", type=int, default=8)
         self.add_argument("-sg", "--sg", type=int, default=0)
         self.add_argument("-sw", "--shrink-windows", action="store_true")
         self.add_argument("-vs", "--vector-size", type=int, default=256)
@@ -289,6 +292,8 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
 
 
 if __name__ == "__main__":
+    timer = Runtimer()
+    timer.__enter__()
     arg_parser = DATA_LOADER_ARG_PARSER
     arg_parser.add_parser_class(ModelTrainerArgParser)
     args = arg_parser.parse_args()
@@ -318,6 +323,7 @@ if __name__ == "__main__":
         min_count=args.min_count,
         min_n=args.min_n,
         max_n=args.max_n,
+        max_final_vocab=args.max_final_vocab,
         shrink_windows=args.shrink_windows,
         sg=args.sg,
         vector_size=args.vector_size,
@@ -389,7 +395,9 @@ if __name__ == "__main__":
         if args.data_source == "mongo":
             data_loader.tokenizer.terminate()
 
-    trainer.test(TEST_KEYWORDS, tokenizer=None, restrict_vocab=50000)
+    trainer.test(TEST_KEYWORDS, tokenizer=None, restrict_vocab=150000)
+
+    timer.__exit__(None, None, None)
 
     # python -m models.fasttext.train
     # python -m models.fasttext.train -t
@@ -402,3 +410,5 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_tid_all -ep 1 -dn "video_texts_tid_all" -mc 20 -bs 20000
 
     # python -m models.fasttext.train -m fasttext_tid_all -ep 1 -dn "video_texts_tid_all" -mc 20 -bs 20000
+    # python -m models.fasttext.train -m fasttext_tid_all_mc_50 -ep 1 -dn "video_texts_tid_all" -mc 50 -bs 20000
+    # python -m models.fasttext.train -m fasttext_tid_all_mv_60w -ep 1 -dn "video_texts_tid_all" -mv 600000 -bs 20000
