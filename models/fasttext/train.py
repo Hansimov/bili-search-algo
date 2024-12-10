@@ -7,10 +7,9 @@ from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk
 from typing import Union
 
-from datasets.videos.data import CommonDataLoaderArgParser
-from datasets.videos.data import SentencesDataloader, SentencesDataLoaderArgParser
-from datasets.videos.data import ParquetRowsDataLoader, ParquetRowsDataLoaderArgParser
-from datasets.videos.parquet import VideoTextsParquetReader, ParquetOperatorArgParser
+from datasets.videos.data import SentencesDataloader, ParquetRowsDataLoader
+from datasets.videos.parquet import VideoTextsParquetReader
+from datasets.args import DATA_LOADER_ARG_PARSER
 from models.fasttext.test import TEST_KEYWORDS
 
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
@@ -290,21 +289,9 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
 
 
 if __name__ == "__main__":
-    common_data_loader_parser = CommonDataLoaderArgParser(add_help=False)
-    sentences_data_loader_parser = SentencesDataLoaderArgParser(add_help=False)
-    parquet_operator_parser = ParquetOperatorArgParser(add_help=False)
-    parquet_rows_data_loader_parser = ParquetRowsDataLoaderArgParser(add_help=False)
-    model_trainer_parser = ModelTrainerArgParser(add_help=False)
-    merged_parser = argparse.ArgumentParser(
-        parents=[
-            common_data_loader_parser,
-            sentences_data_loader_parser,
-            parquet_operator_parser,
-            parquet_rows_data_loader_parser,
-            model_trainer_parser,
-        ]
-    )
-    args, unknown_args = merged_parser.parse_known_args(sys.argv[1:])
+    arg_parser = DATA_LOADER_ARG_PARSER
+    arg_parser.add_parser_class(ModelTrainerArgParser)
+    args = arg_parser.parse_args()
 
     if args.test_only:
         args.keep_exist_model = True
