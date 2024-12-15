@@ -111,7 +111,6 @@ class FasttextModelTrainer:
         )
         self.kv_path = self.model_path.with_suffix(".kv")
         self.model = None
-        self.wv = None
         self.is_model_trained = False
 
         self.train_params = {
@@ -138,7 +137,6 @@ class FasttextModelTrainer:
             self.wv = KeyedVectors.load(str(self.kv_path))
         else:
             self.model = FastText.load(str(self.model_path))
-            self.wv = self.model.wv
 
     def init_model(self):
         logger.note("> Initializing model:")
@@ -246,9 +244,12 @@ class FasttextModelTrainer:
                     word = [w.lower() for w in word]
                 else:
                     word = word.lower()
-                wv = self.wv or self.model.wv
-                results = wv.most_similar(word, restrict_vocab=restrict_vocab)[:6]
                 logger.mesg(f"  * [{logstr.file(word)}]:")
+                # vec = self.model.wv[word]
+                # logger.success(vec)
+                results = self.model.wv.most_similar(
+                    word, restrict_vocab=restrict_vocab
+                )[:6]
                 for result in results:
                     res_word, res_score = result
                     logger.success(f"    * {res_score:>.4f}: {res_word}")
@@ -412,3 +413,5 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_tid_all -ep 1 -dn "video_texts_tid_all" -mc 20 -bs 20000
     # python -m models.fasttext.train -m fasttext_tid_all_mc_50 -ep 1 -dn "video_texts_tid_all" -mc 50 -bs 20000
     # python -m models.fasttext.train -m fasttext_tid_all_mv_60w -ep 1 -dn "video_texts_tid_all" -mv 600000 -bs 20000
+    # python -m models.fasttext.train -m fasttext_tid_all_mv_60w_vs_128 -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 600000 -vs 128
+    # python -m models.fasttext.train -m fasttext_tid_all_mv_30w -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 300000
