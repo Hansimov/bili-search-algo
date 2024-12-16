@@ -54,6 +54,13 @@ class FasttextModelRunner:
         else:
             return words.lower()
 
+    def wv_func(self, func: str, *args, **kwargs):
+        if self.verbose:
+            logger.note(f"> model.wv.{func}:")
+            logger.mesg(f"  * args  : {args}")
+            logger.mesg(f"  * kwargs: {kwargs}")
+        return getattr(self.model.wv, func)(*args, **kwargs)
+
     def most_similar(
         self,
         positive: list = None,
@@ -74,6 +81,16 @@ class FasttextModelRunner:
             word = self.preprocess_words(word)
             logger.mesg(f"  * [{logstr.file(word)}]:")
             results = self.most_similar(positive=word, topn=10)[:6]
+            for result in results:
+                res_word, res_score = result
+                logger.success(f"    * {res_score:>.4f}: {res_word}")
+        logger.file(f"* {self.model_prefix}")
+
+    def test_func(self, test_words: list):
+        for word in test_words:
+            word = self.preprocess_words(word)
+            logger.mesg(f"  * [{logstr.file(word)}]:")
+            results = self.wv_func("most_similar", positive=word, topn=10)[:6]
             for result in results:
                 res_word, res_score = result
                 logger.success(f"    * {res_score:>.4f}: {res_word}")
@@ -109,7 +126,8 @@ if __name__ == "__main__":
         runner.list_models()
     else:
         runner.load_model()
-        runner.test(TEST_KEYWORDS)
+        # runner.test(TEST_KEYWORDS)
+        runner.test_func(TEST_KEYWORDS)
 
     timer.__exit__(None, None, None)
 
