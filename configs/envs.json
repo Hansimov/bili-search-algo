@@ -2,5 +2,9 @@
     "logs": {
         "mongo": "mongo.log",
         "elastic": "elastic.log"
+    },
+    "pyro": {
+        "host": "localhost",
+        "port": 9090
     }
 }
