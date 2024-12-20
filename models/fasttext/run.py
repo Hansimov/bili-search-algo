@@ -10,7 +10,7 @@ from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk, Runtimer
 from typing import Union
 
-from configs.envs import FASTTEXT_CKPT_ROOT, PYRO_ENVS
+from configs.envs import PYRO_ENVS, FASTTEXT_CKPT_ROOT, SENTENCEPIECE_CKPT_ROOT
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 
 PYRO_NS = "fasttext_model_runner"
@@ -21,10 +21,12 @@ class FasttextModelRunner:
     def __init__(
         self,
         model_prefix: Union[str, Path] = "fasttext",
+        tokenizer_prefix: Union[str, Path] = "sp_400k_merged",
         restrict_vocab: int = 150000,
         verbose: bool = False,
     ):
         self.model_prefix = model_prefix
+        self.tokenizer_prefix = tokenizer_prefix
         self.restrict_vocab = restrict_vocab
         self.verbose = verbose
 
@@ -48,19 +50,66 @@ class FasttextModelRunner:
         logger.file(dict_to_str(model_info_dict), verbose=self.verbose)
         return model_info_dict
 
+    def load_tokenizer(self):
+        self.tokenizer_path = SENTENCEPIECE_CKPT_ROOT / f"{self.tokenizer_prefix}.model"
+        if self.verbose:
+            logger.note(f"> Loading tokenizer:")
+            logger.mesg(f"  * {self.tokenizer_path}")
+        self.tokenizer = SentenceFullTokenizer(
+            model_path=self.tokenizer_path, drop_non_word=True, drop_whitespace=True
+        )
+
     def load_model(self):
         self.model_path = FASTTEXT_CKPT_ROOT / f"{self.model_prefix}.model"
         if self.verbose:
             logger.note(f"> Loading model:")
             logger.mesg(f"  * {self.model_path}")
-            logger.mesg(f"  * restrict_vocab: {logstr.file(brk(self.restrict_vocab))}")
         self.model = FastText.load(str(self.model_path))
+        model_info = {
+            "vector_size": self.model.vector_size,
+            "restrict_vocab": self.restrict_vocab,
+            "max_final_vocab": self.model.max_final_vocab,
+            "window": self.model.window,
+            "wv.min_n": self.model.wv.min_n,
+            "wv.max_n": self.model.wv.max_n,
+        }
+        if self.verbose:
+            logger.file(dict_to_str(model_info))
 
-    def preprocess_words(self, words: Union[str, list[str]]):
-        if isinstance(words, list):
-            return [w.lower() for w in words]
-        else:
-            return words.lower()
+    def tokenize(self, word: str) -> list[str]:
+        return self.tokenizer.tokenize(word)
+
+    def concat_singles(self, words: list[str]) -> list[str]:
+        if words is None:
+            return None
+        res = []
+        for i in range(len(words)):
+            if i == len(words) - 1 and len(words[i]) == 1:
+                if res:
+                    res[-1] += words[i]
+                else:
+                    res.append(words[i])
+            elif i > 0 and len(words[i]) == 1 and len(words[i - 1]) == 1:
+                res[-1] += words[i]
+            else:
+                res.append(words[i])
+        return res
+
+    def preprocess(
+        self, words: Union[str, list[str]], tokenize: bool = True
+    ) -> list[str]:
+        if words is None:
+            return None
+        if not isinstance(words, list):
+            words = [words]
+        words = [word.lower() for word in words]
+        if tokenize:
+            words = [token for word in words for token in self.tokenize(word)]
+            words = self.concat_singles(words)
+        return words
+
+    def is_in_vocab(self, word: str):
+        return word in self.model.wv.key_to_index
 
     @Pyro5.server.expose
     def wv_func(self, func: str, *args, **kwargs):
