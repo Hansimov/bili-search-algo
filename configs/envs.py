@@ -19,3 +19,4 @@ ELASTIC_ENVS = SECRETS["elastic"]
 
 FASTTEXT_CKPT_ROOT = REPO_ROOT / "models" / "fasttext" / "checkpoints"
 # SENTENCEPIECE_CKPT_ROOT = REPO_ROOT / "models" / "sentencepiece" / "checkpoints"
+SENTENCEPIECE_CKPT_ROOT = REPO_ROOT

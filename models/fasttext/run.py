@@ -173,18 +173,30 @@ class FasttextModelRunner:
     def test(self, test_words: list):
         logger.note(f"> Testing:")
         for word in test_words:
-            word = self.preprocess_words(word)
+            word = self.preprocess(word)
             logger.mesg(f"  * [{logstr.file(word)}]:")
-            results = self.most_similar(positive=word, topn=10)[:6]
+            results = self.most_similar_vocab(positive=word, topn=10)[:6]
             for result in results:
                 res_word, res_score = result
                 logger.success(f"    * {res_score:>.4f}: {res_word}")
         logger.file(f"* {self.model_prefix}")
 
+    @Pyro5.server.expose
+    def test_pair_similarities(self, test_pairs: list):
+        logger.note(f"> Testing (similarity):")
+        for word1, words in test_pairs:
+            word1 = self.preprocess(word1)
+            words = [self.preprocess(word) for word in words]
+            logger.mesg(f"  * [{logstr.file(word1)}]:")
+            results = self.words_similarities(word1, words)
+            for result in results:
+                res_word, res_score = result
+                logger.success(f"    * {res_score:>.4f}: {res_word}")
+
     def test_func(self, test_words: list):
         logger.note(f"> Testing (func):")
         for word in test_words:
-            word = self.preprocess_words(word)
+            word = self.preprocess(word)
             logger.mesg(f"  * [{logstr.file(word)}]:")
             results = self.wv_func("most_similar", positive=word, topn=10)[:6]
             for result in results:
@@ -234,6 +246,9 @@ class FasttextModelRunnerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-m", "--model-prefix", type=str, default="fasttext")
+        self.add_argument(
+            "-k", "--tokenizer-prefix", type=str, default="sp_400k_merged"
+        )
         self.add_argument("-v", "--restrict-vocab", type=int, default=150000)
         self.add_argument("-l", "--list-models", action="store_true")
         self.add_argument("-n", "--nameserver", type=str, default=PYRO_NS)
@@ -249,13 +264,14 @@ class FasttextModelRunnerArgParser(argparse.ArgumentParser):
 
 
 if __name__ == "__main__":
-    from models.fasttext.test import TEST_KEYWORDS
+    from models.fasttext.test import TEST_KEYWORDS, TEST_PAIRS
 
     parser = FasttextModelRunnerArgParser()
     args = parser.parse_args()
 
     runner = FasttextModelRunner(
         model_prefix=args.model_prefix,
+        tokenizer_prefix=args.tokenizer_prefix,
         restrict_vocab=args.restrict_vocab,
         verbose=True,
     )
@@ -271,6 +287,7 @@ if __name__ == "__main__":
 
         if not args.test_client:
             with Runtimer() as timer:
+                runner.load_tokenizer()
                 runner.load_model()
 
         if args.test:
@@ -278,7 +295,8 @@ if __name__ == "__main__":
             runner.test_func(TEST_KEYWORDS)
         elif args.test_client:
             client = FasttextModelRunnerClient(**remote_args)
-            client.runner.test(TEST_KEYWORDS)
+            # client.runner.test(TEST_KEYWORDS)
+            client.runner.test_pair_similarities(TEST_PAIRS)
             # res = client.runner.list_models()
             # logger.success(dict_to_str(res))
         elif args.remote:
