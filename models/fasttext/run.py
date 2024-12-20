@@ -1,4 +1,5 @@
 import argparse
+import numpy as np
 import Pyro5.api
 import Pyro5.core
 import Pyro5.server
@@ -120,7 +121,40 @@ class FasttextModelRunner:
         return getattr(self.model.wv, func)(*args, **kwargs)
 
     @Pyro5.server.expose
-    def most_similar(
+    def calc_vector(self, word: Union[str, list[str]]):
+        return self.model.wv.get_mean_vector(
+            self.preprocess(word), pre_normalize=True, post_normalize=False
+        )
+
+    @Pyro5.server.expose
+    def vector_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+        return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+
+    @Pyro5.server.expose
+    def word_similarity(
+        self, word1: Union[str, list[str]], word2: Union[str, list[str]]
+    ) -> float:
+        vec1 = self.calc_vector(word1)
+        vec2 = self.calc_vector(word2)
+        return self.vector_similarity(vec1, vec2)
+
+    @Pyro5.server.expose
+    def words_similarities(
+        self,
+        word1: Union[str, list[str]],
+        words: Union[list[str], list[list[str]]],
+        sort: bool = True,
+    ) -> list[tuple[str, float]]:
+        vec1 = self.calc_vector(word1)
+        vecs = [self.calc_vector(word) for word in words]
+        sims = [self.vector_similarity(vec1, vec) for vec in vecs]
+        if sort:
+            sims = sorted(zip(words, sims), key=lambda x: x[1], reverse=True)
+        res = [(word, sim) for word, sim in sims]
+        return res
+
+    @Pyro5.server.expose
+    def most_similar_vocab(
         self,
         positive: list = None,
         negative: list = None,
@@ -128,8 +162,8 @@ class FasttextModelRunner:
         restrict_vocab: int = None,
     ):
         results = self.model.wv.most_similar(
-            positive=positive,
-            negative=negative,
+            positive=self.preprocess(positive),
+            negative=self.preprocess(negative),
             topn=topn,
             restrict_vocab=restrict_vocab or self.restrict_vocab,
         )
