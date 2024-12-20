@@ -11,8 +11,10 @@ from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk, Runtimer
 from typing import Union
 
-from configs.envs import PYRO_ENVS, FASTTEXT_CKPT_ROOT, SENTENCEPIECE_CKPT_ROOT
-from models.sentencepiece.tokenizer import SentenceFullTokenizer
+import models.fasttext.test
+from configs.envs import PYRO_ENVS, FASTTEXT_CKPT_ROOT
+from models.fasttext.preprocess import FasttextModelPreprocessor
+
 
 PYRO_NS = "fasttext_model_runner"
 
@@ -22,12 +24,12 @@ class FasttextModelRunner:
     def __init__(
         self,
         model_prefix: Union[str, Path] = "fasttext",
-        tokenizer_prefix: Union[str, Path] = "sp_400k_merged",
+        preprocessor: FasttextModelPreprocessor = None,
         restrict_vocab: int = 150000,
         verbose: bool = False,
     ):
         self.model_prefix = model_prefix
-        self.tokenizer_prefix = tokenizer_prefix
+        self.preprocessor = preprocessor or FasttextModelPreprocessor()
         self.restrict_vocab = restrict_vocab
         self.verbose = verbose
 
@@ -51,15 +53,6 @@ class FasttextModelRunner:
         logger.file(dict_to_str(model_info_dict), verbose=self.verbose)
         return model_info_dict
 
-    def load_tokenizer(self):
-        self.tokenizer_path = SENTENCEPIECE_CKPT_ROOT / f"{self.tokenizer_prefix}.model"
-        if self.verbose:
-            logger.note(f"> Loading tokenizer:")
-            logger.mesg(f"  * {self.tokenizer_path}")
-        self.tokenizer = SentenceFullTokenizer(
-            model_path=self.tokenizer_path, drop_non_word=True, drop_whitespace=True
-        )
-
     def load_model(self):
         self.model_path = FASTTEXT_CKPT_ROOT / f"{self.model_prefix}.model"
         if self.verbose:
@@ -77,40 +70,11 @@ class FasttextModelRunner:
         if self.verbose:
             logger.file(dict_to_str(model_info))
 
-    def tokenize(self, word: str) -> list[str]:
-        return self.tokenizer.tokenize(word)
-
-    def concat_singles(self, words: list[str]) -> list[str]:
-        if words is None:
-            return None
-        res = []
-        for i in range(len(words)):
-            if i == len(words) - 1 and len(words[i]) == 1:
-                if res:
-                    res[-1] += words[i]
-                else:
-                    res.append(words[i])
-            elif i > 0 and len(words[i]) == 1 and len(words[i - 1]) == 1:
-                res[-1] += words[i]
-            else:
-                res.append(words[i])
-        return res
-
-    def preprocess(
-        self, words: Union[str, list[str]], tokenize: bool = True
-    ) -> list[str]:
-        if words is None:
-            return None
-        if not isinstance(words, list):
-            words = [words]
-        words = [word.lower() for word in words]
-        if tokenize:
-            words = [token for word in words for token in self.tokenize(word)]
-            words = self.concat_singles(words)
-        return words
-
     def is_in_vocab(self, word: str):
         return word in self.model.wv.key_to_index
+
+    def preprocess(self, words: Union[str, list[str]]) -> list[str]:
+        return self.preprocessor.preprocess(words)
 
     @Pyro5.server.expose
     def wv_func(self, func: str, *args, **kwargs):
@@ -264,17 +228,19 @@ class FasttextModelRunnerArgParser(argparse.ArgumentParser):
 
 
 if __name__ == "__main__":
-    from models.fasttext.test import TEST_KEYWORDS, TEST_PAIRS
-
     parser = FasttextModelRunnerArgParser()
     args = parser.parse_args()
 
-    runner = FasttextModelRunner(
-        model_prefix=args.model_prefix,
-        tokenizer_prefix=args.tokenizer_prefix,
-        restrict_vocab=args.restrict_vocab,
-        verbose=True,
-    )
+    if not args.test_client:
+        preprocessor = FasttextModelPreprocessor(
+            tokenizer_prefix=args.tokenizer_prefix, verbose=True
+        )
+        runner = FasttextModelRunner(
+            model_prefix=args.model_prefix,
+            preprocessor=preprocessor,
+            restrict_vocab=args.restrict_vocab,
+            verbose=True,
+        )
 
     if args.list_models:
         runner.list_models()
@@ -287,7 +253,6 @@ if __name__ == "__main__":
 
         if not args.test_client:
             with Runtimer() as timer:
-                runner.load_tokenizer()
                 runner.load_model()
 
         if args.test:
