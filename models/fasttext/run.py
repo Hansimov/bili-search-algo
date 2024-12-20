@@ -1,4 +1,5 @@
 import argparse
+import importlib
 import numpy as np
 import Pyro5.api
 import Pyro5.core
@@ -134,9 +135,12 @@ class FasttextModelRunner:
         return results
 
     @Pyro5.server.expose
-    def test(self, test_words: list):
+    def test(self):
+        importlib.reload(models.fasttext.test)
+        from models.fasttext.test import TEST_KEYWORDS
+
         logger.note(f"> Testing:")
-        for word in test_words:
+        for word in TEST_KEYWORDS:
             word = self.preprocess(word)
             logger.mesg(f"  * [{logstr.file(word)}]:")
             results = self.most_similar_vocab(positive=word, topn=10)[:6]
@@ -146,9 +150,12 @@ class FasttextModelRunner:
         logger.file(f"* {self.model_prefix}")
 
     @Pyro5.server.expose
-    def test_pair_similarities(self, test_pairs: list):
+    def test_pair_similarities(self):
+        importlib.reload(models.fasttext.test)
+        from models.fasttext.test import TEST_PAIRS
+
         logger.note(f"> Testing (similarity):")
-        for word1, words in test_pairs:
+        for word1, words in TEST_PAIRS:
             word1 = self.preprocess(word1)
             words = [self.preprocess(word) for word in words]
             logger.mesg(f"  * [{logstr.file(word1)}]:")
@@ -157,9 +164,12 @@ class FasttextModelRunner:
                 res_word, res_score = result
                 logger.success(f"    * {res_score:>.4f}: {res_word}")
 
-    def test_func(self, test_words: list):
+    def test_func(self):
+        importlib.reload(models.fasttext.test)
+        from models.fasttext.test import TEST_KEYWORDS
+
         logger.note(f"> Testing (func):")
-        for word in test_words:
+        for word in TEST_KEYWORDS:
             word = self.preprocess(word)
             logger.mesg(f"  * [{logstr.file(word)}]:")
             results = self.wv_func("most_similar", positive=word, topn=10)[:6]
@@ -256,12 +266,12 @@ if __name__ == "__main__":
                 runner.load_model()
 
         if args.test:
-            # runner.test(TEST_KEYWORDS)
-            runner.test_func(TEST_KEYWORDS)
+            # runner.test()
+            runner.test_func()
         elif args.test_client:
             client = FasttextModelRunnerClient(**remote_args)
-            # client.runner.test(TEST_KEYWORDS)
-            client.runner.test_pair_similarities(TEST_PAIRS)
+            # client.runner.test()
+            client.runner.test_pair_similarities()
             # res = client.runner.list_models()
             # logger.success(dict_to_str(res))
         elif args.remote:
