@@ -16,7 +16,7 @@ SECRETS = OSEnver(SECRETS_PATH)
 MONGO_ENVS = SECRETS["mongo"]
 ELASTIC_ENVS = SECRETS["elastic"]
 
-
 FASTTEXT_CKPT_ROOT = REPO_ROOT / "models" / "fasttext" / "checkpoints"
 # SENTENCEPIECE_CKPT_ROOT = REPO_ROOT / "models" / "sentencepiece" / "checkpoints"
 SENTENCEPIECE_CKPT_ROOT = REPO_ROOT
+TOKEN_FREQ_ROOT = REPO_ROOT
