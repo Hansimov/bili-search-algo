@@ -172,13 +172,19 @@ class FasttextModelRunner:
 
         logger.note(f"> Testing (similarity):")
         for word1, words in TEST_PAIRS:
-            word1 = self.preprocess(word1)
-            words = [self.preprocess(word) for word in words]
-            logger.mesg(f"  * [{logstr.file(word1)}]:")
-            results = self.words_similarities(word1, words)
+            pword1 = self.preprocess(word1)
+            pwords = [self.preprocess(word) for word in words]
+            logger.mesg(f"  * [{logstr.file(pword1)}]:")
+            results = self.words_similarities(pword1, pwords)
             for result in results:
-                res_word, res_score = result
-                logger.success(f"    * {res_score:>.4f}: {res_word}")
+                res_row, res_score = result
+                sims = [self.word_similarity(pword1, pword) for pword in res_row]
+                tokens_str_list = [
+                    f"{token}{logstr.mesg(brp(str(round(sim,3))))}"
+                    for token, sim in zip(res_row, sims)
+                ]
+                tokens_str = " ".join(tokens_str_list)
+                logger.success(f"    * {res_score:>.4f}: [{tokens_str}]")
 
     def test_func(self):
         importlib.reload(models.fasttext.test)
@@ -239,7 +245,13 @@ class FasttextModelRunnerArgParser(argparse.ArgumentParser):
         self.add_argument(
             "-k", "--tokenizer-prefix", type=str, default="sp_400k_merged"
         )
+        self.add_argument(
+            "-q", "--token-freq-prefix", type=str, default="video_texts_freq_all"
+        )
+        self.add_argument("-w", "--vector-weighted", action="store_true")
         self.add_argument("-v", "--restrict-vocab", type=int, default=150000)
+        self.add_argument("-minw", "--min-weight", type=float, default=0.001)
+        self.add_argument("-maxw", "--max-weight", type=float, default=1.0)
         self.add_argument("-l", "--list-models", action="store_true")
         self.add_argument("-n", "--nameserver", type=str, default=PYRO_NS)
         self.add_argument("-s", "--host", type=str, default=PYRO_ENVS["host"])
@@ -258,13 +270,24 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if not args.test_client:
+        if args.vector_weighted:
+            frequenizer = FasttextModelFrequenizer(
+                token_freq_prefix=args.token_freq_prefix,
+                min_weight=args.min_weight,
+                max_weight=args.max_weight,
+                verbose=True,
+            )
+        else:
+            frequenizer = None
         preprocessor = FasttextModelPreprocessor(
             tokenizer_prefix=args.tokenizer_prefix, verbose=True
         )
         runner = FasttextModelRunner(
             model_prefix=args.model_prefix,
+            frequnizer=frequenizer,
             preprocessor=preprocessor,
             restrict_vocab=args.restrict_vocab,
+            vector_weighted=args.vector_weighted,
             verbose=True,
         )
 
@@ -306,6 +329,7 @@ if __name__ == "__main__":
 
     # Run remote server:
     # python -m models.fasttext.run -r -m fasttext_tid_all_mv_30w -v 150000
+    # python -m models.fasttext.run -r -m fasttext_tid_all_mv_30w -v 150000 -w
 
     # Test remote client:
     # python -m models.fasttext.run -tc
