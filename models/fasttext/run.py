@@ -9,12 +9,13 @@ import sys
 from gensim.models import FastText, KeyedVectors
 from pathlib import Path
 
-from tclogger import logger, logstr, dict_to_str, brk, Runtimer
+from tclogger import logger, logstr, dict_to_str, brk, brp, Runtimer
 from typing import Union
 
 import models.fasttext.test
 from configs.envs import PYRO_ENVS, FASTTEXT_CKPT_ROOT
 from models.fasttext.preprocess import FasttextModelPreprocessor
+from models.fasttext.preprocess import FasttextModelFrequenizer
 
 
 PYRO_NS = "fasttext_model_runner"
@@ -25,13 +26,17 @@ class FasttextModelRunner:
     def __init__(
         self,
         model_prefix: Union[str, Path] = "fasttext",
+        frequnizer: FasttextModelFrequenizer = None,
         preprocessor: FasttextModelPreprocessor = None,
         restrict_vocab: int = 150000,
+        vector_weighted: bool = False,
         verbose: bool = False,
     ):
         self.model_prefix = model_prefix
+        self.frequnizer = frequnizer
         self.preprocessor = preprocessor or FasttextModelPreprocessor()
         self.restrict_vocab = restrict_vocab
+        self.vector_weighted = vector_weighted
         self.verbose = verbose
 
     @Pyro5.server.expose
@@ -67,6 +72,7 @@ class FasttextModelRunner:
             "window": self.model.window,
             "wv.min_n": self.model.wv.min_n,
             "wv.max_n": self.model.wv.max_n,
+            "vector_weighted": self.vector_weighted,
         }
         if self.verbose:
             logger.file(dict_to_str(model_info))
@@ -86,21 +92,31 @@ class FasttextModelRunner:
         return getattr(self.model.wv, func)(*args, **kwargs)
 
     @Pyro5.server.expose
-    def calc_vector(self, word: Union[str, list[str]]):
+    def calc_vector(
+        self, word: Union[str, list[str]], use_weights: bool = None
+    ) -> np.ndarray:
+        pwords = self.preprocess(word)
+        if use_weights is None:
+            use_weights = self.vector_weighted
+        if use_weights and self.frequnizer:
+            weights = self.frequnizer.calc_weights_of_tokens(pwords)
+        else:
+            weights = None
         return self.model.wv.get_mean_vector(
-            self.preprocess(word), pre_normalize=True, post_normalize=False
+            pwords, weights=weights, pre_normalize=True, post_normalize=False
         )
 
     @Pyro5.server.expose
     def vector_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
-        return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+        sim = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+        return sim**2
 
     @Pyro5.server.expose
     def word_similarity(
         self, word1: Union[str, list[str]], word2: Union[str, list[str]]
     ) -> float:
         vec1 = self.calc_vector(word1)
-        vec2 = self.calc_vector(word2)
+        vec2 = self.calc_vector(word2, use_weights=False)
         return self.vector_similarity(vec1, vec2)
 
     @Pyro5.server.expose
@@ -109,13 +125,13 @@ class FasttextModelRunner:
         word1: Union[str, list[str]],
         words: Union[list[str], list[list[str]]],
         sort: bool = True,
-    ) -> list[tuple[str, float]]:
+    ) -> list[tuple[list[str], float]]:
         vec1 = self.calc_vector(word1)
-        vecs = [self.calc_vector(word) for word in words]
-        sims = [self.vector_similarity(vec1, vec) for vec in vecs]
+        vecs = [self.calc_vector(row, use_weights=False) for row in words]
+        scores = [self.vector_similarity(vec1, vec) for vec in vecs]
+        res = [(row, score) for row, score in zip(words, scores)]
         if sort:
-            sims = sorted(zip(words, sims), key=lambda x: x[1], reverse=True)
-        res = [(word, sim) for word, sim in sims]
+            res.sort(key=lambda x: x[1], reverse=True)
         return res
 
     @Pyro5.server.expose
