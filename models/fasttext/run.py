@@ -26,14 +26,14 @@ class FasttextModelRunner:
     def __init__(
         self,
         model_prefix: Union[str, Path] = "fasttext",
-        frequnizer: FasttextModelFrequenizer = None,
+        frequenizer: FasttextModelFrequenizer = None,
         preprocessor: FasttextModelPreprocessor = None,
         restrict_vocab: int = 150000,
         vector_weighted: bool = False,
         verbose: bool = False,
     ):
         self.model_prefix = model_prefix
-        self.frequnizer = frequnizer
+        self.frequenizer = frequenizer
         self.preprocessor = preprocessor or FasttextModelPreprocessor()
         self.restrict_vocab = restrict_vocab
         self.vector_weighted = vector_weighted
@@ -93,18 +93,31 @@ class FasttextModelRunner:
 
     @Pyro5.server.expose
     def calc_vector(
-        self, word: Union[str, list[str]], use_weights: bool = None
+        self,
+        word: Union[str, list[str]],
+        ignore_duplicates: bool = True,
+        use_weights: bool = None,
     ) -> np.ndarray:
         pwords = self.preprocess(word)
+        if ignore_duplicates:
+            pwords = list(set(pwords))
         if use_weights is None:
             use_weights = self.vector_weighted
-        if use_weights and self.frequnizer:
-            weights = self.frequnizer.calc_weights_of_tokens(pwords)
+        if use_weights and self.frequenizer:
+            weights = self.frequenizer.calc_weights_of_tokens(pwords)
         else:
             weights = None
         return self.model.wv.get_mean_vector(
             pwords, weights=weights, pre_normalize=True, post_normalize=False
         )
+
+    @Pyro5.server.expose
+    def calc_query_vector(self, word: Union[str, list[str]]) -> np.ndarray:
+        return self.calc_vector(word, use_weights=True)
+
+    @Pyro5.server.expose
+    def calc_sample_vector(self, word: Union[str, list[str]]) -> np.ndarray:
+        return self.calc_vector(word, use_weights=False)
 
     @Pyro5.server.expose
     def vector_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
@@ -115,8 +128,8 @@ class FasttextModelRunner:
     def word_similarity(
         self, word1: Union[str, list[str]], word2: Union[str, list[str]]
     ) -> float:
-        vec1 = self.calc_vector(word1)
-        vec2 = self.calc_vector(word2, use_weights=False)
+        vec1 = self.calc_query_vector(word1)
+        vec2 = self.calc_sample_vector(word2)
         return self.vector_similarity(vec1, vec2)
 
     @Pyro5.server.expose
@@ -126,8 +139,8 @@ class FasttextModelRunner:
         words: Union[list[str], list[list[str]]],
         sort: bool = True,
     ) -> list[tuple[list[str], float]]:
-        vec1 = self.calc_vector(word1)
-        vecs = [self.calc_vector(row, use_weights=False) for row in words]
+        vec1 = self.calc_query_vector(word1)
+        vecs = [self.calc_sample_vector(row) for row in words]
         scores = [self.vector_similarity(vec1, vec) for vec in vecs]
         res = [(row, score) for row, score in zip(words, scores)]
         if sort:
@@ -170,18 +183,53 @@ class FasttextModelRunner:
         importlib.reload(models.fasttext.test)
         from models.fasttext.test import TEST_PAIRS
 
+        def sim2str(num: float, round_digits: int = 2, br: bool = True) -> str:
+            num_str = f"{num:.{round_digits}f}"
+            if br:
+                num_str = brp(num_str)
+            return logstr.mesg(num_str)
+
+        def weight2str(num: float, round_digits: int = 2, br: bool = True) -> str:
+            num_str = f"{num:.{round_digits}f}"
+            if br:
+                num_str = brk(num_str)
+            return logstr.file(num_str)
+
+        def simweight2str(
+            sim: float, weight: float, round_digits: int = 1, br: bool = True
+        ) -> str:
+            weight_str = weight2str(weight, round_digits, br=False)
+            sim_str = sim2str(sim, round_digits, br=False)
+            num_str = f"{weight_str}*{sim_str}"
+            if br:
+                num_str = brp(num_str)
+            return logstr.mesg(num_str)
+
         logger.note(f"> Testing (similarity):")
         for word1, words in TEST_PAIRS:
             pword1 = self.preprocess(word1)
+            if self.frequenizer:
+                pword1_weights = self.frequenizer.calc_weights_of_tokens(pword1)
+            else:
+                pword1_weights = [1.0] * len(pword1)
+            pword1_str_list = [
+                f"{token}{weight2str(weight)}"
+                for token, weight in zip(pword1, pword1_weights)
+            ]
+            pword1_str = " ".join(pword1_str_list)
+            logger.note(f"  * [{pword1_str}]:")
             pwords = [self.preprocess(word) for word in words]
-            logger.mesg(f"  * [{logstr.file(pword1)}]:")
             results = self.words_similarities(pword1, pwords)
             for result in results:
                 res_row, res_score = result
                 sims = [self.word_similarity(pword1, pword) for pword in res_row]
+                if self.frequenizer:
+                    token_weights = self.frequenizer.calc_weights_of_tokens(res_row)
+                else:
+                    token_weights = [1.0] * len(res_row)
                 tokens_str_list = [
-                    f"{token}{logstr.mesg(brp(str(round(sim,3))))}"
-                    for token, sim in zip(res_row, sims)
+                    f"{token}{simweight2str(sim, weight)}"
+                    for token, sim, weight in zip(res_row, sims, token_weights)
                 ]
                 tokens_str = " ".join(tokens_str_list)
                 logger.success(f"    * {res_score:>.4f}: [{tokens_str}]")
@@ -284,7 +332,7 @@ if __name__ == "__main__":
         )
         runner = FasttextModelRunner(
             model_prefix=args.model_prefix,
-            frequnizer=frequenizer,
+            frequenizer=frequenizer,
             preprocessor=preprocessor,
             restrict_vocab=args.restrict_vocab,
             vector_weighted=args.vector_weighted,

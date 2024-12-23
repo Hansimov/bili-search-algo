@@ -415,3 +415,4 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_tid_all_mv_60w -ep 1 -dn "video_texts_tid_all" -mv 600000 -bs 20000
     # python -m models.fasttext.train -m fasttext_tid_all_mv_60w_vs_128 -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 600000 -vs 128
     # python -m models.fasttext.train -m fasttext_tid_all_mv_30w -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 300000
+    # python -m models.fasttext.train -m fasttext_tid_all_mv_30w_vs_384 -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 300000 -vs 384
