@@ -1,8 +1,9 @@
+import math
 import pandas as pd
 
 from pathlib import Path
 from tclogger import logger, logstr, brk, dict_to_str, Runtimer
-from typing import Union
+from typing import Union, Literal
 
 from configs.envs import SENTENCEPIECE_CKPT_ROOT, TOKEN_FREQ_ROOT
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
@@ -25,6 +26,7 @@ class FasttextModelFrequenizer:
         self.max_weight = max_weight
         self.verbose = verbose
         self.load_token_freq()
+        self.init_tf_min_max()
 
     def load_token_freq(self):
         self.token_freq_path = TOKEN_FREQ_ROOT / f"{self.token_freq_prefix}.csv"
@@ -36,6 +38,8 @@ class FasttextModelFrequenizer:
             logger.mesg(f"  * min_weight: {self.min_weight}")
             logger.mesg(f"  * max_weight: {self.max_weight}")
         self.tf_df = pd.read_csv(self.token_freq_path)
+
+    def init_tf_min_max(self):
         if self.tf_max_rows:
             self.tf_df = self.tf_df.head(self.tf_max_rows)
         if self.tf_min_freq:
@@ -51,6 +55,11 @@ class FasttextModelFrequenizer:
         self.tf_df_max_freq = self.tf_df["doc_freq"].max()
         self.tf_df_qmin_freq = self.tf_df_quantiles[0]
         self.tf_df_qmax_freq = self.tf_df_quantiles[self.quantiles[-2]]
+        self.tf_df_min_log_freq = self.calc_log_of_freq(self.tf_df_min_freq)
+        self.tf_df_max_log_freq = self.calc_log_of_freq(self.tf_df_max_freq)
+        self.token_doc_freq_dict = dict(
+            zip(self.tf_df["token"], self.tf_df["doc_freq"])
+        )
         if self.verbose:
             logger.mesg(f"  * tf_df_min_freq: {self.tf_df_min_freq}")
             logger.mesg(f"  * tf_df_max_freq: {self.tf_df_max_freq}")
@@ -58,11 +67,11 @@ class FasttextModelFrequenizer:
             logger.mesg(f"  * tf_df_qmax_freq: {self.tf_df_qmax_freq}")
             # logger.mesg(f"  * tf_df_quantiles:")
             # logger.file(self.tf_df_quantiles, indent=4)
+            logger.mesg(f"  * tf_df_min_log_freq: {self.tf_df_min_log_freq}")
+            logger.mesg(f"  * tf_df_max_log_freq: {self.tf_df_max_log_freq}")
 
     def get_token_freq(self, word: str) -> int:
-        if word in self.tf_df["token"].values:
-            return self.tf_df[self.tf_df["token"] == word]["doc_freq"].values[0]
-        return None
+        return self.token_doc_freq_dict.get(word, None)
 
     def get_tokens_freqs(self, words: list[str]) -> dict[str, int]:
         return [self.get_token_freq(word) for word in words]
@@ -82,19 +91,33 @@ class FasttextModelFrequenizer:
             quantile = self.quantiles[i - 1]
         return quantile
 
-    def calc_weight_of_ratio(self, ratio: float) -> float:
-        weight = self.min_weight + (self.max_weight - self.min_weight) * (1 - ratio)
+    def calc_log_of_freq(self, freq: int) -> float:
+        return math.log(freq + 10, 10)
+
+    def calc_log_ratio_of_freq(self, freq: int) -> float:
+        return (self.calc_log_of_freq(freq) - self.tf_df_min_log_freq) / (
+            self.tf_df_max_log_freq - self.tf_df_min_log_freq
+        )
+
+    def calc_weight_of_score(self, score: float) -> float:
+        weight = self.min_weight + (self.max_weight - self.min_weight) * (1 - score)
         return weight
 
-    def calc_weight_of_freq(self, freq: int) -> float:
+    def calc_weight_of_freq(
+        self, freq: int, score_func: Literal["ratio", "quantile", "log"] = "log"
+    ) -> float:
         if freq <= self.tf_df_qmin_freq:
             weight = self.max_weight
         elif freq >= self.tf_df_qmax_freq:
             weight = self.min_weight
         else:
-            # ratio = self.calc_ratio_of_freq(freq)
-            ratio = self.calc_quantile_of_freq(freq)
-            weight = self.calc_weight_of_ratio(ratio)
+            if score_func == "ratio":
+                score = self.calc_ratio_of_freq(freq)
+            elif score_func == "quantile":
+                score = self.calc_quantile_of_freq(freq)
+            else:
+                score = self.calc_log_ratio_of_freq(freq)
+            weight = self.calc_weight_of_score(score)
         return weight
 
     def calc_weight_of_token(self, word: str) -> float:
@@ -147,12 +170,7 @@ class FasttextModelPreprocessor:
             word_len = len(word)
             sep_index = (start, start + word_len)
             start += word_len
-            if i == len(words) - 1 and word_len == 1:
-                if res and sep_index not in sep_indexes:
-                    res[-1] += word
-                else:
-                    res.append(word)
-            elif (
+            if (
                 i > 0
                 and word_len == 1
                 and len(words[i - 1]) == 1
