@@ -10,7 +10,7 @@ from gensim.models import FastText, KeyedVectors
 from pathlib import Path
 
 from tclogger import logger, logstr, dict_to_str, brk, brp, Runtimer
-from typing import Union
+from typing import Union, Literal
 
 import models.fasttext.test
 from configs.envs import PYRO_ENVS, FASTTEXT_CKPT_ROOT
@@ -92,32 +92,43 @@ class FasttextModelRunner:
         return getattr(self.model.wv, func)(*args, **kwargs)
 
     @Pyro5.server.expose
+    def max_pool_vectors(self, vectors: list[np.ndarray]) -> np.ndarray:
+        pooled_vector = np.max(vectors, axis=0)
+        return pooled_vector / np.linalg.norm(pooled_vector)
+
+    @Pyro5.server.expose
     def calc_vector(
         self,
         word: Union[str, list[str]],
         ignore_duplicates: bool = True,
-        use_weights: bool = None,
+        weight_func: Literal["max", "mean", "freq"] = "max",
     ) -> np.ndarray:
         pwords = self.preprocess(word)
         if ignore_duplicates:
             pwords = list(set(pwords))
-        if use_weights is None:
-            use_weights = self.vector_weighted
-        if use_weights and self.frequenizer:
-            weights = self.frequenizer.calc_weights_of_tokens(pwords)
+        if weight_func == "max":
+            pword_vectors = [
+                self.model.wv.get_vector(pword, norm=True) for pword in pwords
+            ]
+            return self.max_pool_vectors(pword_vectors)
+        elif weight_func in ["freq", "mean"]:
+            if weight_func == "freq" and self.frequenizer:
+                weights = self.frequenizer.calc_weights_of_tokens(pwords)
+            else:
+                weights = None
+            return self.model.wv.get_mean_vector(
+                pwords, weights=weights, pre_normalize=True, post_normalize=False
+            )
         else:
-            weights = None
-        return self.model.wv.get_mean_vector(
-            pwords, weights=weights, pre_normalize=True, post_normalize=False
-        )
+            raise ValueError(f"× Invalid weight_func: {weight_func}")
 
     @Pyro5.server.expose
     def calc_query_vector(self, word: Union[str, list[str]]) -> np.ndarray:
-        return self.calc_vector(word, use_weights=True)
+        return self.calc_vector(word, weight_func="freq")
 
     @Pyro5.server.expose
     def calc_sample_vector(self, word: Union[str, list[str]]) -> np.ndarray:
-        return self.calc_vector(word, use_weights=False)
+        return self.calc_vector(word, weight_func="mean")
 
     @Pyro5.server.expose
     def vector_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
@@ -327,9 +338,12 @@ if __name__ == "__main__":
             )
         else:
             frequenizer = None
-        preprocessor = FasttextModelPreprocessor(
-            tokenizer_prefix=args.tokenizer_prefix, verbose=True
-        )
+        if not args.list_models:
+            preprocessor = FasttextModelPreprocessor(
+                tokenizer_prefix=args.tokenizer_prefix, verbose=True
+            )
+        else:
+            preprocessor = None
         runner = FasttextModelRunner(
             model_prefix=args.model_prefix,
             frequenizer=frequenizer,
