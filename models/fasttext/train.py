@@ -1,4 +1,5 @@
 import argparse
+import json
 import pandas as pd
 import sys
 
@@ -18,10 +19,13 @@ from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenize
 
 class FasttextModelVocabLoader:
     def __init__(
-        self, vocab_path: Union[str, Path], max_count: int = None, verbose: bool = False
+        self,
+        vocab_path: Union[str, Path],
+        max_vocab_count: int = None,
+        verbose: bool = False,
     ):
         self.vocab_path = Path(vocab_path)
-        self.max_count = max_count
+        self.max_vocab_count = max_vocab_count
         self.verbose = verbose
         self.vocab_dict = {}
 
@@ -31,15 +35,16 @@ class FasttextModelVocabLoader:
             logger.file(f"  * {self.vocab_path}")
         df = pd.read_csv(self.vocab_path)
         # df = df.sort_values(by="doc_freq", ascending=False)
-        if self.max_count:
-            df = df.head(self.max_count)
+        if self.max_vocab_count:
+            df = df.head(self.max_vocab_count)
         df = df.sort_values(by="term_freq", ascending=False)
         self.vocab_dict = dict(zip(df["token"], df["term_freq"]))
         if self.verbose:
-            tokens_count_str = brk(logstr.file(df.shape[0]))
-            logger.mesg(f"  * tokens count: {tokens_count_str}")
-            min_term_freq_str = brk(logstr.file(df.tail(1)["term_freq"].values[0]))
-            logger.mesg(f"  * min term_freq: {min_term_freq_str}")
+            vocab_info = {
+                "vocab_size": df.shape[0],
+                "min_term_freq": df.tail(1)["term_freq"].values[0],
+            }
+            logger.mesg(dict_to_str(vocab_info), indent=2)
         return self.vocab_dict
 
 
@@ -76,6 +81,32 @@ class FasttextModelParquetDataLoader(ParquetRowsDataLoader):
             self.sample_bar.reset()
         self.__epoch_end__()
 
+    def get_count_from_local(self):
+        count_file = self.parquet_reader.data_root / (
+            self.parquet_reader.dataset_name + ".count.json"
+        )
+        if count_file.exists():
+            with count_file.open("r") as f:
+                count_dict = json.load(f)
+            return count_dict["total_words"], count_dict["corpus_count"]
+        else:
+            return None, None
+
+    def count(self) -> tuple[int, int]:
+        logger.note("> Counting vocab:")
+        total_words, corpus_count = self.get_count_from_local()
+        if not total_words or not corpus_count:
+            total_words, corpus_count = 0, 0
+            for tokens in self:
+                total_words += len(tokens)
+                corpus_count += 1
+        count_info = {
+            "total_words": total_words,
+            "corpus_count": corpus_count,
+        }
+        logger.mesg(dict_to_str(count_info), indent=2)
+        return total_words, corpus_count
+
 
 class FasttextModelTrainer:
     def __init__(
@@ -97,14 +128,14 @@ class FasttextModelTrainer:
         skip_trained: bool = True,
         use_local_model: bool = True,
         use_kv: bool = False,
-        vocab_dict: dict[str, int] = None,
+        vocab_loader: FasttextModelVocabLoader = None,
     ):
         self.model_prefix = model_prefix
         self.keep_exist_model = keep_exist_model
         self.skip_trained = skip_trained
         self.use_local_model = use_local_model
         self.use_kv = use_kv
-        self.vocab_dict = vocab_dict
+        self.vocab_loader = vocab_loader
 
         self.model_path = (
             Path(__file__).parent / "checkpoints" / f"{model_prefix}.model"
@@ -159,15 +190,21 @@ class FasttextModelTrainer:
             logger.success(f"  ✓ new model created: {model_prefix_str}")
             logger.mesg(dict_to_str(self.train_params), indent=4)
 
-    def init_data_loader(self, data_loader: ParquetRowsDataLoader):
+    def init_data_loader(
+        self,
+        data_loader: Union[FasttextModelDataLoader, FasttextModelParquetDataLoader],
+    ):
         self.data_loader = data_loader
 
     def build_vocab(self):
         logger.note("> Building vocab:")
         if self.is_model_trained and self.skip_trained:
             logger.file("  * model already trained, skip build_vocab()")
-        elif self.vocab_dict:
-            self.model.build_vocab_from_freq(self.vocab_dict)
+        elif self.vocab_loader:
+            vocab_dict = self.vocab_loader.load()
+            total_words, corpus_count = self.data_loader.count()
+            self.model.corpus_total_words = total_words
+            self.model.build_vocab_from_freq(vocab_dict, corpus_count=corpus_count)
             logger.success("  ✓ build vocab from provided freq dict")
         else:
             self.model.build_vocab(corpus_iterable=self.data_loader)
@@ -310,11 +347,10 @@ if __name__ == "__main__":
 
     if args.vocab_file:
         vocab_loader = FasttextModelVocabLoader(
-            args.vocab_file, args.vocab_max_count, verbose=True
+            args.vocab_file, max_vocab_count=args.vocab_max_count, verbose=True
         )
-        vocab_dict = vocab_loader.load()
     else:
-        vocab_dict = None
+        vocab_loader = None
 
     trainer = FasttextModelTrainer(
         model_prefix=args.model_prefix,
@@ -334,7 +370,7 @@ if __name__ == "__main__":
         skip_trained=args.skip_trained,
         use_local_model=args.use_local_model,
         use_kv=args.use_kv,
-        vocab_dict=vocab_dict,
+        vocab_loader=vocab_loader,
     )
 
     if not args.test_only:
@@ -416,3 +452,5 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_tid_all_mv_60w_vs_128 -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 600000 -vs 128
     # python -m models.fasttext.train -m fasttext_tid_all_mv_30w -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 300000
     # python -m models.fasttext.train -m fasttext_tid_all_mv_30w_vs_384 -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 300000 -vs 384
+
+    # python -m models.fasttext.train -m fasttext_tid_all_vf_mv_30w_vs_384 -ep 1 -dn "video_texts_tid_all" -vf "video_texts_freq_all.csv" -bs 20000 -mv 300000 -vm 1000000
