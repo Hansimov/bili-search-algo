@@ -110,6 +110,7 @@ class VideoTextsTokenFreqCounter:
         output_path: Union[str, Path],
         percent_threshold: float = 0.85,
         count_threshold: int = 20,
+        no_threshold: bool = False,
     ):
         percentiles = sorted(self.percentiles)
         for i in range(len(percentiles) - 1):
@@ -126,6 +127,7 @@ class VideoTextsTokenFreqCounter:
         logger.mesg(f"  * percent_threshold  : {logstr.file(brk(percent_threshold))}")
         logger.mesg(f"  * doc_freq_threshold : {logstr.file(brk(doc_freq_threshold))}")
         logger.mesg(f"  * count_threshold    : {logstr.file(brk(count_threshold))}")
+        logger.mesg(f"  * no_threshold       : {logstr.file(brk(no_threshold))}")
 
         df = pd.DataFrame()
         freq_list = [
@@ -135,12 +137,13 @@ class VideoTextsTokenFreqCounter:
                 "term_freq": self.term_freqs[token],
             }
             for token in self.term_freqs
-            if self.doc_freqs[token] >= max_threshold
+            if (no_threshold) or (self.doc_freqs[token] >= max_threshold)
         ]
         df = pd.DataFrame(freq_list)
         df = df.sort_values(by=["doc_freq", "term_freq"], ascending=False)
         df.to_csv(output_path, index=False)
         logger.file(f"  * {str(output_path.resolve())}")
+        logger.mesg(f"  * vocab_size: {logstr.file(brk(len(df)))}")
 
         percentile_info_path = Path(output_path).with_suffix(".jsonv")
         with open(percentile_info_path, "w") as wf:
@@ -151,14 +154,18 @@ class VideoTextsTokenFreqCounter:
 class FreqCounterArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument("-o", "--output-prefix", type=str, default="video_texts_freq")
-        self.add_argument("-mcb", "--max-count-batch", type=int, default=None)
         self.add_argument(
             "-ds",
             "--data-source",
             type=str,
             choices=["mongo", "parquet"],
             default="parquet",
+        )
+        self.add_argument("-o", "--output-prefix", type=str, default="video_texts_freq")
+        self.add_argument("-mcb", "--max-count-batch", type=int, default=None)
+        self.add_argument("-nt", "--no-threshold", action="store_true")
+        self.add_argument(
+            "-tid", "--tid", type=int, default=None, help="tid filter for mongo"
         )
 
     def parse_args(self):
@@ -173,8 +180,10 @@ if __name__ == "__main__":
 
     logger.note("> Initiating data loader ...")
     if args.data_source == "mongo":
-        # mongo_filter = {"tid": 231}
-        mongo_filter = {}
+        if args.tid:
+            mongo_filter = {"tid": args.tid}
+        else:
+            mongo_filter = {}
         data_params = {
             "dbname": args.dbname,
             "collect_name": args.collect_name,
@@ -240,8 +249,10 @@ if __name__ == "__main__":
 
     logger.note("> Dumping ...")
     csv_path = Path(f"{args.output_prefix}.csv")
-    counter.dump(csv_path)
+    counter.dump(csv_path, no_threshold=args.no_threshold)
 
     # python -m datasets.videos.freq
     # python -m datasets.videos.freq -o video_texts_freq_all -ec -mcb 1
     # python -m datasets.videos.freq -o video_texts_freq_all -dn "video_texts_tid_all"
+    # python -m datasets.videos.freq -o video_texts_freq_tid_17 -dn "video_texts_tid_17" -tid 17
+    # python -m datasets.videos.freq -o video_texts_freq_tid_17_nt -dn "video_texts_tid_17" -tid 17 -nt
