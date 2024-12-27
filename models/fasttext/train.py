@@ -4,6 +4,7 @@ import pandas as pd
 import sys
 
 from gensim.models import FastText, KeyedVectors
+from gensim.models.doc2vec import Doc2Vec, TaggedDocument
 from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk, Runtimer
 from typing import Union
@@ -69,6 +70,7 @@ class FasttextModelParquetDataLoader(ParquetRowsDataLoader):
         self.__epoch_start__()
         self.batch_bar.reset()
         self.batch_bar.update(flush=True)
+        sample_idx = 0
         for batch_idx, tokens_batch in enumerate(self.batch_generator):
             self.batch_bar.update(increment=1, flush=True)
             if self.max_batch is not None and batch_idx >= self.max_batch:
@@ -77,7 +79,11 @@ class FasttextModelParquetDataLoader(ParquetRowsDataLoader):
             self.sample_bar.update(flush=True)
             for tokens in tokens_batch:
                 self.sample_bar.update(1)
-                yield tokens
+                sample_idx += 1
+                if hasattr(self, "model_class") and self.model_class == "doc2vec":
+                    yield TaggedDocument(tokens, [sample_idx])
+                else:
+                    yield tokens
             self.sample_bar.reset()
         self.__epoch_end__()
 
@@ -158,16 +164,20 @@ class FasttextModelTrainer:
             "window": window,
             "workers": workers,
         }
+        self.prepare_train()
         self.init_model()
+
+    def prepare_train(self):
+        self.model_class = FastText
 
     def load_model(self):
         if self.use_kv:
             if not self.kv_path.exists():
-                self.model = FastText.load(str(self.model_path))
+                self.model = self.model_class.load(str(self.model_path))
                 self.model.wv.save(str(self.kv_path))
             self.wv = KeyedVectors.load(str(self.kv_path))
         else:
-            self.model = FastText.load(str(self.model_path))
+            self.model = self.model_class.load(str(self.model_path))
 
     def init_model(self):
         logger.note("> Initializing model:")
@@ -184,7 +194,7 @@ class FasttextModelTrainer:
             self.load_model()
             self.is_model_trained = True
         else:
-            self.model = FastText(**self.train_params)
+            self.model = self.model_class(**self.train_params)
             self.is_model_trained = False
             model_prefix_str = logstr.mesg(brk(self.model_prefix))
             logger.success(f"  ✓ new model created: {model_prefix_str}")
@@ -264,11 +274,9 @@ class FasttextModelTrainer:
                 logger.success(f"  * [{self.model_path}]")
 
     def test(
-        self,
-        test_words: list[str] = None,
-        tokenizer: SentenceFullTokenizer = None,
-        restrict_vocab: int = 150000,
+        self, tokenizer: SentenceFullTokenizer = None, restrict_vocab: int = 150000
     ):
+        test_words = TEST_KEYWORDS
         restrict_vocab_str = logstr.mesg(brk(restrict_vocab))
         logger.note(f"> Testing model: {restrict_vocab_str}")
         if not test_words:
@@ -290,6 +298,63 @@ class FasttextModelTrainer:
                 for result in results:
                     res_word, res_score = result
                     logger.success(f"    * {res_score:>.4f}: {res_word}")
+
+
+class Doc2VecModelTrainer(FasttextModelTrainer):
+    def __init__(
+        self,
+        dm: Union[0, 1] = 1,
+        dm_mean: Union[0, 1] = None,
+        dm_concat: Union[0, 1] = 0,
+        dm_tag_count: int = 1,
+        dbow_words: Union[0, 1] = 0,
+        *args,
+        **kwargs,
+    ):
+        self.doc2vec_params = {
+            "dm": dm,
+            "dm_mean": dm_mean,
+            "dm_concat": dm_concat,
+            "dm_tag_count": dm_tag_count,
+            "dbow_words": dbow_words,
+        }
+        super().__init__(*args, **kwargs)
+
+    def prepare_train(self):
+        self.model_class = Doc2Vec
+        self.train_params.update(self.doc2vec_params)
+        for param in ["sg", "min_n", "max_n"]:
+            self.train_params.pop(param, None)
+
+    def test(self, tokenizer: SentenceFullTokenizer):
+        def vector_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
+            return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+
+        logger.note(f"> Testing doc2vec model:")
+        for pair in TEST_PAIRS:
+            query = pair[0]
+            samples = pair[1]
+            if isinstance(query, list):
+                query_tokens = query
+            else:
+                query_tokens = tokenizer.tokenize(query)
+            query_vector = self.model.infer_vector(query_tokens)
+            sample_vectors = []
+            sample_tokens_list = []
+            for sample in samples:
+                sample_tokens = tokenizer.tokenize(sample)
+                sample_vector = self.model.infer_vector(sample_tokens)
+                sample_vectors.append(sample_vector)
+                sample_tokens_list.append(sample_tokens)
+            scores = [
+                round(vector_similarity(query_vector, sample_vector), 4)
+                for sample_vector in sample_vectors
+            ]
+            sample_scores = list(zip(samples, sample_tokens_list, scores))
+            sample_scores.sort(key=lambda x: x[-1], reverse=True)
+            logger.note(f"  * [{logstr.file(query)}]: ")
+            for sample, sample_tokens, score in sample_scores:
+                logger.success(f"    * {score:>.4f}: [{logstr.file(sample_tokens)}]")
 
 
 class ModelTrainerArgParser(argparse.ArgumentParser):
