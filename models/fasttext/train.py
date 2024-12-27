@@ -1,4 +1,5 @@
 import argparse
+import numpy as np
 import json
 import pandas as pd
 import sys
@@ -6,13 +7,13 @@ import sys
 from gensim.models import FastText, KeyedVectors
 from gensim.models.doc2vec import Doc2Vec, TaggedDocument
 from pathlib import Path
-from tclogger import logger, logstr, dict_to_str, brk, Runtimer
+from tclogger import Runtimer, logger, logstr, dict_to_str, brk
 from typing import Union
 
 from datasets.videos.data import SentencesDataloader, ParquetRowsDataLoader
 from datasets.videos.parquet import VideoTextsParquetReader
 from datasets.args import DATA_LOADER_ARG_PARSER
-from models.fasttext.test import TEST_KEYWORDS
+from models.fasttext.test import TEST_KEYWORDS, TEST_PAIRS
 
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
@@ -362,13 +363,20 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
         self.add_argument("-m", "--model-prefix", type=str, default="fasttext")
         self.add_argument(
+            "-ms",
+            "--model-class",
+            type=str,
+            choices=["fasttext", "doc2vec"],
+            default="fasttext",
+        )
+        self.add_argument(
             "-ds",
             "--data-source",
             type=str,
             choices=["mongo", "parquet"],
             default="parquet",
         )
-        self.add_argument("-ep", "--epochs", type=int, default=5)
+        self.add_argument("-ep", "--epochs", type=int, default=1)
         self.add_argument("-hs", "--hs", type=int, default=0)
         self.add_argument("-ma", "--min-alpha", type=float, default=0.0001)
         self.add_argument("-mc", "--min-count", type=int, default=20)
@@ -394,11 +402,25 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         return self.args
 
 
+class Doc2VecArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("-dm", "--dm", type=int, default=1)
+        self.add_argument("-dmm", "--dm-mean", type=int, default=None)
+        self.add_argument("-dmc", "--dm-concat", type=int, default=0)
+        self.add_argument("-dmt", "--dm-tag-count", type=int, default=1)
+        self.add_argument("-dbw", "--dbow-words", type=int, default=0)
+
+    def parse_args(self):
+        self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
+        return self.args
+
+
 if __name__ == "__main__":
     timer = Runtimer()
     timer.__enter__()
     arg_parser = DATA_LOADER_ARG_PARSER
-    arg_parser.add_parser_class(ModelTrainerArgParser)
+    arg_parser.add_parser_class(ModelTrainerArgParser, Doc2VecArgParser)
     args = arg_parser.parse_args()
 
     if args.test_only:
@@ -417,26 +439,41 @@ if __name__ == "__main__":
     else:
         vocab_loader = None
 
-    trainer = FasttextModelTrainer(
-        model_prefix=args.model_prefix,
-        epochs=args.epochs,
-        hs=args.hs,
-        min_alpha=args.min_alpha,
-        min_count=args.min_count,
-        min_n=args.min_n,
-        max_n=args.max_n,
-        max_final_vocab=args.max_final_vocab,
-        shrink_windows=args.shrink_windows,
-        sg=args.sg,
-        vector_size=args.vector_size,
-        window=args.window,
-        workers=args.workers,
-        keep_exist_model=args.keep_exist_model,
-        skip_trained=args.skip_trained,
-        use_local_model=args.use_local_model,
-        use_kv=args.use_kv,
-        vocab_loader=vocab_loader,
-    )
+    train_params = {
+        "model_prefix": args.model_prefix,
+        "epochs": args.epochs,
+        "hs": args.hs,
+        "min_alpha": args.min_alpha,
+        "min_count": args.min_count,
+        "min_n": args.min_n,
+        "max_n": args.max_n,
+        "max_final_vocab": args.max_final_vocab,
+        "shrink_windows": args.shrink_windows,
+        "sg": args.sg,
+        "vector_size": args.vector_size,
+        "window": args.window,
+        "workers": args.workers,
+        "keep_exist_model": args.keep_exist_model,
+        "skip_trained": args.skip_trained,
+        "use_local_model": args.use_local_model,
+        "use_kv": args.use_kv,
+        "vocab_loader": vocab_loader,
+    }
+
+    if args.model_class == "fasttext":
+        trainer = FasttextModelTrainer(**train_params)
+    elif args.model_class == "doc2vec":
+        doc2vec_params = {
+            "dm": args.dm,
+            "dm_mean": args.dm_mean,
+            "dm_concat": args.dm_concat,
+            "dm_tag_count": args.dm_tag_count,
+            "dbow_words": args.dbow_words,
+        }
+        train_params.update(doc2vec_params)
+        trainer = Doc2VecModelTrainer(**train_params)
+    else:
+        raise ValueError(f"Unknown model class: {args.model_class}")
 
     if not args.test_only:
         data_source_str = logstr.mesg(brk(args.data_source))
@@ -488,6 +525,7 @@ if __name__ == "__main__":
             data_loader = FasttextModelParquetDataLoader(
                 **data_params, parquet_reader=parquet_reader
             )
+            data_loader.model_class = args.model_class
             logger.mesg(dict_to_str(data_params), indent=2)
         else:
             raise ValueError(f"Unknown data source: {args.data_source}")
@@ -497,7 +535,15 @@ if __name__ == "__main__":
         if args.data_source == "mongo":
             data_loader.tokenizer.terminate()
 
-    trainer.test(TEST_KEYWORDS, tokenizer=None, restrict_vocab=150000)
+    if args.model_class == "fasttext":
+        trainer.test(tokenizer=None, restrict_vocab=150000)
+    elif args.model_class == "doc2vec":
+        tokenizer = SentenceFullTokenizer(
+            Path("sp_400k_merged.model"), drop_non_word=True, drop_whitespace=True
+        )
+        trainer.test(tokenizer=tokenizer)
+    else:
+        raise ValueError(f"Unknown model class: {args.model_class}")
 
     timer.__exit__(None, None, None)
 
@@ -519,3 +565,7 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_tid_all_mv_30w_vs_384 -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 300000 -vs 384
 
     # python -m models.fasttext.train -m fasttext_tid_all_vf_mv_30w_vs_384 -ep 1 -dn "video_texts_tid_all" -vf "video_texts_freq_all.csv" -bs 20000 -mv 300000 -vm 1000000
+
+    # python -m models.fasttext.train -m fasttext_tid_all_vf_mv_30w_vs_384 -ep 1 -dn "video_texts_tid_all" -vf "video_texts_freq_all.csv" -bs 20000 -mv 300000 -vm 1000000
+
+    # python -m models.fasttext.train -ms doc2vec -m doc2vec_tid_17 -t
