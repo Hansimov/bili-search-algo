@@ -1,13 +1,16 @@
 import argparse
+import json
 import os
 import sentencepiece as spm
+import shutil
 import sys
-
 
 from tclogger import logger, logstr, Runtimer, dict_to_str
 from typing import Literal
 
-from datasets.videos.data import SentencesDataloader, DataLoaderArgParser
+from configs.envs import REPO_ROOT, SENTENCEPIECE_CKPT_ROOT
+from datasets.args import DATA_LOADER_ARG_PARSER
+from datasets.videos.data import SentencesDataloader
 from models.sentencepiece.edit import SentencePieceModelVocabEditor
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.test import TEST_SENTENCES
@@ -22,11 +25,11 @@ class SentencePieceModelTrainer:
 
     def __init__(
         self,
+        model_prefix: str = "sentencepiece",
         add_dummy_prefix: bool = False,
         character_coverage: float = 0.999,
         input_sentence_size: int = 500000,
         minloglevel: int = 2,
-        model_prefix="sentencepiece",
         model_type: Literal["unigram", "bpe", "char", "word"] = "unigram",
         num_threads: int = 16,
         split_by_unicode_script: bool = False,
@@ -38,12 +41,12 @@ class SentencePieceModelTrainer:
         overwrite: bool = True,
     ):
         self.train_params = {
+            "model_prefix": model_prefix,
             "add_dummy_prefix": add_dummy_prefix,
             "character_coverage": character_coverage,
             "input_sentence_size": input_sentence_size,
             "minloglevel": minloglevel,
             "model_type": model_type,
-            "model_prefix": model_prefix,
             "num_threads": num_threads,
             "split_by_unicode_script": split_by_unicode_script,
             "split_by_number": split_by_number,
@@ -53,14 +56,32 @@ class SentencePieceModelTrainer:
             "vocab_size": vocab_size,
         }
         self.model_prefix = model_prefix
-        self.model_file = f"{model_prefix}.model"
         self.overwrite = overwrite
+        self.init_paths()
+
+    def init_paths(self):
+        if not SENTENCEPIECE_CKPT_ROOT.exists():
+            SENTENCEPIECE_CKPT_ROOT.mkdir(parents=True, exist_ok=True)
+        self.default_model_path = REPO_ROOT / f"{self.model_prefix}.model"
+        self.default_vocab_path = REPO_ROOT / f"{self.model_prefix}.vocab"
+        self.model_path = SENTENCEPIECE_CKPT_ROOT / f"{self.model_prefix}.model"
+        self.vocab_path = SENTENCEPIECE_CKPT_ROOT / f"{self.model_prefix}.vocab"
+        self.info_path = SENTENCEPIECE_CKPT_ROOT / f"{self.model_prefix}.json"
 
     def init_data_loader(self, data_loader: SentencesDataloader):
         self.data_loader = data_loader
 
+    def dump_train_info(self):
+        with open(self.info_path, "w") as f:
+            json.dump(self.train_params, f, ensure_ascii=False, indent=4)
+
     def delete_existed_model(self):
         model_prefix = str(self.model_prefix)
+        if (not os.path.exists(self.default_model_path)) and (
+            not os.path.exists(self.model_path)
+        ):
+            logger.mesg(f"  * No existed model prefix: [{logstr.file(model_prefix)}]")
+            return
         logger.warn(f"  ! WARNING: You are deleting model:", end=" ")
         logger.note(f"[{model_prefix}]")
         confirmation = input(
@@ -69,25 +90,39 @@ class SentencePieceModelTrainer:
         if confirmation != model_prefix:
             logger.mesg(f"  * Skip delete model file: [{model_prefix}]")
         else:
-            os.remove(f"{model_prefix}.model")
-            os.remove(f"{model_prefix}.vocab")
-            logger.warn(f"  * Model file deleted: [{model_prefix}]")
+            file_paths = [
+                self.default_model_path,
+                self.default_vocab_path,
+                self.model_path,
+                self.vocab_path,
+            ]
+            for file_path in file_paths:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.warn(f"  * DELETED: {file_path}")
+
+    def move_model_files(self):
+        """By default, when training is finished, SentencePiece would save model files in working directory, this func would move them to target directory of checkpoints."""
+        shutil.move(self.default_model_path, self.model_path)
+        shutil.move(self.default_vocab_path, self.vocab_path)
 
     def train(self):
         logger.note("> Training ...")
         logger.mesg(dict_to_str(self.train_params), indent=2)
+        self.dump_train_info()
 
-        if self.overwrite and os.path.exists(self.model_file):
+        if self.overwrite:
             self.delete_existed_model()
 
         spm.SentencePieceTrainer.Train(
             sentence_iterator=iter(self.data_loader),
             **self.train_params,
         )
+        self.move_model_files()
 
     def test(self, test_sentences: list[str], compare_baseline: bool = False):
         logger.note("> Testing ...")
-        tokenizer = SentenceFullTokenizer(self.model_file)
+        tokenizer = SentenceFullTokenizer(self.model_path)
         if compare_baseline:
             hanlp_tokenizer = HanlpTokenizer()
         for sentence in test_sentences:
