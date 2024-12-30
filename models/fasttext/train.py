@@ -123,13 +123,16 @@ class FasttextModelParquetDataLoader(ParquetRowsDataLoader):
         self.__epoch_end__()
 
     def get_count_from_local(self):
-        count_file = self.parquet_reader.data_root / (
+        self.count_json = self.parquet_reader.data_root / (
             self.parquet_reader.dataset_name + ".count.json"
         )
-        if count_file.exists():
-            with count_file.open("r") as f:
+        if self.count_json.exists():
+            with self.count_json.open("r") as f:
                 count_dict = json.load(f)
-            return count_dict["total_words"], count_dict["corpus_count"]
+            return (
+                count_dict.get("total_words", None),
+                count_dict.get("corpus_count", None),
+            )
         else:
             return None, None
 
@@ -145,6 +148,8 @@ class FasttextModelParquetDataLoader(ParquetRowsDataLoader):
             "total_words": total_words,
             "corpus_count": corpus_count,
         }
+        with self.count_json.open("w") as f:
+            json.dump(count_info, f, indent=4)
         logger.mesg(dict_to_str(count_info), indent=2)
         return total_words, corpus_count
 
@@ -241,19 +246,39 @@ class FasttextModelTrainer:
     ):
         self.data_loader = data_loader
 
+    def build_vocab_with_loader(self):
+        vocab_dict = self.vocab_loader.load_vocab_from_pickle()
+        total_words, corpus_count = self.data_loader.count()
+        self.model.raw_vocab = vocab_dict["term_freqs"]
+
+        # total_words, corpus_count = self.model._scan_vocab(
+        #     corpus_iterable=self.data_loader
+        # )
+        # sentence_no = -1
+        # total_words = 0
+        # vocab = defaultdict(int)
+        # for sentence_no, sentence in enumerate(self.data_loader):
+        #     for word in sentence:
+        #         vocab[word] += 1
+        #     total_words += len(sentence)
+        # corpus_count = sentence_no + 1
+        # self.model.raw_vocab = vocab
+
+        self.model.corpus_count = corpus_count
+        self.model.corpus_total_words = total_words
+        self.model.prepare_vocab(update=False, keep_raw_vocab=False, trim_rule=None)
+        self.model.prepare_weights(update=False)
+
     def build_vocab(self):
         logger.note("> Building vocab:")
         if self.is_model_trained and self.skip_trained:
             logger.file("  * model already trained, skip build_vocab()")
         elif self.vocab_loader:
-            vocab_dict = self.vocab_loader.load()
-            total_words, corpus_count = self.data_loader.count()
-            self.model.corpus_total_words = total_words
-            self.model.build_vocab_from_freq(vocab_dict, corpus_count=corpus_count)
-            logger.success("  ✓ build vocab from provided freq dict")
+            self.build_vocab_with_loader()
+            logger.success("  ✓ built vocab with loader")
         else:
             self.model.build_vocab(corpus_iterable=self.data_loader)
-            logger.success(f"  ✓ vocab built")
+            logger.success("  ✓ built vocab")
 
     def refresh_data_loader_status(self):
         self.data_loader.iter_epochs = self.train_params["epochs"]
@@ -601,5 +626,7 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_tid_all_vf_mv_30w_vs_384 -ep 1 -dn "video_texts_tid_all" -vf "video_texts_freq_all.csv" -bs 20000 -mv 300000 -vm 1000000
 
     # python -m models.fasttext.train -m fasttext_tid_all_vf_mv_30w_vs_384 -ep 1 -dn "video_texts_tid_all" -vf "video_texts_freq_all.csv" -bs 20000 -mv 300000 -vm 1000000
+
+    # python -m models.fasttext.train -m fasttext_tid_17_ep_1_vf -ep 1 -dn "video_texts_tid_17" -vf video_texts_freq_tid_17_nt -bs 20000 -mv 300000
 
     # python -m models.fasttext.train -ms doc2vec -m doc2vec_tid_17 -t
