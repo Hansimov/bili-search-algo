@@ -2,9 +2,10 @@ import argparse
 import json
 import numpy as np
 import pandas as pd
+import pickle
 import sys
 
-
+from collections import defaultdict
 from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk
 from typing import Union, Literal
@@ -28,16 +29,24 @@ class VideoTextsTokenFreqCounter:
         self.data_source = data_source
         self.tokenizer = tokenizer
         self.max_count_batch = max_count_batch
-        self.term_freqs: dict[str, int] = {}
-        self.doc_freqs: dict[str, int] = {}
+        self.term_freqs = defaultdict(int)
+        self.doc_freqs = defaultdict(int)
 
     def count_tokens_freq(self, tokens: list[str]):
         recorded_doc_tokens = set()
         for token in tokens:
-            self.term_freqs[token] = self.term_freqs.get(token, 0) + 1
+            self.term_freqs[token] += 1
             if token not in recorded_doc_tokens:
-                self.doc_freqs[token] = self.doc_freqs.get(token, 0) + 1
+                self.doc_freqs[token] += 1
                 recorded_doc_tokens.add(token)
+
+    def sort_freqs(self):
+        self.term_freqs = dict(
+            sorted(self.term_freqs.items(), key=lambda x: x[1], reverse=True)
+        )
+        self.doc_freqs = dict(
+            sorted(self.doc_freqs.items(), key=lambda x: x[1], reverse=True)
+        )
 
     def count(self):
         self.data_loader.__epoch_start__()
@@ -70,6 +79,8 @@ class VideoTextsTokenFreqCounter:
             logger.hint(tokens, indent=2)
         else:
             raise ValueError(f"Unknown data source: {self.data_source}")
+
+        self.sort_freqs()
 
     def calc_percentiles(self) -> dict:
         percentiles = [
@@ -107,7 +118,7 @@ class VideoTextsTokenFreqCounter:
 
     def dump(
         self,
-        output_path: Union[str, Path],
+        output_prefix: str,
         percent_threshold: float = 0.85,
         count_threshold: int = 20,
         no_threshold: bool = False,
@@ -129,6 +140,17 @@ class VideoTextsTokenFreqCounter:
         logger.mesg(f"  * count_threshold    : {logstr.file(brk(count_threshold))}")
         logger.mesg(f"  * no_threshold       : {logstr.file(brk(no_threshold))}")
 
+        # dump freqs info to .pickle
+        freq_pickle_path = Path(output_prefix).with_suffix(".pickle")
+        freq_info = {
+            "doc_freqs": self.doc_freqs,
+            "term_freqs": self.term_freqs,
+        }
+        with open(freq_pickle_path, "wb") as wf:
+            pickle.dump(freq_info, wf)
+        logger.file(f"  * {str(freq_pickle_path.resolve())}")
+
+        # dump freqs info to .csv
         df = pd.DataFrame()
         freq_list = [
             {
@@ -141,11 +163,13 @@ class VideoTextsTokenFreqCounter:
         ]
         df = pd.DataFrame(freq_list)
         df = df.sort_values(by=["doc_freq", "term_freq"], ascending=False)
-        df.to_csv(output_path, index=False)
-        logger.file(f"  * {str(output_path.resolve())}")
+        freq_csv_path = Path(output_prefix).with_suffix(".csv")
+        df.to_csv(freq_csv_path, index=False)
+        logger.file(f"  * {str(freq_csv_path.resolve())}")
         logger.mesg(f"  * vocab_size: {logstr.file(brk(len(df)))}")
 
-        percentile_info_path = Path(output_path).with_suffix(".jsonv")
+        # dump percentiles info to .jsonv
+        percentile_info_path = Path(output_prefix).with_suffix(".jsonv")
         with open(percentile_info_path, "w") as wf:
             json.dump(self.percentile_info_list, wf, indent=4)
         logger.file(f"  * {str(percentile_info_path.resolve())}")
@@ -248,8 +272,7 @@ if __name__ == "__main__":
     logger.success(dict_to_str(percentile_res), indent=2)
 
     logger.note("> Dumping ...")
-    csv_path = Path(f"{args.output_prefix}.csv")
-    counter.dump(csv_path, no_threshold=args.no_threshold)
+    counter.dump(args.output_prefix, no_threshold=args.no_threshold)
 
     # python -m datasets.videos.freq
     # python -m datasets.videos.freq -o video_texts_freq_all -ec -mcb 1
