@@ -138,9 +138,9 @@ class SentencePieceModelTrainer:
 class ModelTrainerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.add_argument("-m", "--model-prefix", type=str, default="sentencepiece")
         self.add_argument("-cc", "--character-coverage", type=float, default=0.999)
         self.add_argument("-is", "--input-sentence-size", type=int, default=500000)
-        self.add_argument("-mp", "--model-prefix", type=str, default="sentencepiece")
         self.add_argument("-mt", "--model-type", type=str, default="unigram")
         self.add_argument("-sf", "--shrinking-factor", type=float, default=0.9)
         self.add_argument("-vs", "--vocab-size", type=int, default=32000)
@@ -155,16 +155,13 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
 
 
 if __name__ == "__main__":
-    data_loader_parser = DataLoaderArgParser(add_help=False)
-    model_trainer_parser = ModelTrainerArgParser(add_help=False)
-    merged_parser = argparse.ArgumentParser(
-        parents=[data_loader_parser, model_trainer_parser]
-    )
-    args, unknown_args = merged_parser.parse_known_args(sys.argv[1:])
+    arg_parser = DATA_LOADER_ARG_PARSER
+    arg_parser.add_parser_class(ModelTrainerArgParser)
+    args = arg_parser.parse_args()
 
     trainer = SentencePieceModelTrainer(
-        character_coverage=args.character_coverage,
         model_prefix=args.model_prefix,
+        character_coverage=args.character_coverage,
         model_type=args.model_type,
         shrinking_factor=args.shrinking_factor,
         vocab_size=args.vocab_size,
@@ -179,7 +176,7 @@ if __name__ == "__main__":
             "max_batch": args.max_batch,
             "batch_size": args.batch_size,
             "estimate_count": args.estimate_count,
-            "max_sentence_len": 2000,
+            "max_sentence_length": 2000,
         }
         data_loader = SentencesDataloader(
             **data_params, show_at_init=False, verbose=True
@@ -189,14 +186,16 @@ if __name__ == "__main__":
         with Runtimer() as timer:
             trainer.train()
     if args.edit_model:
-        editor = SentencePieceModelVocabEditor(trainer.model_file, verbose=True)
+        editor = SentencePieceModelVocabEditor(trainer.model_path, verbose=True)
         editor.edit()
     trainer.test(TEST_SENTENCES, compare_baseline=args.compare_baseline)
 
-    # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -mb 48000 -vs 400000 -cc 0.9995 -sf 0.9 -e
-    # python -m models.sentencepiece.train -mp sp_480m_400k_0.9995_0.9 -t
-    # python -m models.sentencepiece.train -mp sp_users_1kw_10k -cn users -mb 1000 -vs 10000 -cc 1.0 -e
-    # python -m models.sentencepiece.train -mp sp_wiki_1w_400k -db zhwiki -cn pages -bs 1000 -ec -mb 10 -vs 10000 -e
-    # python -m models.sentencepiece.train -mp sp_wiki_all_400k_0.9995 -db zhwiki -cn pages -bs 1000 -vs 400000 -cc 0.9995 -e
-    # python -m models.sentencepiece.train -mp sp_wiki_all_400k_0.9999 -t
-    # python -m models.sentencepiece.train -mp sp_400k_merged -t
+    # python -m models.sentencepiece.train -m sp_480m_400k_0.9995_0.9 -mb 48000 -vs 400000 -cc 0.9995 -sf 0.9 -e
+    # python -m models.sentencepiece.train -m sp_507m_400k_0.9995_0.8 -ec -vs 400000 -cc 0.9995 -sf 0.8 -e
+    # python -m models.sentencepiece.train -m sp_507m_425k_0.9995_0.9 -ec -vs 425000 -cc 0.9995 -sf 0.9 -e
+    # python -m models.sentencepiece.train -m sp_480m_400k_0.9995_0.9 -t
+    # python -m models.sentencepiece.train -m sp_users_1kw_10k -cn users -mb 1000 -vs 10000 -cc 1.0 -e
+    # python -m models.sentencepiece.train -m sp_wiki_1w_400k -db zhwiki -cn pages -bs 1000 -ec -mb 10 -vs 10000 -e
+    # python -m models.sentencepiece.train -m sp_wiki_all_400k_0.9995 -db zhwiki -cn pages -bs 1000 -vs 400000 -cc 0.9995 -e
+    # python -m models.sentencepiece.train -m sp_wiki_all_400k_0.9999 -t
+    # python -m models.sentencepiece.train -m sp_400k_merged -t

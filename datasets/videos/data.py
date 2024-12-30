@@ -297,7 +297,6 @@ class ParquetRowsDataLoader:
         batch_size: int = 10000,
         max_batch: int = None,
         max_rows: int = None,
-        max_tables: int = None,
         show_at_init: bool = False,
         show_epoch_bar: bool = True,
         verbose: bool = False,
@@ -308,7 +307,6 @@ class ParquetRowsDataLoader:
         self.batch_size = batch_size
         self.max_batch = max_batch
         self.max_rows = max_rows
-        self.max_tables = max_tables
         self.show_at_init = show_at_init
         self.show_epoch_bar = show_epoch_bar
         self.verbose = verbose
@@ -407,7 +405,6 @@ class ParquetRowsDataLoaderArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-mr", "--max-rows", type=int, default=None)
-        self.add_argument("-mt", "--max-tables", type=int, default=None)
 
     def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
