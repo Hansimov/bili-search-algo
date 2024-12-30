@@ -250,20 +250,6 @@ class FasttextModelTrainer:
         vocab_dict = self.vocab_loader.load_vocab_from_pickle()
         total_words, corpus_count = self.data_loader.count()
         self.model.raw_vocab = vocab_dict["term_freqs"]
-
-        # total_words, corpus_count = self.model._scan_vocab(
-        #     corpus_iterable=self.data_loader
-        # )
-        # sentence_no = -1
-        # total_words = 0
-        # vocab = defaultdict(int)
-        # for sentence_no, sentence in enumerate(self.data_loader):
-        #     for word in sentence:
-        #         vocab[word] += 1
-        #     total_words += len(sentence)
-        # corpus_count = sentence_no + 1
-        # self.model.raw_vocab = vocab
-
         self.model.corpus_count = corpus_count
         self.model.corpus_total_words = total_words
         self.model.prepare_vocab(update=False, keep_raw_vocab=False, trim_rule=None)
