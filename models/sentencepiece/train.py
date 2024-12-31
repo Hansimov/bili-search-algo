@@ -10,7 +10,7 @@ from typing import Literal
 
 from configs.envs import REPO_ROOT, SENTENCEPIECE_CKPT_ROOT
 from datasets.args import DATA_LOADER_ARG_PARSER
-from datasets.videos.data import SentencesDataloader
+from datasets.videos.data import SentencesDataloader, IntMongoFilterConstructor
 from models.sentencepiece.edit import SentencePieceModelVocabEditor
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.test import TEST_SENTENCES
@@ -169,10 +169,21 @@ if __name__ == "__main__":
     )
     if not args.test_only:
         logger.note("> Initiating data loader ...")
+        filter_constructor = IntMongoFilterConstructor()
+        if args.tid:
+            filter_field, filter_field_values = "tid", args.tid
+        elif args.ptid:
+            filter_field, filter_field_values = "ptid", args.ptid
+        else:
+            filter_field, filter_field_values = None, None
+        mongo_filter = filter_constructor.construct(
+            filter_field, filter_field_values, reverse=args.reverse_filter
+        )
         data_params = {
             "dbname": args.dbname,
             "collect_name": args.collect_name,
             "data_fields": args.data_fields.split(",") if args.data_fields else None,
+            "mongo_filter": mongo_filter,
             "max_batch": args.max_batch,
             "batch_size": args.batch_size,
             "estimate_count": args.estimate_count,
@@ -192,10 +203,16 @@ if __name__ == "__main__":
 
     # python -m models.sentencepiece.train -m sp_480m_400k_0.9995_0.9 -mb 48000 -vs 400000 -cc 0.9995 -sf 0.9 -e
     # python -m models.sentencepiece.train -m sp_507m_400k_0.9995_0.8 -ec -vs 400000 -cc 0.9995 -sf 0.8 -e
-    # python -m models.sentencepiece.train -m sp_507m_425k_0.9995_0.9 -ec -vs 425000 -cc 0.9995 -sf 0.9 -e
+
+    # python -m models.sentencepiece.train -m sp_507m_pd_4_200k_0.9995_0.9 -pd 4 -vs 200000 -cc 0.9995 -sf 0.9 -e
+    # python -m models.sentencepiece.train -m sp_507m_pd_160_200k_0.9995_0.9 -pd 160 -vs 200000 -cc 0.9995 -sf 0.9 -e
+    # python -m models.sentencepiece.train -m sp_507m_rf_pd_4_160_250k_0.9995_0.9 -rf -pd 4,160 -vs 250000 -cc 0.9995 -sf 0.9 -e
+
     # python -m models.sentencepiece.train -m sp_480m_400k_0.9995_0.9 -t
+
     # python -m models.sentencepiece.train -m sp_users_1kw_10k -cn users -mb 1000 -vs 10000 -cc 1.0 -e
     # python -m models.sentencepiece.train -m sp_wiki_1w_400k -db zhwiki -cn pages -bs 1000 -ec -mb 10 -vs 10000 -e
     # python -m models.sentencepiece.train -m sp_wiki_all_400k_0.9995 -db zhwiki -cn pages -bs 1000 -vs 400000 -cc 0.9995 -e
     # python -m models.sentencepiece.train -m sp_wiki_all_400k_0.9999 -t
+
     # python -m models.sentencepiece.train -m sp_400k_merged -t
