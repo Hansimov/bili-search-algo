@@ -188,9 +188,6 @@ class FreqCounterArgParser(argparse.ArgumentParser):
         self.add_argument("-o", "--output-prefix", type=str, default="video_texts_freq")
         self.add_argument("-mcb", "--max-count-batch", type=int, default=None)
         self.add_argument("-nt", "--no-threshold", action="store_true")
-        self.add_argument(
-            "-tid", "--tid", type=int, default=None, help="tid filter for mongo"
-        )
 
     def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])

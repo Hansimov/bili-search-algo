@@ -66,6 +66,29 @@ class VideosTagsAggregator:
             yield doc
 
 
+class IntMongoFilterConstructor:
+    def construct(
+        self,
+        field: Literal["tid", "ptid"],
+        values: Union[int, list[int]],
+        reverse: bool = False,
+    ) -> dict:
+        if not values:
+            return {}
+        mongo_filter = {}
+        if isinstance(values, int):
+            if not reverse:
+                mongo_filter[field] = values[0]
+            else:
+                mongo_filter[field] = {"$ne": values[0]}
+        else:
+            if not reverse:
+                mongo_filter[field] = {"$in": values}
+            else:
+                mongo_filter[field] = {"$nin": values}
+        return mongo_filter
+
+
 class SentencesDataloader:
     def __init__(
         self,
@@ -393,8 +416,24 @@ class SentencesDataLoaderArgParser(argparse.ArgumentParser):
             choices=["videos_texts", "users", "pages"],
             default="videos_texts",
         )
+        self.add_argument("-td", "--tid", type=self.to_int, default=None)
+        self.add_argument("-pd", "--ptid", type=self.to_int, default=None)
+        self.add_argument("-rf", "--reverse-filter", action="store_true")
         self.add_argument("-df", "--data-fields", type=str, default=None)
         self.add_argument("-ec", "--estimate-count", action="store_true")
+
+    def to_int(self, values: Union[str, int, list[int]], sep: str = ",") -> list[int]:
+        if isinstance(values, str):
+            res = list(map(int, values.split(sep)))
+        elif isinstance(values, int):
+            res = [values]
+        else:
+            res = list(map(int, values))
+
+        if len(res) == 1:
+            return res[0]
+        else:
+            return res
 
     def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
