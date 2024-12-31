@@ -3,6 +3,7 @@ __pycache__
 build
 data/
 logs/
+checkpoints/
 secrets.json
 *.npy
 *.model
