@@ -7,6 +7,7 @@ from configs.envs import SP_MERGED_MODEL_PATH
 from datasets.args import DATA_LOADER_ARG_PARSER
 from datasets.videos.data import SentencesDataloader
 from datasets.videos.parquet import VideoTextsParquetWriter
+from models.sentencepiece.filter import REGION_MONGO_FILTERS
 from models.sentencepiece.filter import construct_mongo_filter_from_args
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
 
@@ -61,17 +62,14 @@ class TokenCacherArgParser(argparse.ArgumentParser):
             "-o", "--output-prefix", type=str, default="video_texts_tokens"
         )
         self.add_argument("-mcb", "--max-count-batch", type=int, default=None)
+        self.add_argument("-fd", "--force-delete", action="store_true")
 
     def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
         return self.args
 
 
-if __name__ == "__main__":
-    arg_parser = DATA_LOADER_ARG_PARSER
-    arg_parser.add_parser_class(TokenCacherArgParser)
-    args = arg_parser.parse_args()
-
+def main(args: argparse.Namespace):
     logger.note("> Initiating data loader ...")
     mongo_filter = construct_mongo_filter_from_args(args)
     data_loader_params = {
@@ -119,9 +117,11 @@ if __name__ == "__main__":
         "dataset_max_rows": int(args.dataset_max_w_rows * 1e4),
         "file_max_rows": int(args.file_max_w_rows * 1e4),
         "buffer_max_rows": int(args.buffer_max_w_rows * 1e4),
+        "force_delete": args.force_delete,
+        "verbose": True,
     }
     logger.mesg(dict_to_str(parquet_writer_params), indent=2)
-    parquet_writer = VideoTextsParquetWriter(**parquet_writer_params, verbose=True)
+    parquet_writer = VideoTextsParquetWriter(**parquet_writer_params)
 
     cacher = VideoTextsTokenCacher(
         data_loader=data_loader,
@@ -133,13 +133,29 @@ if __name__ == "__main__":
     logger.note("> Caching ...")
     cacher.write()
 
+
+if __name__ == "__main__":
+    arg_parser = DATA_LOADER_ARG_PARSER
+    arg_parser.add_parser_class(TokenCacherArgParser)
+    args = arg_parser.parse_args()
+
+    regions = REGION_MONGO_FILTERS.keys()
+
+    for idx, region in enumerate(regions):
+        region_str = logstr.file(brk(region))
+        idx_str = f"{logstr.mesg(str(idx+1))}/{logstr.file(str(len(regions)))}"
+        logger.note(f"> [{idx_str}] Caching region: {region_str}")
+        args.filter_group = region
+        args.dataset_name = f"video_texts_{region}"
+        main(args)
+        logger.success(f"✓ [{idx_str}] Cached region: {region_str}")
+
     # python -m datasets.videos.cache -ec -mcb 22 -bw 5 -fw 10
     # python -m datasets.videos.cache -dn video_texts_tid_17
     # python -m datasets.videos.cache -dn video_texts_tid_201
 
     # python -m datasets.videos.cache -dn video_texts_tid_all -ec -fw 200 -bw 100 -bs 10000
 
-    # WARNING: this could make mongodb OOM
-    # python -m datasets.videos.cache -dn video_texts_douga_anime -fg douga_anime
-    # python -m datasets.videos.cache -dn video_texts_music_dance -fg music_dance
-    # python -m datasets.videos.cache -dn video_texts_daily_life -fg daily_life
+    # WARNING: Run multiple region-tasks could make mongodb out-of-memory
+
+    # python -m datasets.videos.cache -fd
