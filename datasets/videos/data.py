@@ -66,29 +66,6 @@ class VideosTagsAggregator:
             yield doc
 
 
-class IntMongoFilterConstructor:
-    def construct(
-        self,
-        field: Literal["tid", "ptid"],
-        values: Union[int, list[int]],
-        reverse: bool = False,
-    ) -> dict:
-        if not values:
-            return {}
-        mongo_filter = {}
-        if isinstance(values, int):
-            if not reverse:
-                mongo_filter[field] = values
-            else:
-                mongo_filter[field] = {"$ne": values}
-        else:
-            if not reverse:
-                mongo_filter[field] = {"$in": values}
-            else:
-                mongo_filter[field] = {"$nin": values}
-        return mongo_filter
-
-
 class SentencesDataloader:
     def __init__(
         self,
