@@ -1,11 +1,16 @@
+import argparse
 import re
+import sys
 
 from pathlib import Path
 from tclogger import logger, logstr, brk, chars_len
 from typing import Union
 
+
 import models.sentencepiece.sentencepiece_model_pb2 as spm_pb2
 from models.sentencepiece.proto import SentencePieceModelProtor
+from configs.envs import SENTENCEPIECE_CKPT_ROOT
+from models.sentencepiece.filter import REGION_MONGO_FILTERS
 
 
 RE_START_WITH_DE = rf"^的"
@@ -24,6 +29,9 @@ RE_START_WITH_YU = rf"^与"
 RE_START_WITH_JI = rf"^及"
 RE_START_WITH_BING = rf"^并"
 
+REGION_SINGLES = ["游", "影", "学"]
+REGION_SINGLE_SCORE = -8.0
+
 
 class SentencePieceModelMerger:
     def __init__(
@@ -41,11 +49,12 @@ class SentencePieceModelMerger:
 
     def load_models(self):
         logger.note("> Load sentencepiece models:", verbose=self.verbose)
-        for path in self.model_paths:
+        for idx, path in enumerate(self.model_paths):
             protor = SentencePieceModelProtor(path, verbose=False)
             protor.load_model()
             self.protors.append(protor)
-            logger.file(f"  * {path}", verbose=self.verbose)
+            idx_str = logstr.mesg(brk(str(idx + 1)))
+            logger.file(f"  * {idx_str} {path}", verbose=self.verbose)
 
     def is_prune(self, token: str) -> bool:
         if re.match(RE_START_WITH_DE, token):
@@ -89,6 +98,11 @@ class SentencePieceModelMerger:
         logger.warn(f"  - duplicated vocab count: {duplicated_count_str}")
         logger.success(f"  + merged vocab size: {merged_vocab_size_str}")
 
+        # smooth score for region singles
+        for region_single in REGION_SINGLES:
+            if region_single in merged_pieces:
+                merged_pieces[region_single].score = REGION_SINGLE_SCORE
+
         # sort pieces by score in desc order
         logger.note("> Sort merged pieces by score ...", verbose=self.verbose)
         self.merged_pieces_list = list(merged_pieces.values())
@@ -131,17 +145,44 @@ class SentencePieceModelMerger:
         self.export_vocab()
 
 
+class MergerArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("-o", "--output-prefix", type=str, default="sp_merged")
+        self.add_argument("-vs", "--vocab-size", type=int, default=None)
+
+    def parse_args(self):
+        self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
+        return self.args
+
+
 if __name__ == "__main__":
+    arg_parser = MergerArgParser()
+    args = arg_parser.parse_args()
+    # input_model_prefixes = [
+    #     "sp_wiki_all_400k_0.9995",
+    #     "sp_480m_400k_0.9995_0.9.model",
+    # ]
+    input_model_prefixes = ["sp_wiki_all_400k_0.9995"]
+    input_model_prefixes.extend(
+        [f"sp_507m_{suffix}" for suffix in REGION_MONGO_FILTERS.keys()]
+    )
     input_model_paths = [
-        "sp_wiki_all_400k_0.9995.model",
-        "sp_480m_400k_0.9995_0.9.model",
+        SENTENCEPIECE_CKPT_ROOT / f"{prefix}.model" for prefix in input_model_prefixes
     ]
-    output_model_path = "sp_400k_merged.model"
+    input_model_paths = [path for path in input_model_paths if path.exists()]
+
+    output_model_path = SENTENCEPIECE_CKPT_ROOT / f"{args.output_prefix}.model"
 
     merger = SentencePieceModelMerger(
-        input_model_paths, output_model_path, verbose=True
+        input_model_paths,
+        output_model_path,
+        max_vocab_size=args.vocab_size,
+        verbose=True,
     )
     merger.merge()
 
     # python -m models.sentencepiece.merge
-    # python -m models.sentencepiece.train -mp sp_400k_merged -t
+    # python -m models.sentencepiece.merge -vs 1000000
+    # python -m models.sentencepiece.train -m sp_400k_merged_old -t
+    # python -m models.sentencepiece.train -m sp_merged -t
