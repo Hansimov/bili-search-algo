@@ -39,6 +39,7 @@ class VideoTextsParquetWriter:
         dataset_max_rows: int = int(1e6 * 1e4),
         file_max_rows: int = int(100 * 1e4),
         buffer_max_rows: int = int(10 * 1e4),
+        force_delete: bool = False,
         verbose: bool = False,
     ):
         self.data_root = Path(dataset_root or DATA_ROOT)
@@ -47,6 +48,7 @@ class VideoTextsParquetWriter:
         self.dataset_max_rows = dataset_max_rows
         self.file_max_rows = file_max_rows
         self.buffer_max_rows = buffer_max_rows
+        self.force_delete = force_delete
         self.col_types = col_types or COL_TYPES
         self.verbose = verbose
         self.buffer: pa.Table = None
@@ -66,25 +68,35 @@ class VideoTextsParquetWriter:
         )
 
     def clear_dataset(self):
-        dataset_name_str = logstr.note(brk(self.dataset_name))
+        def delete_files(files: list[Path]):
+            logger.warn(f"  ! Deleting dataset: {len(files)} files")
+            for file in files:
+                file.unlink()
+
+        dataset_name_str = logstr.file(self.dataset_name)
         if not self.dataset_dir.exists():
-            logger.mesg(f"  * Skip clear non-existed dataset: {dataset_name_str}")
+            logger.mesg(f"  * No existed dataset: [{dataset_name_str}]")
             return
-        logger.warn(f"  ! WARNING: You are deleting dataset: {dataset_name_str}")
-        confirmation = input(
-            logstr.mesg(
-                f'  > Type "{logstr.note(self.dataset_name)}" to confirm deletion: '
-            )
+
+        parquet_files = sorted(
+            list(self.dataset_dir.glob(f"{self.parquet_prefix}*.parquet"))
         )
-        if confirmation != self.dataset_name:
-            logger.mesg(f"  * Skip clear dataset: {dataset_name_str}")
+        if not parquet_files:
+            logger.mesg(f"  * No existed parquets in dataset: [{dataset_name_str}]")
+            return
+
+        logger.warn(f"  ! WARNING: You are deleting dataset: [{dataset_name_str}]")
+
+        if self.force_delete:
+            delete_files(parquet_files)
+            return
         else:
-            logger.warn(f"  ! Deleting dataset: {dataset_name_str}")
-            parquet_files = sorted(
-                self.dataset_dir.glob(f"{self.parquet_prefix}*.parquet")
-            )
-            for parquet_file in parquet_files:
-                parquet_file.unlink()
+            confirmation = None
+            while confirmation != self.dataset_name:
+                confirmation = input(
+                    logstr.mesg(f'  > Type "{dataset_name_str}" to confirm deletion: ')
+                )
+            delete_files(parquet_files)
 
     def next_parquet_idx(self) -> int:
         parquet_files = sorted(self.dataset_dir.glob(f"{self.parquet_prefix}*.parquet"))
