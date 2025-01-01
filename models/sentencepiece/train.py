@@ -39,6 +39,7 @@ class SentencePieceModelTrainer:
         user_defined_symbols="▁",
         vocab_size: int = 32000,
         overwrite: bool = True,
+        force_delete: bool = False,
     ):
         self.train_params = {
             "model_prefix": model_prefix,
@@ -57,6 +58,7 @@ class SentencePieceModelTrainer:
         }
         self.model_prefix = model_prefix
         self.overwrite = overwrite
+        self.force_delete = force_delete
         self.init_paths()
 
     def init_paths(self):
@@ -76,30 +78,36 @@ class SentencePieceModelTrainer:
             json.dump(self.train_params, f, ensure_ascii=False, indent=4)
 
     def delete_existed_model(self):
-        model_prefix = str(self.model_prefix)
-        if (not os.path.exists(self.default_model_path)) and (
-            not os.path.exists(self.model_path)
-        ):
-            logger.mesg(f"  * No existed model prefix: [{logstr.file(model_prefix)}]")
-            return
-        logger.warn(f"  ! WARNING: You are deleting model:", end=" ")
-        logger.note(f"[{model_prefix}]")
-        confirmation = input(
-            f'  > Type "{logstr.file(model_prefix)}" to confirm deletion: '
-        )
-        if confirmation != model_prefix:
-            logger.mesg(f"  * Skip delete model file: [{model_prefix}]")
-        else:
-            file_paths = [
-                self.default_model_path,
-                self.default_vocab_path,
-                self.model_path,
-                self.vocab_path,
-            ]
+        def delete_files(file_paths: list[str]):
             for file_path in file_paths:
                 if os.path.exists(file_path):
                     os.remove(file_path)
                     logger.warn(f"  * DELETED: {file_path}")
+
+        model_prefix = str(self.model_prefix)
+        model_prefix_str = logstr.file(model_prefix)
+        if (not self.default_model_path.exists()) and (not self.model_path.exists()):
+            logger.mesg(f"  * No existed model prefix: [{model_prefix_str}]")
+            return
+
+        logger.warn(f"  ! WARNING: You are deleting model: [{model_prefix_str}]")
+        file_paths = [
+            self.default_model_path,
+            self.default_vocab_path,
+            self.model_path,
+            self.vocab_path,
+        ]
+
+        if self.force_delete:
+            delete_files(file_paths)
+            return
+        else:
+            confirmation = None
+            while confirmation != model_prefix:
+                confirmation = input(
+                    f'  > Type "{model_prefix_str}" to confirm deletion: '
+                )
+            delete_files(file_paths)
 
     def move_model_files(self):
         """By default, when training is finished, SentencePiece would save model files in working directory, this func would move them to target directory of checkpoints."""
@@ -145,6 +153,7 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-sf", "--shrinking-factor", type=float, default=0.9)
         self.add_argument("-vs", "--vocab-size", type=int, default=32000)
         self.add_argument("-k", "--keep-exist-model", action="store_true")
+        self.add_argument("-fd", "--force-delete", action="store_true")
         self.add_argument("-t", "--test-only", action="store_true")
         self.add_argument("-cb", "--compare-baseline", action="store_true")
         self.add_argument("-e", "--edit-model", action="store_true")
