@@ -262,4 +262,4 @@ if __name__ == "__main__":
     # python -m models.sentencepiece.train -m sp_507m_fashion_ent -fg fashion_ent -av -e
     # python -m models.sentencepiece.train -m sp_507m_know_info -fg know_info -av -e
 
-    # python -m models.sentencepiece.train -m sp_400k_merged -t
+    # python -m models.sentencepiece.train -m sp_merged -t

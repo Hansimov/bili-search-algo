@@ -7,6 +7,7 @@ from pathlib import Path
 from tclogger import logger, logstr, brk
 from typing import Union
 
+from configs.envs import SP_MERGED_MODEL_PREFIX
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 
 
@@ -168,7 +169,7 @@ if __name__ == "__main__":
     from models.sentencepiece.test import TEST_SENTENCES
 
     args = ArgParser().parse_args()
-    model_prefix = "sp_400k_merged"
+    model_prefix = SP_MERGED_MODEL_PREFIX
     model_path = str(Path(__file__).parents[2] / f"{model_prefix}.model")
     tokenizer = ParallelSentenceFullTokenizer(
         model_path, drop_non_word=True, verbose=False, workers_num=8

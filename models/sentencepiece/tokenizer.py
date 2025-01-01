@@ -5,6 +5,7 @@ from pathlib import Path
 from tclogger import logger, logstr
 from typing import Union
 
+from configs.envs import SP_MERGED_MODEL_PATH
 from datasets.videos.convert import CH_CJK, CH_AB, CH_DIGIT_PREFIX, RE_UNITS_ALL
 
 """Naming conventions by typings:
@@ -314,8 +315,9 @@ if __name__ == "__main__":
     logger.success(parts)
 
     logger.note("> Full-Tokenizing ...")
-    model_path = str(Path(__file__).parents[2] / "sp_400k_merged.model")
-    tokenizer = SentenceFullTokenizer(model_path, drop_non_word=True, verbose=True)
+    tokenizer = SentenceFullTokenizer(
+        SP_MERGED_MODEL_PATH, drop_non_word=True, verbose=True
+    )
     for sentence in TEST_SENTENCES:
         tokens = tokenizer.tokenize(sentence)
         pretty_tokens = tokenizer.stringify(tokens)

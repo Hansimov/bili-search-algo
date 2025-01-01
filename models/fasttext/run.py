@@ -301,9 +301,7 @@ class FasttextModelRunnerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-m", "--model-prefix", type=str, default="fasttext")
-        self.add_argument(
-            "-k", "--tokenizer-prefix", type=str, default="sp_400k_merged"
-        )
+        self.add_argument("-k", "--tokenizer-prefix", type=str, default="sp_merged")
         self.add_argument(
             "-q", "--token-freq-prefix", type=str, default="video_texts_freq_all"
         )

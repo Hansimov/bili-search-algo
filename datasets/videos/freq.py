@@ -10,6 +10,7 @@ from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk
 from typing import Union, Literal
 
+from configs.envs import SP_MERGED_MODEL_PATH
 from datasets.videos.data import SentencesDataloader
 from datasets.videos.data import ParquetRowsDataLoader
 from datasets.videos.parquet import VideoTextsParquetReader
@@ -223,7 +224,7 @@ if __name__ == "__main__":
             verbose=True,
         )
         tokenizer = ParallelSentenceFullTokenizer(
-            Path("sp_400k_merged.model"),
+            SP_MERGED_MODEL_PATH,
             # drop_non_word=True, # This param is not needed as doc_coverter in data_loader already does this
             drop_whitespace=True,
             workers_num=16,

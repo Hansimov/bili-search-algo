@@ -6,6 +6,8 @@ from collections.abc import Generator
 from pathlib import Path
 from tclogger import logger, dict_to_str
 
+from configs.envs import SP_MERGED_MODEL_PREFIX
+
 # from models.sentencepiece.tokenizerC import SentenceFullTokenizer
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
@@ -14,7 +16,7 @@ from models.sentencepiece.test import TEST_SENTENCES
 
 class SentenceTokenzierBenchmarker:
     def __init__(
-        self, model_prefix: str = "sp_400k_merged", drop_non_word: bool = True
+        self, model_prefix: str = SP_MERGED_MODEL_PREFIX, drop_non_word: bool = True
     ):
         self.model_prefix = model_prefix
         self.drop_non_word = drop_non_word

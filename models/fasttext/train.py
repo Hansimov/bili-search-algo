@@ -11,6 +11,7 @@ from pathlib import Path
 from tclogger import Runtimer, logger, logstr, dict_to_str, brk
 from typing import Union
 
+from configs.envs import SP_MERGED_MODEL_PATH
 from datasets.videos.data import SentencesDataloader, ParquetRowsDataLoader
 from datasets.videos.parquet import VideoTextsParquetReader
 from datasets.args import DATA_LOADER_ARG_PARSER
@@ -525,7 +526,7 @@ if __name__ == "__main__":
         logger.note(f"> Initiating data loader: {data_source_str}")
         if args.data_source == "mongo":
             tokenizer = ParallelSentenceFullTokenizer(
-                Path("sp_400k_merged.model"),
+                SP_MERGED_MODEL_PATH,
                 # drop_non_word=True, # This param is not needed as doc_coverter in data_loader already does this
                 drop_whitespace=True,
                 workers_num=16,
@@ -584,7 +585,7 @@ if __name__ == "__main__":
         trainer.test(tokenizer=None, restrict_vocab=150000)
     elif args.model_class == "doc2vec":
         tokenizer = SentenceFullTokenizer(
-            Path("sp_400k_merged.model"), drop_non_word=True, drop_whitespace=True
+            SP_MERGED_MODEL_PATH, drop_non_word=True, drop_whitespace=True
         )
         trainer.test(tokenizer=tokenizer)
     else:

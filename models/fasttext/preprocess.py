@@ -6,6 +6,7 @@ from tclogger import logger, logstr, brk, dict_to_str, Runtimer
 from typing import Union, Literal
 
 from configs.envs import SENTENCEPIECE_CKPT_ROOT, TOKEN_FREQ_ROOT
+from configs.envs import SP_MERGED_MODEL_PREFIX
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 
 
@@ -133,7 +134,9 @@ class FasttextModelFrequenizer:
 
 
 class FasttextModelPreprocessor:
-    def __init__(self, tokenizer_prefix: str = "sp_400k_merged", verbose: bool = False):
+    def __init__(
+        self, tokenizer_prefix: str = SP_MERGED_MODEL_PREFIX, verbose: bool = False
+    ):
         self.tokenizer_prefix = tokenizer_prefix
         self.verbose = verbose
         self.load_tokenizer()
@@ -213,7 +216,7 @@ if __name__ == "__main__":
         verbose=True,
     )
     preprocessor = FasttextModelPreprocessor(
-        tokenizer_prefix="sp_400k_merged", verbose=True
+        tokenizer_prefix=SP_MERGED_MODEL_PREFIX, verbose=True
     )
     res = {}
     for word, words in TEST_PAIRS:
