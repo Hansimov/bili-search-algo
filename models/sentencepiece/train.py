@@ -18,6 +18,11 @@ from models.sentencepiece.test import TEST_SENTENCES
 from models.hanlp.tokenize import HanlpTokenizer
 
 
+def calc_vocab_size_by_samples_count(count: int):
+    """500m ~ 1000k -> 1m ~ 2k"""
+    return int(count * 2000 // 1000000)
+
+
 class SentencePieceModelTrainer:
     """
     Training Options:
@@ -148,11 +153,12 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-m", "--model-prefix", type=str, default="sentencepiece")
-        self.add_argument("-cc", "--character-coverage", type=float, default=0.999)
+        self.add_argument("-cc", "--character-coverage", type=float, default=0.9995)
         self.add_argument("-is", "--input-sentence-size", type=int, default=500000)
         self.add_argument("-mt", "--model-type", type=str, default="unigram")
-        self.add_argument("-sf", "--shrinking-factor", type=float, default=0.9)
+        self.add_argument("-sf", "--shrinking-factor", type=float, default=0.75)
         self.add_argument("-vs", "--vocab-size", type=int, default=32000)
+        self.add_argument("-av", "--auto-vocab-size", action="store_true")
         self.add_argument("-k", "--keep-exist-model", action="store_true")
         self.add_argument("-fd", "--force-delete", action="store_true")
         self.add_argument("-t", "--test-only", action="store_true")
@@ -187,7 +193,7 @@ if __name__ == "__main__":
         data_params = {
             "dbname": args.dbname,
             "collect_name": args.collect_name,
-            "data_fields": args.data_fields.split(",") if args.data_fields else None,
+            "data_fields": ["owner.name", "title", "desc", "tags"],
             "mongo_filter": mongo_filter,
             "max_batch": args.max_batch,
             "batch_size": args.batch_size,
@@ -201,6 +207,11 @@ if __name__ == "__main__":
     else:
         data_loader = None
 
+    if args.auto_vocab_size and data_loader:
+        vocab_size = calc_vocab_size_by_samples_count(data_loader.samples_count)
+        logger.mesg(f"  * Auto calc vocab size: [{logstr.file(vocab_size)}]")
+    else:
+        vocab_size = args.vocab_size
 
     train_params = {
         "model_prefix": args.model_prefix,
@@ -229,7 +240,6 @@ if __name__ == "__main__":
     # python -m models.sentencepiece.train -m sp_480m_400k_0.9995_0.9 -mb 48000 -vs 400000 -cc 0.9995 -sf 0.9 -e
     # python -m models.sentencepiece.train -m sp_507m_400k_0.9995_0.8 -ec -vs 400000 -cc 0.9995 -sf 0.8 -e
 
-    # python -m models.sentencepiece.train -m sp_507m_pd_4_200k_0.9995_0.9 -pd 4 -vs 200000 -cc 0.9995 -sf 0.9 -e
     # python -m models.sentencepiece.train -m sp_507m_pd_160_200k_0.9995_0.9 -pd 160 -vs 200000 -cc 0.9995 -sf 0.9 -e
     # python -m models.sentencepiece.train -m sp_507m_rf_pd_4_160_250k_0.9995_0.9 -rf -pd 4,160 -vs 250000 -cc 0.9995 -sf 0.9 -e
 
@@ -239,5 +249,17 @@ if __name__ == "__main__":
     # python -m models.sentencepiece.train -m sp_wiki_1w_400k -db zhwiki -cn pages -bs 1000 -ec -mb 10 -vs 10000 -e
     # python -m models.sentencepiece.train -m sp_wiki_all_400k_0.9995 -db zhwiki -cn pages -bs 1000 -vs 400000 -cc 0.9995 -e
     # python -m models.sentencepiece.train -m sp_wiki_all_400k_0.9999 -t
+
+    # By region groups
+    # python -m models.sentencepiece.train -m sp_507m_douga_anime -fg douga_anime -av -e
+    # python -m models.sentencepiece.train -m sp_507m_music_dance -fg music_dance -av -e
+    # python -m models.sentencepiece.train -m sp_507m_mobile_game -fg mobile_game -av -e
+    # python -m models.sentencepiece.train -m sp_507m_other_game -fg other_game -av -e
+    # python -m models.sentencepiece.train -m sp_507m_tech_sports -fg tech_sports -av -e
+    # python -m models.sentencepiece.train -m sp_507m_daily_life -fg daily_life -av -e
+    # python -m models.sentencepiece.train -m sp_507m_other_life -fg other_life -av -e
+    # python -m models.sentencepiece.train -m sp_507m_cine_movie -fg cine_movie -av -e
+    # python -m models.sentencepiece.train -m sp_507m_fashion_ent -fg fashion_ent -av -e
+    # python -m models.sentencepiece.train -m sp_507m_know_info -fg know_info -av -e
 
     # python -m models.sentencepiece.train -m sp_400k_merged -t
