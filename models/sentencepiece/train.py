@@ -11,6 +11,7 @@ from typing import Literal
 from configs.envs import REPO_ROOT, SENTENCEPIECE_CKPT_ROOT
 from datasets.args import DATA_LOADER_ARG_PARSER
 from datasets.videos.data import SentencesDataloader, IntMongoFilterConstructor
+from models.sentencepiece.filter import REGION_MONGO_FILTERS
 from models.sentencepiece.edit import SentencePieceModelVocabEditor
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.test import TEST_SENTENCES
@@ -168,26 +169,21 @@ if __name__ == "__main__":
     arg_parser.add_parser_class(ModelTrainerArgParser)
     args = arg_parser.parse_args()
 
-    trainer = SentencePieceModelTrainer(
-        model_prefix=args.model_prefix,
-        character_coverage=args.character_coverage,
-        model_type=args.model_type,
-        shrinking_factor=args.shrinking_factor,
-        vocab_size=args.vocab_size,
-        overwrite=not args.keep_exist_model,
-    )
     if not args.test_only:
         logger.note("> Initiating data loader ...")
-        filter_constructor = IntMongoFilterConstructor()
-        if args.tid:
-            filter_field, filter_field_values = "tid", args.tid
-        elif args.ptid:
-            filter_field, filter_field_values = "ptid", args.ptid
+        if args.filter_group:
+            mongo_filter = REGION_MONGO_FILTERS[args.filter_group]
         else:
-            filter_field, filter_field_values = None, None
-        mongo_filter = filter_constructor.construct(
-            filter_field, filter_field_values, reverse=args.reverse_filter
-        )
+            filter_constructor = IntMongoFilterConstructor()
+            if args.tid:
+                filter_field, filter_field_values = "tid", args.tid
+            elif args.ptid:
+                filter_field, filter_field_values = "ptid", args.ptid
+            else:
+                filter_field, filter_field_values = None, None
+            mongo_filter = filter_constructor.construct(
+                filter_field, filter_field_values, reverse=args.reverse_filter
+            )
         data_params = {
             "dbname": args.dbname,
             "collect_name": args.collect_name,
@@ -202,13 +198,33 @@ if __name__ == "__main__":
             **data_params, show_at_init=False, verbose=True
         )
         logger.mesg(dict_to_str(data_params), indent=2)
+    else:
+        data_loader = None
+
+
+    train_params = {
+        "model_prefix": args.model_prefix,
+        "character_coverage": args.character_coverage,
+        "input_sentence_size": args.input_sentence_size,
+        "model_type": args.model_type,
+        "shrinking_factor": args.shrinking_factor,
+        "vocab_size": vocab_size,
+        "overwrite": not args.keep_exist_model,
+        "force_delete": args.force_delete,
+    }
+    trainer = SentencePieceModelTrainer(**train_params)
+
+    if not args.test_only:
         trainer.init_data_loader(data_loader)
         with Runtimer() as timer:
             trainer.train()
+
     if args.edit_model:
         editor = SentencePieceModelVocabEditor(trainer.model_path, verbose=True)
         editor.edit()
-    trainer.test(TEST_SENTENCES, compare_baseline=args.compare_baseline)
+
+    if args.test_only:
+        trainer.test(TEST_SENTENCES, compare_baseline=args.compare_baseline)
 
     # python -m models.sentencepiece.train -m sp_480m_400k_0.9995_0.9 -mb 48000 -vs 400000 -cc 0.9995 -sf 0.9 -e
     # python -m models.sentencepiece.train -m sp_507m_400k_0.9995_0.8 -ec -vs 400000 -cc 0.9995 -sf 0.8 -e
