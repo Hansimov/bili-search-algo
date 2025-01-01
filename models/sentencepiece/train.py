@@ -10,8 +10,8 @@ from typing import Literal
 
 from configs.envs import REPO_ROOT, SENTENCEPIECE_CKPT_ROOT
 from datasets.args import DATA_LOADER_ARG_PARSER
-from datasets.videos.data import SentencesDataloader, IntMongoFilterConstructor
-from models.sentencepiece.filter import REGION_MONGO_FILTERS
+from datasets.videos.data import SentencesDataloader
+from models.sentencepiece.filter import construct_mongo_filter_from_args
 from models.sentencepiece.edit import SentencePieceModelVocabEditor
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.test import TEST_SENTENCES
@@ -177,19 +177,7 @@ if __name__ == "__main__":
 
     if not args.test_only:
         logger.note("> Initiating data loader ...")
-        if args.filter_group:
-            mongo_filter = REGION_MONGO_FILTERS[args.filter_group]
-        else:
-            filter_constructor = IntMongoFilterConstructor()
-            if args.tid:
-                filter_field, filter_field_values = "tid", args.tid
-            elif args.ptid:
-                filter_field, filter_field_values = "ptid", args.ptid
-            else:
-                filter_field, filter_field_values = None, None
-            mongo_filter = filter_constructor.construct(
-                filter_field, filter_field_values, reverse=args.reverse_filter
-            )
+        mongo_filter = construct_mongo_filter_from_args(args)
         data_params = {
             "dbname": args.dbname,
             "collect_name": args.collect_name,
