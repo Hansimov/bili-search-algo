@@ -1,13 +1,13 @@
 import argparse
 import sys
 
-
-from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk
 
 from configs.envs import SP_MERGED_MODEL_PATH
+from datasets.args import DATA_LOADER_ARG_PARSER
+from datasets.videos.data import SentencesDataloader
 from datasets.videos.parquet import VideoTextsParquetWriter
-from datasets.videos.parquet import ParquetOperatorArgParser, ParquetWriterArgParser
+from models.sentencepiece.filter import construct_mongo_filter_from_args
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
 
 
@@ -60,8 +60,6 @@ class TokenCacherArgParser(argparse.ArgumentParser):
         self.add_argument(
             "-o", "--output-prefix", type=str, default="video_texts_tokens"
         )
-        self.add_argument("-td", "--tid", type=int, default=None)
-        self.add_argument("-pd", "--ptid", type=int, default=None)
         self.add_argument("-mcb", "--max-count-batch", type=int, default=None)
 
     def parse_args(self):
@@ -70,35 +68,20 @@ class TokenCacherArgParser(argparse.ArgumentParser):
 
 
 if __name__ == "__main__":
-    common_data_loader_parser = CommonDataLoaderArgParser(add_help=False)
-    sentences_data_loader_parser = SentencesDataLoaderArgParser(add_help=False)
-    parquet_operator_parser = ParquetOperatorArgParser(add_help=False)
-    parquet_writer_parser = ParquetWriterArgParser(add_help=False)
-    token_cacher_parser = TokenCacherArgParser(add_help=False)
-
-    merged_parser = argparse.ArgumentParser(
-        parents=[
-            common_data_loader_parser,
-            sentences_data_loader_parser,
-            parquet_operator_parser,
-            parquet_writer_parser,
-            token_cacher_parser,
-        ]
-    )
-    args, unknown_args = merged_parser.parse_known_args(sys.argv[1:])
-
-    if args.tid:
-        mongo_filter = {"tid": args.tid}
-    elif args.ptid:
-        mongo_filter = {"ptid": args.ptid}
-    else:
-        mongo_filter = {}
+    arg_parser = DATA_LOADER_ARG_PARSER
+    arg_parser.add_parser_class(TokenCacherArgParser)
+    args = arg_parser.parse_args()
 
     logger.note("> Initiating data loader ...")
+    mongo_filter = construct_mongo_filter_from_args(args)
     data_loader_params = {
         "dbname": args.dbname,
         "collect_name": args.collect_name,
-        "data_fields": args.data_fields.split(",") if args.data_fields else None,
+        "data_fields": [
+            *["title", "owner.name", "rtags", "tags"],
+            *["owner.name", "title", "rtags", "tags"],
+            "desc",
+        ],
         "mongo_filter": mongo_filter,
         "max_batch": args.max_batch,
         "batch_size": args.batch_size,
@@ -153,4 +136,10 @@ if __name__ == "__main__":
     # python -m datasets.videos.cache -ec -mcb 22 -bw 5 -fw 10
     # python -m datasets.videos.cache -dn video_texts_tid_17
     # python -m datasets.videos.cache -dn video_texts_tid_201
-    # python -m datasets.videos.cache -ec -dn video_texts_tid_all -fw 200 -bw 100 -bs 10000
+
+    # python -m datasets.videos.cache -dn video_texts_tid_all -ec -fw 200 -bw 100 -bs 10000
+
+    # WARNING: this could make mongodb OOM
+    # python -m datasets.videos.cache -dn video_texts_douga_anime -fg douga_anime
+    # python -m datasets.videos.cache -dn video_texts_music_dance -fg music_dance
+    # python -m datasets.videos.cache -dn video_texts_daily_life -fg daily_life

@@ -228,8 +228,8 @@ class ParquetWriterArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-dw", "--dataset-max-w-rows", type=int, default=1e6)
-        self.add_argument("-fw", "--file-max-w-rows", type=int, default=100)
-        self.add_argument("-bw", "--buffer-max-w-rows", type=int, default=10)
+        self.add_argument("-fw", "--file-max-w-rows", type=int, default=200)
+        self.add_argument("-bw", "--buffer-max-w-rows", type=int, default=100)
 
     def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])

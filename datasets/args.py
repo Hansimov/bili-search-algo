@@ -4,7 +4,7 @@ import sys
 from datasets.videos.data import CommonDataLoaderArgParser
 from datasets.videos.data import SentencesDataLoaderArgParser
 from datasets.videos.data import ParquetRowsDataLoaderArgParser
-from datasets.videos.parquet import ParquetOperatorArgParser
+from datasets.videos.parquet import ParquetOperatorArgParser, ParquetWriterArgParser
 
 
 class MergedArgParser:
@@ -31,4 +31,5 @@ DATA_LOADER_ARG_PARSER = MergedArgParser(
     SentencesDataLoaderArgParser,
     ParquetRowsDataLoaderArgParser,
     ParquetOperatorArgParser,
+    ParquetWriterArgParser,
 )
