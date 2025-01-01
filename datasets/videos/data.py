@@ -78,9 +78,9 @@ class IntMongoFilterConstructor:
         mongo_filter = {}
         if isinstance(values, int):
             if not reverse:
-                mongo_filter[field] = values[0]
+                mongo_filter[field] = values
             else:
-                mongo_filter[field] = {"$ne": values[0]}
+                mongo_filter[field] = {"$ne": values}
         else:
             if not reverse:
                 mongo_filter[field] = {"$in": values}
@@ -129,6 +129,7 @@ class SentencesDataloader:
         self.init_cursor()
         self.init_progress_bars()
         self.init_doc_converter()
+        self.init_total()
 
     def init_mongo(self):
         self.mongo_envs = MONGO_ENVS
@@ -210,7 +211,7 @@ class SentencesDataloader:
             self.batch_bar.total = self.samples_count // self.batch_size + 1
 
     def __epoch_start__(self):
-        self.init_total()
+        # self.init_total()
         if self.epoch_bar:
             self.epoch_bar.update(0, flush=True)
 
@@ -419,6 +420,7 @@ class SentencesDataLoaderArgParser(argparse.ArgumentParser):
         self.add_argument("-td", "--tid", type=self.to_int, default=None)
         self.add_argument("-pd", "--ptid", type=self.to_int, default=None)
         self.add_argument("-rf", "--reverse-filter", action="store_true")
+        self.add_argument("-fg", "--filter-group", type=str, default=None)
         self.add_argument("-df", "--data-fields", type=str, default=None)
         self.add_argument("-ec", "--estimate-count", action="store_true")
 
