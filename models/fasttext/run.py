@@ -17,6 +17,7 @@ from configs.envs import PYRO_ENVS, FASTTEXT_CKPT_ROOT
 from models.fasttext.preprocess import FasttextModelPreprocessor
 from models.fasttext.preprocess import FasttextModelFrequenizer
 from models.vectors.similarity import dot_sim
+from models.vectors.trunc import trunc
 
 
 PYRO_NS = "fasttext_model_runner"
@@ -145,16 +146,73 @@ class FasttextModelRunner:
         return dot_sim(vec1, vec2) ** 2
 
     @Pyro5.server.expose
-    def words_similarities(
+    def calc_pairs_scores(
         self,
-        word1: Union[str, list[str]],
-        words: Union[list[str], list[list[str]]],
+        query_words: list[str],
+        sample_words_list: list[list[str]],
+        level: Literal["word", "sentence"] = "word",
         sort: bool = True,
-    ) -> list[tuple[list[str], float]]:
-        vec1 = self.calc_query_vector(word1)
-        vecs = [self.calc_sample_vector(row) for row in words]
-        scores = [dot_sim(vec1, vec) ** 2 for vec in vecs]
-        res = [(row, score) for row, score in zip(words, scores)]
+    ) -> list[tuple[list[str], float, list[float], list[float]]]:
+        if level == "sentence":
+            query_vector = self.calc_query_vector(query_words)
+            sample_vectors = [
+                self.calc_sample_vector(sample_words)
+                for sample_words in sample_words_list
+            ]
+            sample_scores = [
+                dot_sim(query_vector, sample_vector) ** 2
+                for sample_vector in sample_vectors
+            ]
+            word_scores_of_samples = []
+            word_weights_of_samples = []
+        elif level == "word":
+            query_vector = self.calc_query_vector(query_words)
+            sample_scores: list[float] = []
+            word_scores_of_samples: list[list[float]] = []
+            word_weights_of_samples: list[list[float]] = []
+            for sample_words in sample_words_list:
+                word_scores = []
+                word_weights = []
+                sample_score_weight_dict = {}
+                for sample_word in sample_words:
+                    if sample_word in sample_score_weight_dict:
+                        word_score = sample_score_weight_dict[sample_word]["score"]
+                        word_weight = sample_score_weight_dict[sample_word]["weight"]
+                    else:
+                        sample_vector_by_word = self.calc_sample_vector(sample_word)
+                        word_score = dot_sim(query_vector, sample_vector_by_word) ** 2
+                        word_score = trunc(word_score, trunc_at=0.15, trunc_to=0)
+                        if self.frequenizer:
+                            word_weight = self.frequenizer.calc_weight_of_token(
+                                sample_word
+                            )
+                        else:
+                            word_weight = 1.0
+                        sample_score_weight_dict[sample_word] = {
+                            "score": word_score,
+                            "weight": word_weight,
+                        }
+                    word_scores.append(word_score)
+                    word_weights.append(word_weight)
+                sample_score = sum(
+                    [
+                        score_weight_dict["score"] * score_weight_dict["weight"]
+                        for score_weight_dict in sample_score_weight_dict.values()
+                    ]
+                )
+                sample_scores.append(sample_score)
+                word_scores_of_samples.append(word_scores)
+                word_weights_of_samples.append(word_weights)
+        else:
+            raise ValueError(f"× Invalid score level: {level}")
+        res = list(
+            zip(
+                sample_words_list,
+                sample_scores,
+                word_scores_of_samples,
+                word_weights_of_samples,
+            )
+        )
         if sort:
             res.sort(key=lambda x: x[1], reverse=True)
         return res
