@@ -34,12 +34,9 @@ class VideoTextsTokenFreqCounter:
         self.doc_freqs = defaultdict(int)
 
     def count_tokens_freq(self, tokens: list[str]):
-        recorded_doc_tokens = set()
         for token in tokens:
             self.term_freqs[token] += 1
-            if token not in recorded_doc_tokens:
-                self.doc_freqs[token] += 1
-                recorded_doc_tokens.add(token)
+            self.doc_freqs[token] = 1
 
     def sort_freqs(self):
         self.term_freqs = dict(
@@ -243,7 +240,6 @@ if __name__ == "__main__":
             "max_batch": args.max_batch,
             "batch_size": args.batch_size,
             "max_rows": args.max_rows,
-            "max_tables": args.max_tables,
             "show_at_init": False,
             "show_epoch_bar": False,
             "verbose": True,
@@ -277,3 +273,4 @@ if __name__ == "__main__":
     # python -m datasets.videos.freq -o video_texts_freq_all -dn "video_texts_tid_all"
     # python -m datasets.videos.freq -o video_texts_freq_tid_17 -dn "video_texts_tid_17" -tid 17
     # python -m datasets.videos.freq -o video_texts_freq_tid_17_nt -dn "video_texts_tid_17" -tid 17 -nt
+    # python -m datasets.videos.freq -dn "video_texts_other_game" -o video_texts_freq_other_game -nt

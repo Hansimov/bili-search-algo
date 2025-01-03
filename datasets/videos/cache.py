@@ -139,7 +139,7 @@ if __name__ == "__main__":
     arg_parser.add_parser_class(TokenCacherArgParser)
     args = arg_parser.parse_args()
 
-    regions = REGION_MONGO_FILTERS.keys()
+    regions = list(REGION_MONGO_FILTERS.keys())
 
     for idx, region in enumerate(regions):
         region_str = logstr.file(brk(region))
