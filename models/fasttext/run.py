@@ -253,11 +253,17 @@ class FasttextModelRunner:
         importlib.reload(models.fasttext.test)
         from models.fasttext.test import TEST_PAIRS
 
-        def sim2str(num: float, round_digits: int = 2, br: bool = True) -> str:
+        def score2str(num: float, round_digits: int = 2, br: bool = True) -> str:
             num_str = f"{num:.{round_digits}f}"
             if br:
                 num_str = brp(num_str)
-            return logstr.mesg(num_str)
+            if num < 0.25:
+                str_func = logstr.warn
+            elif num < 0.5:
+                str_func = logstr.mesg
+            else:
+                str_func = logstr.hint
+            return str_func(num_str)
 
         def weight2str(num: float, round_digits: int = 2, br: bool = True) -> str:
             num_str = f"{num:.{round_digits}f}"
@@ -265,44 +271,59 @@ class FasttextModelRunner:
                 num_str = brk(num_str)
             return logstr.file(num_str)
 
-        def weightsim2str(
-            weight: float, sim: float, round_digits: int = 1, br: bool = True
+        def token2str(token: str, score: float, weight: float) -> str:
+            if score < 0.25 or weight < 0.25:
+                str_func = logstr.warn
+            elif score < 0.5 or weight < 0.5:
+                str_func = logstr.mesg
+            else:
+                str_func = logstr.success
+            return str_func(token)
+
+        def scoreweight2str(
+            score: float, weight: float, round_digits: int = 1, br: bool = True
         ) -> str:
+            score_str = score2str(score, round_digits, br=False)
             weight_str = weight2str(weight, round_digits, br=False)
-            sim_str = sim2str(sim, round_digits, br=False)
-            num_str = f"{weight_str}*{sim_str}"
+            num_str = f"{score_str}*{weight_str}"
             if br:
                 num_str = brp(num_str)
-            return logstr.mesg(num_str)
+            return logstr.line(num_str)
 
         logger.note(f"> Testing (similarity):")
-        for word1, words in TEST_PAIRS:
-            pword1 = self.preprocess(word1)
+        for query, samples in TEST_PAIRS:
+            query_tokens = self.preprocess(query)
             if self.frequenizer:
-                pword1_weights = self.frequenizer.calc_weights_of_tokens(pword1)
+                query_token_weights = self.frequenizer.calc_weights_of_tokens(
+                    query_tokens
+                )
             else:
-                pword1_weights = [1.0] * len(pword1)
-            pword1_str_list = [
+                query_token_weights = [1.0] * len(query_tokens)
+            query_tokens_str_list = [
                 f"{token}{weight2str(weight)}"
-                for token, weight in zip(pword1, pword1_weights)
+                for token, weight in zip(query_tokens, query_token_weights)
             ]
-            pword1_str = " ".join(pword1_str_list)
-            logger.note(f"  * [{pword1_str}]:")
-            pwords = [self.preprocess(word) for word in words]
-            results = self.words_similarities(pword1, pwords)
+            query_tokens_str = " ".join(query_tokens_str_list)
+            logger.note(f"  * [{query_tokens_str}]:")
+            sample_tokens_list = [self.preprocess(sample) for sample in samples]
+            results = self.calc_pairs_scores(
+                query_tokens, sample_tokens_list, level="word"
+            )
             for result in results:
-                res_row, res_score = result
-                sims = [self.word_similarity(pword1, pword) for pword in res_row]
-                if self.frequenizer:
-                    token_weights = self.frequenizer.calc_weights_of_tokens(res_row)
-                else:
-                    token_weights = [1.0] * len(res_row)
-                tokens_str_list = [
-                    f"{token}{weightsim2str(weight, sim)}"
-                    for token, weight, sim in zip(res_row, token_weights, sims)
-                ]
+                sample_tokens, sample_score, token_scores, token_weights = result
+
+                tokens_str_list = []
+                for token, token_weight, token_score in zip(
+                    sample_tokens, token_weights, token_scores
+                ):
+                    token_str = token2str(token, score=token_score, weight=token_weight)
+                    score_weight_str = scoreweight2str(
+                        score=token_score, weight=token_weight
+                    )
+                    token_score_str = f"{token_str}{score_weight_str}"
+                    tokens_str_list.append(token_score_str)
                 tokens_str = " ".join(tokens_str_list)
-                logger.success(f"    * {res_score:>.4f}: [{tokens_str}]")
+                logger.line(f"    * {sample_score:>.4f}: [{tokens_str}]")
 
     def test_func(self):
         importlib.reload(models.fasttext.test)
