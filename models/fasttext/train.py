@@ -428,7 +428,7 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-mc", "--min-count", type=int, default=20)
         self.add_argument("-mv", "--max-final-vocab", type=int, default=None)
         self.add_argument("-minn", "--min-n", type=int, default=2)
-        self.add_argument("-maxn", "--max-n", type=int, default=8)
+        self.add_argument("-maxn", "--max-n", type=int, default=6)
         self.add_argument("-sg", "--sg", type=int, default=0)
         self.add_argument("-sw", "--shrink-windows", action="store_true")
         self.add_argument("-vs", "--vector-size", type=int, default=256)
@@ -563,7 +563,6 @@ if __name__ == "__main__":
                 "max_batch": args.max_batch,
                 "batch_size": args.batch_size,
                 "max_rows": args.max_rows,
-                "max_tables": args.max_tables,
                 "show_at_init": False,
                 "show_epoch_bar": True,
                 "verbose": True,
@@ -615,5 +614,7 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_tid_all_vf_mv_30w_vs_384 -ep 1 -dn "video_texts_tid_all" -vf "video_texts_freq_all.csv" -bs 20000 -mv 300000 -vm 1000000
 
     # python -m models.fasttext.train -m fasttext_tid_17_ep_1_vf -ep 1 -dn "video_texts_tid_17" -vf video_texts_freq_tid_17_nt -bs 20000 -mv 300000
+
+    # python -m models.fasttext.train -m fasttext_other_game -ep 1 -dn "video_texts_other_game" -vf video_texts_freq_other_game -bs 20000 -mv 300000
 
     # python -m models.fasttext.train -ms doc2vec -m doc2vec_tid_17 -t
