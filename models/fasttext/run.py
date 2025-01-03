@@ -16,6 +16,7 @@ import models.fasttext.test
 from configs.envs import PYRO_ENVS, FASTTEXT_CKPT_ROOT
 from models.fasttext.preprocess import FasttextModelPreprocessor
 from models.fasttext.preprocess import FasttextModelFrequenizer
+from models.vectors.similarity import dot_sim
 
 
 PYRO_NS = "fasttext_model_runner"
@@ -101,24 +102,29 @@ class FasttextModelRunner:
         self,
         word: Union[str, list[str]],
         ignore_duplicates: bool = True,
-        weight_func: Literal["max", "mean", "freq"] = "max",
+        weight_func: Literal["max", "mean", "sum", "freq"] = "mean",
+        normalize: bool = True,
     ) -> np.ndarray:
         pwords = self.preprocess(word)
         if ignore_duplicates:
             pwords = list(set(pwords))
+        pword_vectors = [self.model.wv.get_vector(pword, norm=True) for pword in pwords]
         if weight_func == "max":
-            pword_vectors = [
-                self.model.wv.get_vector(pword, norm=True) for pword in pwords
-            ]
             return self.max_pool_vectors(pword_vectors)
-        elif weight_func in ["freq", "mean"]:
+        elif weight_func in ["freq", "mean", "sum"]:
+            vector = np.zeros(self.model.vector_size)
+            for pword_vector in pword_vectors:
+                vector += pword_vector
             if weight_func == "freq" and self.frequenizer:
-                weights = self.frequenizer.calc_weights_of_tokens(pwords)
+                weights = np.array(self.frequenizer.calc_weights_of_tokens(pwords))
             else:
-                weights = None
-            return self.model.wv.get_mean_vector(
-                pwords, weights=weights, pre_normalize=True, post_normalize=False
-            )
+                weights = np.ones(len(pwords))
+            weights_abs_sum = np.sum(np.abs(weights))
+            if weight_func in ["freq", "mean"] and weights_abs_sum > 0:
+                vector /= weights_abs_sum
+            if normalize:
+                vector /= np.linalg.norm(vector)
+            return vector
         else:
             raise ValueError(f"× Invalid weight_func: {weight_func}")
 
@@ -128,12 +134,7 @@ class FasttextModelRunner:
 
     @Pyro5.server.expose
     def calc_sample_vector(self, word: Union[str, list[str]]) -> np.ndarray:
-        return self.calc_vector(word, weight_func="mean")
-
-    @Pyro5.server.expose
-    def vector_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
-        sim = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
-        return sim**2
+        return self.calc_vector(word, weight_func="sum", normalize=False)
 
     @Pyro5.server.expose
     def word_similarity(
@@ -141,7 +142,7 @@ class FasttextModelRunner:
     ) -> float:
         vec1 = self.calc_query_vector(word1)
         vec2 = self.calc_sample_vector(word2)
-        return self.vector_similarity(vec1, vec2)
+        return dot_sim(vec1, vec2) ** 2
 
     @Pyro5.server.expose
     def words_similarities(
@@ -152,7 +153,7 @@ class FasttextModelRunner:
     ) -> list[tuple[list[str], float]]:
         vec1 = self.calc_query_vector(word1)
         vecs = [self.calc_sample_vector(row) for row in words]
-        scores = [self.vector_similarity(vec1, vec) for vec in vecs]
+        scores = [dot_sim(vec1, vec) ** 2 for vec in vecs]
         res = [(row, score) for row, score in zip(words, scores)]
         if sort:
             res.sort(key=lambda x: x[1], reverse=True)
@@ -206,8 +207,8 @@ class FasttextModelRunner:
                 num_str = brk(num_str)
             return logstr.file(num_str)
 
-        def simweight2str(
-            sim: float, weight: float, round_digits: int = 1, br: bool = True
+        def weightsim2str(
+            weight: float, sim: float, round_digits: int = 1, br: bool = True
         ) -> str:
             weight_str = weight2str(weight, round_digits, br=False)
             sim_str = sim2str(sim, round_digits, br=False)
@@ -239,8 +240,8 @@ class FasttextModelRunner:
                 else:
                     token_weights = [1.0] * len(res_row)
                 tokens_str_list = [
-                    f"{token}{simweight2str(sim, weight)}"
-                    for token, sim, weight in zip(res_row, sims, token_weights)
+                    f"{token}{weightsim2str(weight, sim)}"
+                    for token, weight, sim in zip(res_row, token_weights, sims)
                 ]
                 tokens_str = " ".join(tokens_str_list)
                 logger.success(f"    * {res_score:>.4f}: [{tokens_str}]")
