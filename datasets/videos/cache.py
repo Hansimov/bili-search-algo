@@ -146,6 +146,7 @@ if __name__ == "__main__":
         idx_str = f"{logstr.mesg(str(idx+1))}/{logstr.file(str(len(regions)))}"
         logger.note(f"> [{idx_str}] Caching region: {region_str}")
         args.filter_group = region
+        args.data_root = "parquets"
         args.dataset_name = f"video_texts_{region}"
         main(args)
         logger.success(f"✓ [{idx_str}] Cached region: {region_str}")

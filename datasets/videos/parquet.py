@@ -10,6 +10,8 @@ from pathlib import Path
 from tclogger import logger, logstr, brk, int_bits
 from typing import Union
 
+from configs.envs import DATA_ROOT
+
 PYARROW_TYPES = {
     int: pa.int64(),
     float: pa.float64(),
@@ -18,8 +20,6 @@ PYARROW_TYPES = {
     list[float]: pa.list_(pa.float64()),
     list[str]: pa.list_(pa.string()),
 }
-
-DATA_ROOT = Path(__file__).parents[2] / "data"
 COL_TYPES = {
     "bvid": str,
     "ptid": int,
@@ -32,8 +32,8 @@ COL_TYPES = {
 class VideoTextsParquetWriter:
     def __init__(
         self,
-        dataset_root: Union[Path, str] = None,
-        dataset_name: str = "video_texts",
+        dataset_root: str = None,
+        dataset_name: str = None,
         parquet_prefix: str = "",
         col_types: dict[str, type] = None,
         dataset_max_rows: int = int(1e6 * 1e4),
@@ -42,7 +42,10 @@ class VideoTextsParquetWriter:
         force_delete: bool = False,
         verbose: bool = False,
     ):
-        self.data_root = Path(dataset_root or DATA_ROOT)
+        if dataset_root:
+            self.data_root = DATA_ROOT / dataset_root
+        else:
+            self.data_root = DATA_ROOT
         self.dataset_name = dataset_name
         self.parquet_prefix = parquet_prefix
         self.dataset_max_rows = dataset_max_rows
@@ -164,12 +167,15 @@ class VideoTextsParquetWriter:
 class VideoTextsParquetReader:
     def __init__(
         self,
-        dataset_root: Union[Path, str] = None,
-        dataset_name: str = "video_texts",
+        dataset_root: str = None,
+        dataset_name: str = None,
         parquet_prefix: str = "",
         verbose: bool = False,
     ):
-        self.data_root = Path(dataset_root or DATA_ROOT)
+        if dataset_root:
+            self.data_root = DATA_ROOT / dataset_root
+        else:
+            self.data_root = DATA_ROOT
         self.dataset_name = dataset_name
         self.parquet_prefix = parquet_prefix
         self.verbose = verbose
@@ -177,12 +183,15 @@ class VideoTextsParquetReader:
         self.init_total()
 
     def init_paths(self):
-        self.dataset_dir = self.data_root / self.dataset_name
+        if self.dataset_name:
+            self.dataset_dir = self.data_root / self.dataset_name
+        else:
+            self.dataset_dir = self.data_root
         if self.parquet_prefix:
             pattern = f"{self.parquet_prefix}*.parquet"
         else:
             pattern = "*.parquet"
-        self.parquet_files = sorted(self.dataset_dir.glob(pattern))
+        self.parquet_files = sorted(self.dataset_dir.rglob(pattern))
 
     def init_total(self):
         self.total_file_count = len(self.parquet_files)
@@ -228,7 +237,7 @@ class ParquetOperatorArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-dr", "--dataset-root", type=str, default=None)
-        self.add_argument("-dn", "--dataset-name", type=str, default="video_texts")
+        self.add_argument("-dn", "--dataset-name", type=str, default=None)
         self.add_argument("-pp", "--parquet-prefix", type=str, default="")
 
     def parse_args(self):
