@@ -5,7 +5,7 @@ from pathlib import Path
 from tclogger import logger, logstr, brk, dict_to_str, Runtimer
 from typing import Union, Literal
 
-from configs.envs import SENTENCEPIECE_CKPT_ROOT, TOKEN_FREQ_ROOT
+from configs.envs import SENTENCEPIECE_CKPT_ROOT, TOKEN_FREQS_ROOT
 from configs.envs import SP_MERGED_MODEL_PREFIX
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 
@@ -30,7 +30,7 @@ class FasttextModelFrequenizer:
         self.init_tf_min_max()
 
     def load_token_freq(self):
-        self.token_freq_path = TOKEN_FREQ_ROOT / f"{self.token_freq_prefix}.csv"
+        self.token_freq_path = TOKEN_FREQS_ROOT / f"{self.token_freq_prefix}.csv"
         if self.verbose:
             logger.note(f"> Loading token freq csv:")
             logger.file(f"  * {self.token_freq_path}")

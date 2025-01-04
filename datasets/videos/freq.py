@@ -10,7 +10,7 @@ from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk
 from typing import Union, Literal
 
-from configs.envs import SP_MERGED_MODEL_PATH
+from configs.envs import SP_MERGED_MODEL_PATH, TOKEN_FREQS_ROOT
 from datasets.videos.data import SentencesDataloader
 from datasets.videos.data import ParquetRowsDataLoader
 from datasets.videos.parquet import VideoTextsParquetReader
@@ -139,7 +139,7 @@ class VideoTextsTokenFreqCounter:
         logger.mesg(f"  * no_threshold       : {logstr.file(brk(no_threshold))}")
 
         # dump freqs info to .pickle
-        freq_pickle_path = Path(output_prefix).with_suffix(".pickle")
+        freq_pickle_path = TOKEN_FREQS_ROOT / f"{output_prefix}.pickle"
         freq_info = {
             "doc_freqs": self.doc_freqs,
             "term_freqs": self.term_freqs,
@@ -161,13 +161,13 @@ class VideoTextsTokenFreqCounter:
         ]
         df = pd.DataFrame(freq_list)
         df = df.sort_values(by=["doc_freq", "term_freq"], ascending=False)
-        freq_csv_path = Path(output_prefix).with_suffix(".csv")
+        freq_csv_path = TOKEN_FREQS_ROOT / f"{output_prefix}.csv"
         df.to_csv(freq_csv_path, index=False)
         logger.file(f"  * {str(freq_csv_path.resolve())}")
         logger.mesg(f"  * vocab_size: {logstr.file(brk(len(df)))}")
 
         # dump percentiles info to .jsonv
-        percentile_info_path = Path(output_prefix).with_suffix(".jsonv")
+        percentile_info_path = TOKEN_FREQS_ROOT / f"{output_prefix}.jsonv"
         with open(percentile_info_path, "w") as wf:
             json.dump(self.percentile_info_list, wf, indent=4)
         logger.file(f"  * {str(percentile_info_path.resolve())}")
@@ -274,3 +274,4 @@ if __name__ == "__main__":
     # python -m datasets.videos.freq -o video_texts_freq_tid_17 -dn "video_texts_tid_17" -tid 17
     # python -m datasets.videos.freq -o video_texts_freq_tid_17_nt -dn "video_texts_tid_17" -tid 17 -nt
     # python -m datasets.videos.freq -dn "video_texts_other_game" -o video_texts_freq_other_game -nt
+    # python -m datasets.videos.freq -dr "parquets" -nt -o video_texts_freq_all_nt

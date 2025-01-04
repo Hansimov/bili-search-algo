@@ -11,7 +11,7 @@ from pathlib import Path
 from tclogger import Runtimer, logger, logstr, dict_to_str, brk
 from typing import Union
 
-from configs.envs import SP_MERGED_MODEL_PATH
+from configs.envs import SP_MERGED_MODEL_PATH, TOKEN_FREQS_ROOT
 from datasets.videos.data import SentencesDataloader, ParquetRowsDataLoader
 from datasets.videos.parquet import VideoTextsParquetReader
 from datasets.args import DATA_LOADER_ARG_PARSER
@@ -59,11 +59,11 @@ class FasttextModelVocabLoader:
         }
 
     def load_vocab_from_pickle(self) -> dict[str, dict[str, int]]:
-        pickle_path = Path(self.vocab_prefix).with_suffix(".pickle")
+        vocab_pickle_path = TOKEN_FREQS_ROOT / f"{self.vocab_prefix}.pickle"
         if self.verbose:
             logger.note("> Loading vocab pickle from file:")
-            logger.file(f"  * {pickle_path}")
-        with pickle_path.open("rb") as f:
+            logger.file(f"  * {vocab_pickle_path}")
+        with vocab_pickle_path.open("rb") as f:
             pickle_dict = pickle.load(f)
         term_freqs = pickle_dict["term_freqs"]
         doc_freqs = pickle_dict["doc_freqs"]
@@ -608,10 +608,6 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_tid_all_mv_60w_vs_128 -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 600000 -vs 128
     # python -m models.fasttext.train -m fasttext_tid_all_mv_30w -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 300000
     # python -m models.fasttext.train -m fasttext_tid_all_mv_30w_vs_384 -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 300000 -vs 384
-
-    # python -m models.fasttext.train -m fasttext_tid_all_vf_mv_30w_vs_384 -ep 1 -dn "video_texts_tid_all" -vf "video_texts_freq_all.csv" -bs 20000 -mv 300000 -vm 1000000
-
-    # python -m models.fasttext.train -m fasttext_tid_all_vf_mv_30w_vs_384 -ep 1 -dn "video_texts_tid_all" -vf "video_texts_freq_all.csv" -bs 20000 -mv 300000 -vm 1000000
 
     # python -m models.fasttext.train -m fasttext_tid_17_ep_1_vf -ep 1 -dn "video_texts_tid_17" -vf video_texts_freq_tid_17_nt -bs 20000 -mv 300000
 
