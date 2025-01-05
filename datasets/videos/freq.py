@@ -1,12 +1,12 @@
 import argparse
 import json
+import multiprocessing as mp
 import numpy as np
 import pandas as pd
 import pickle
 import sys
 
 from collections import defaultdict
-from pathlib import Path
 from tclogger import logger, logstr, dict_to_str, brk
 from typing import Union, Literal
 
@@ -36,7 +36,8 @@ class VideoTextsTokenFreqCounter:
     def count_tokens_freq(self, tokens: list[str]):
         for token in tokens:
             self.term_freqs[token] += 1
-            self.doc_freqs[token] = 1
+            if self.doc_freqs[token] == 0:
+                self.doc_freqs[token] = 1
 
     def sort_freqs(self):
         self.term_freqs = dict(
@@ -173,6 +174,106 @@ class VideoTextsTokenFreqCounter:
         logger.file(f"  * {str(percentile_info_path.resolve())}")
 
 
+def freq_worker_process(input_queue: mp.Queue, output_queue: mp.Queue):
+    while True:
+        task = input_queue.get()
+        if task is None:
+            break
+
+        batch_idx, tokens_batch = task
+        term_freqs = defaultdict(int)
+        doc_freqs = defaultdict(int)
+
+        for tokens in tokens_batch:
+            for token in tokens:
+                term_freqs[token] += 1
+                doc_freqs[token] = 1
+
+        output_queue.put((batch_idx, (term_freqs, doc_freqs)))
+
+
+class ParallelVideoTextsTokenFreqCounter(VideoTextsTokenFreqCounter):
+    """
+    Experiments indicate that this parallel implementation
+    is slower than the original one,
+    as the bottleneck is dict update,
+    and the merge part in parallel version still cannot avoid it.
+    """
+
+    def __init__(
+        self,
+        data_loader: Union[ParquetRowsDataLoader, SentencesDataloader],
+        data_source: Literal["mongo", "parquet"] = "parquet",
+        tokenizer: ParallelSentenceFullTokenizer = None,
+        max_count_batch: int = None,
+    ):
+        self.data_loader = data_loader
+        self.data_source = data_source
+        self.tokenizer = tokenizer
+        self.max_count_batch = max_count_batch
+        self.term_freqs = defaultdict(int)
+        self.doc_freqs = defaultdict(int)
+
+    def create_workers(self):
+        self.workers_num = mp.cpu_count() // 2
+        self.workers = []
+        self.input_queue = mp.Queue()
+        self.output_queue = mp.Queue()
+        for _ in range(self.workers_num):
+            p = mp.Process(
+                target=freq_worker_process,
+                args=(self.input_queue, self.output_queue),
+            )
+            p.start()
+            self.workers.append(p)
+
+    def terminate_workers(self):
+        for _ in self.workers:
+            self.input_queue.put(None)
+        for p in self.workers:
+            p.join()
+        self.workers = []
+
+    def submit_queue(self):
+        batch_results = []
+        for _ in range(self.tasks_count):
+            task_id, result = self.output_queue.get()
+            batch_results.append(result)
+            self.tasks_count -= 1
+        self.merge_batch_count_results(batch_results)
+        batch_bar_desc = logstr.mesg(f"tokens: {brk(len(self.term_freqs))}")
+        self.data_loader.batch_bar.update(
+            increment=len(batch_results), desc=batch_bar_desc
+        )
+
+    def merge_batch_count_results(self, batch_results):
+        for term_freq, doc_freq in batch_results:
+            for token, count in term_freq.items():
+                self.term_freqs[token] += count
+            for token, count in doc_freq.items():
+                self.doc_freqs[token] = 1
+
+    def count(self):
+        self.data_loader.__epoch_start__()
+        if self.data_source == "parquet":
+            self.create_workers()
+            self.tasks_count = 0
+            for batch_idx, tokens_batch in enumerate(self.data_loader.batch_generator):
+                if self.max_count_batch and batch_idx >= self.max_count_batch:
+                    break
+                self.input_queue.put((batch_idx, tokens_batch))
+                self.tasks_count += 1
+                if self.tasks_count >= 5:
+                    self.submit_queue()
+            if self.tasks_count > 0:
+                self.submit_queue()
+            print()
+        else:
+            raise ValueError(f"Unknown data source: {self.data_source}")
+
+        self.sort_freqs()
+
+
 class FreqCounterArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -273,5 +374,6 @@ if __name__ == "__main__":
     # python -m datasets.videos.freq -o video_texts_freq_all -dn "video_texts_tid_all"
     # python -m datasets.videos.freq -o video_texts_freq_tid_17 -dn "video_texts_tid_17" -tid 17
     # python -m datasets.videos.freq -o video_texts_freq_tid_17_nt -dn "video_texts_tid_17" -tid 17 -nt
-    # python -m datasets.videos.freq -dn "video_texts_other_game" -o video_texts_freq_other_game -nt
-    # python -m datasets.videos.freq -dr "parquets" -nt -o video_texts_freq_all_nt
+    # python -m datasets.videos.freq -dn "video_texts_other_game" -o video_texts_freq_other_game_nt -nt
+    # python -m datasets.videos.freq -dn "video_texts_other_game" -o video_texts_freq_other_game -nt -mcb 200
+    # python -m datasets.videos.freq -dr "parquets" -o video_texts_freq_all_nt -nt
