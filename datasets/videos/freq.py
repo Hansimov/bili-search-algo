@@ -369,11 +369,5 @@ if __name__ == "__main__":
     logger.note("> Dumping ...")
     counter.dump(args.output_prefix, no_threshold=args.no_threshold)
 
-    # python -m datasets.videos.freq
-    # python -m datasets.videos.freq -o video_texts_freq_all -ec -mcb 1
-    # python -m datasets.videos.freq -o video_texts_freq_all -dn "video_texts_tid_all"
-    # python -m datasets.videos.freq -o video_texts_freq_tid_17 -dn "video_texts_tid_17" -tid 17
-    # python -m datasets.videos.freq -o video_texts_freq_tid_17_nt -dn "video_texts_tid_17" -tid 17 -nt
-    # python -m datasets.videos.freq -dn "video_texts_other_game" -o video_texts_freq_other_game_nt -nt
-    # python -m datasets.videos.freq -dn "video_texts_other_game" -o video_texts_freq_other_game -nt -mcb 200
-    # python -m datasets.videos.freq -dr "parquets" -o video_texts_freq_all_nt -nt
+    # python -m datasets.videos.freq -dr "parquets" -o video_texts_freq_all
+    # python -m datasets.videos.freq -dr "parquets" -dn "video_texts_other_game" -o video_texts_other_game_nt -nt
