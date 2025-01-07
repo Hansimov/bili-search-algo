@@ -11,7 +11,7 @@ from pathlib import Path
 from tclogger import Runtimer, logger, logstr, dict_to_str, brk
 from typing import Union
 
-from configs.envs import SP_MERGED_MODEL_PATH, TOKEN_FREQS_ROOT
+from configs.envs import TOKEN_FREQS_ROOT, FASTTEXT_CKPT_ROOT, SP_MERGED_MODEL_PATH
 from datasets.videos.data import SentencesDataloader, ParquetRowsDataLoader
 from datasets.videos.parquet import VideoTextsParquetReader
 from datasets.args import DATA_LOADER_ARG_PARSER
@@ -34,7 +34,7 @@ class FasttextModelVocabLoader:
         self.vocab_dict = {}
 
     def load_vocab_from_csv(self) -> dict[str, dict[str, int]]:
-        csv_path = Path(self.vocab_prefix).with_suffix(".csv")
+        csv_path = TOKEN_FREQS_ROOT / f"{self.vocab_prefix}.csv"
         if self.verbose:
             logger.note("> Loading vocab csv from file:")
             logger.file(f"  * {csv_path}")
@@ -137,7 +137,14 @@ class FasttextModelParquetDataLoader(ParquetRowsDataLoader):
         else:
             return None, None
 
-    def count(self) -> tuple[int, int]:
+    def get_corpus_count(self):
+        _, corpus_count = self.get_count_from_local()
+        if not corpus_count:
+            # read number of rows from parquet file
+            corpus_count = self.parquet_reader.total_row_count
+        return corpus_count
+
+    def get_count(self) -> tuple[int, int]:
         logger.note("> Counting vocab:")
         total_words, corpus_count = self.get_count_from_local()
         if not total_words or not corpus_count:
@@ -247,25 +254,30 @@ class FasttextModelTrainer:
     ):
         self.data_loader = data_loader
 
-    def build_vocab_with_loader(self):
+    def load_vocab(self):
         vocab_dict = self.vocab_loader.load_vocab_from_pickle()
-        total_words, corpus_count = self.data_loader.count()
+        # total_words, corpus_count = self.data_loader.get_count()
+        corpus_count = self.data_loader.get_corpus_count()
         self.model.raw_vocab = vocab_dict["term_freqs"]
         self.model.corpus_count = corpus_count
-        self.model.corpus_total_words = total_words
+        # self.model.corpus_total_words = total_words
+
+        logger.note("> Preparing vocab and weights:")
+        # TODO: need to adapt for post_train
         self.model.prepare_vocab(update=False, keep_raw_vocab=False, trim_rule=None)
         self.model.prepare_weights(update=False)
+        logger.mesg(f"  * wv vocab size: {len(self.model.wv.key_to_index)}")
 
-    def build_vocab(self):
-        logger.note("> Building vocab:")
+    def init_vocab(self):
+        logger.note("> Initialzing vocab:")
         if self.is_model_trained and self.skip_trained:
-            logger.file("  * model already trained, skip build_vocab()")
+            logger.file("  * model already trained, skip init vocab")
         elif self.vocab_loader:
-            self.build_vocab_with_loader()
-            logger.success("  ✓ built vocab with loader")
+            self.load_vocab()
+            logger.success("  ✓ vocab loaded")
         else:
             self.model.build_vocab(corpus_iterable=self.data_loader)
-            logger.success("  ✓ built vocab")
+            logger.success("  ✓ vocab built")
 
     def refresh_data_loader_status(self):
         self.data_loader.iter_epochs = self.train_params["epochs"]
