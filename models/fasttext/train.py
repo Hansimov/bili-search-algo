@@ -9,7 +9,7 @@ from gensim.models import FastText, KeyedVectors
 from gensim.models.doc2vec import Doc2Vec, TaggedDocument
 from pathlib import Path
 from tclogger import Runtimer, logger, logstr, dict_to_str, brk
-from typing import Union
+from typing import Union, Literal
 
 from configs.envs import TOKEN_FREQS_ROOT, FASTTEXT_CKPT_ROOT, SP_MERGED_MODEL_PATH
 from datasets.videos.data import SentencesDataloader, ParquetRowsDataLoader
@@ -166,6 +166,8 @@ class FasttextModelTrainer:
     def __init__(
         self,
         model_prefix: Union[str, Path] = "fasttext",
+        train_stage: Literal["pre_train", "post_train", "test"] = "pre_train",
+        post_train_model_prefix: Union[str, Path] = None,
         epochs: int = 5,
         hs: int = 0,
         min_alpha: float = 0.0001,
@@ -178,22 +180,20 @@ class FasttextModelTrainer:
         vector_size: int = 128,
         window: int = 5,
         workers: int = 8,
-        keep_exist_model: bool = True,
         skip_trained: bool = True,
         use_local_model: bool = True,
         use_kv: bool = False,
         vocab_loader: FasttextModelVocabLoader = None,
     ):
         self.model_prefix = model_prefix
-        self.keep_exist_model = keep_exist_model
+        self.train_stage = train_stage
         self.skip_trained = skip_trained
         self.use_local_model = use_local_model
         self.use_kv = use_kv
         self.vocab_loader = vocab_loader
 
-        self.model_path = (
-            Path(__file__).parent / "checkpoints" / f"{model_prefix}.model"
-        )
+        self.post_train_model_prefix = post_train_model_prefix
+        self.model_path = FASTTEXT_CKPT_ROOT / f"{model_prefix}.model"
         self.kv_path = self.model_path.with_suffix(".kv")
         self.model = None
         self.is_model_trained = False
@@ -434,6 +434,14 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
             choices=["mongo", "parquet"],
             default="parquet",
         )
+        self.add_argument(
+            "-ts",
+            "--train-stage",
+            type=str,
+            choices=["pre_train", "post_train", "test"],
+            default="pre_train",
+        )
+        self.add_argument("-pm", "--post-train-model-prefix", type=str, default=None)
         self.add_argument("-ep", "--epochs", type=int, default=1)
         self.add_argument("-hs", "--hs", type=int, default=0)
         self.add_argument("-ma", "--min-alpha", type=float, default=0.0001)
@@ -448,8 +456,6 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-vm", "--vocab-max-count", type=int, default=None)
         self.add_argument("-wd", "--window", type=int, default=5)
         self.add_argument("-wk", "--workers", type=int, default=32)
-        self.add_argument("-t", "--test-only", action="store_true")
-        self.add_argument("-km", "--keep-exist-model", action="store_false")
         self.add_argument("-st", "--skip-trained", action="store_true")
         self.add_argument("-lm", "--use-local-model", action="store_true")
         self.add_argument("-kv", "--use-kv", action="store_true")
@@ -481,14 +487,17 @@ if __name__ == "__main__":
     arg_parser.add_parser_class(ModelTrainerArgParser, Doc2VecArgParser)
     args = arg_parser.parse_args()
 
-    if args.test_only:
-        args.keep_exist_model = True
+    if args.train_stage == "pre_train":
+        args.skip_trained = False
+        args.use_local_model = False
+    elif args.train_stage == "post_train":
+        args.skip_trained = False
+        args.use_local_model = True
+    elif args.train_stage == "test":
         args.skip_trained = True
         args.use_local_model = True
     else:
-        args.keep_exist_model = False
-        args.skip_trained = False
-        args.use_local_model = False
+        raise ValueError(f"× Invalid train_stage: {args.train_stage}")
 
     if args.vocab_file:
         vocab_loader = FasttextModelVocabLoader(
@@ -511,7 +520,6 @@ if __name__ == "__main__":
         "vector_size": args.vector_size,
         "window": args.window,
         "workers": args.workers,
-        "keep_exist_model": args.keep_exist_model,
         "skip_trained": args.skip_trained,
         "use_local_model": args.use_local_model,
         "use_kv": args.use_kv,
@@ -531,9 +539,9 @@ if __name__ == "__main__":
         train_params.update(doc2vec_params)
         trainer = Doc2VecModelTrainer(**train_params)
     else:
-        raise ValueError(f"Unknown model class: {args.model_class}")
+        raise ValueError(f"× Invalid model_class: {args.model_class}")
 
-    if not args.test_only:
+    if args.train_stage in ["pre_train", "post_train"]:
         data_source_str = logstr.mesg(brk(args.data_source))
         logger.note(f"> Initiating data loader: {data_source_str}")
         if args.data_source == "mongo":
@@ -585,9 +593,9 @@ if __name__ == "__main__":
             data_loader.model_class = args.model_class
             logger.mesg(dict_to_str(data_params), indent=2)
         else:
-            raise ValueError(f"Unknown data source: {args.data_source}")
+            raise ValueError(f"× Invalid data_source: {args.data_source}")
         trainer.init_data_loader(data_loader)
-        trainer.build_vocab()
+        trainer.init_vocab()
         trainer.train()
         if args.data_source == "mongo":
             data_loader.tokenizer.terminate()
@@ -600,29 +608,14 @@ if __name__ == "__main__":
         )
         trainer.test(tokenizer=tokenizer)
     else:
-        raise ValueError(f"Unknown model class: {args.model_class}")
+        raise ValueError(f"× Invalid model_class: {args.model_class}")
 
     timer.__exit__(None, None, None)
 
     # python -m models.fasttext.train
     # python -m models.fasttext.train -t
 
-    # python -m models.fasttext.train -ep 3 -m fasttext_tid_17_ep_3
-    # python -m models.fasttext.train -m fasttext_tid_17_ep_3_parallel -ep 3 -vf "video_texts_freq_all.csv" -vm 1200000
-    # python -m models.fasttext.train -m fasttext_tid_17_ep_2_parallel -ep 2 -mc 20
-
-    # python -m models.fasttext.train -m fasttext_tid_17_ep_4 -ep 4 -dn "video_texts_tid_17" -mc 20 -bs 100000
-    # python -m models.fasttext.train -m fasttext_tid_all -ep 1 -dn "video_texts_tid_all" -mc 20 -bs 20000
-
-    # python -m models.fasttext.train -m fasttext_tid_all -ep 1 -dn "video_texts_tid_all" -mc 20 -bs 20000
-    # python -m models.fasttext.train -m fasttext_tid_all_mc_50 -ep 1 -dn "video_texts_tid_all" -mc 50 -bs 20000
-    # python -m models.fasttext.train -m fasttext_tid_all_mv_60w -ep 1 -dn "video_texts_tid_all" -mv 600000 -bs 20000
-    # python -m models.fasttext.train -m fasttext_tid_all_mv_60w_vs_128 -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 600000 -vs 128
-    # python -m models.fasttext.train -m fasttext_tid_all_mv_30w -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 300000
-    # python -m models.fasttext.train -m fasttext_tid_all_mv_30w_vs_384 -dn "video_texts_tid_all" -bs 20000 -ep 1 -mv 300000 -vs 384
-
-    # python -m models.fasttext.train -m fasttext_tid_17_ep_1_vf -ep 1 -dn "video_texts_tid_17" -vf video_texts_freq_tid_17_nt -bs 20000 -mv 300000
-
-    # python -m models.fasttext.train -m fasttext_other_game -ep 1 -dn "video_texts_other_game" -vf video_texts_freq_other_game -bs 20000 -mv 300000
-
     # python -m models.fasttext.train -ms doc2vec -m doc2vec_tid_17 -t
+
+    # python -m models.fasttext.train -m fasttext_other_game -ep 1 -dr "parquets" -dn "video_texts_other_game" -vf video_texts_other_game_nt -bs 20000 -mv 300000
+    # python -m models.fasttext.train -m fasttext_other_game -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf video_texts_music_dance_nt -bs 20000 -mv 300000
