@@ -304,11 +304,26 @@ class FasttextModelTrainer:
                 model_file.unlink()
 
     def save_model(self):
+        logger.note("> Saving model:")
         if not self.model_path.parent.exists():
             self.model_path.parent.mkdir(parents=True, exist_ok=True)
-        self.model.save(str(self.model_path))
+
+        if self.train_stage == "post_train":
+            if self.post_train_model_prefix:
+                save_model_prefix = self.post_train_model_prefix
+            else:
+                save_model_prefix = f"{self.model_prefix}_post_train"
+            model_save_path = FASTTEXT_CKPT_ROOT / f"{save_model_prefix}.model"
+        else:
+            model_save_path = self.model_path
+
+        self.model.save(str(model_save_path))
+        logger.success(f"  * [{model_save_path}]")
+
         if self.use_kv:
-            self.model.wv.save(str(self.model_path.with_suffix(".kv")))
+            kv_save_path = model_save_path.with_suffix(".kv")
+            self.model.wv.save(str(kv_save_path))
+            logger.success(f"  * [{kv_save_path}]")
 
     def train(self):
         logger.note("> Training model:")
@@ -324,13 +339,7 @@ class FasttextModelTrainer:
             )
             logger.success(f"  ✓ model trained")
 
-            if self.model_path.exists() and self.keep_exist_model:
-                logger.file(f"> Skip saving existed model")
-                logger.file(f"  * [{self.model_path}]")
-            else:
-                logger.note("> Saving model:")
-                self.save_model()
-                logger.success(f"  * [{self.model_path}]")
+            self.save_model()
 
     def test(
         self, tokenizer: SentenceFullTokenizer = None, restrict_vocab: int = 150000
