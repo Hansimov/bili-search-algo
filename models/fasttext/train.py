@@ -1,165 +1,22 @@
 import argparse
 import numpy as np
-import json
-import pandas as pd
-import pickle
 import sys
 
 from gensim.models import FastText, KeyedVectors
-from gensim.models.doc2vec import Doc2Vec, TaggedDocument
+from gensim.models.doc2vec import Doc2Vec
 from pathlib import Path
 from tclogger import Runtimer, logger, logstr, dict_to_str, brk
 from typing import Union, Literal
 
-from configs.envs import TOKEN_FREQS_ROOT, FASTTEXT_CKPT_ROOT, SP_MERGED_MODEL_PATH
-from datasets.videos.data import SentencesDataloader, ParquetRowsDataLoader
+from configs.envs import FASTTEXT_CKPT_ROOT, SP_MERGED_MODEL_PATH
+
 from datasets.videos.parquet import VideoTextsParquetReader
 from datasets.args import DATA_LOADER_ARG_PARSER
+from models.fasttext.data import FasttextDataLoader, FasttextParquetDataLoader
+from models.fasttext.vocab import FasttextVocabLoader
 from models.fasttext.test import TEST_KEYWORDS, TEST_PAIRS
-
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
-
-
-class FasttextModelVocabLoader:
-    def __init__(
-        self,
-        vocab_prefix: str,
-        vocab_max_count: int = None,
-        verbose: bool = False,
-    ):
-        self.vocab_prefix = vocab_prefix
-        self.vocab_max_count = vocab_max_count
-        self.verbose = verbose
-        self.vocab_dict = {}
-
-    def load_vocab_from_csv(self) -> dict[str, dict[str, int]]:
-        csv_path = TOKEN_FREQS_ROOT / f"{self.vocab_prefix}.csv"
-        if self.verbose:
-            logger.note("> Loading vocab csv from file:")
-            logger.file(f"  * {csv_path}")
-        df = pd.read_csv(csv_path)
-        # df = df.sort_values(by="doc_freq", ascending=False)
-        if self.vocab_max_count:
-            df = df.head(self.vocab_max_count)
-        df = df.sort_values(by="term_freq", ascending=False)
-        self.term_freqs = dict(zip(df["token"], df["term_freq"]))
-        self.doc_freqs = dict(zip(df["token"], df["doc_freq"]))
-        if self.verbose:
-            vocab_info = {
-                "vocab_size": df.shape[0],
-                "min_term_freq": df.tail(1)["term_freq"].values[0],
-                "min_doc_freq": df.tail(1)["doc_freq"].values[0],
-            }
-            logger.mesg(dict_to_str(vocab_info), indent=2)
-
-        return {
-            "term_freqs": self.term_freqs,
-            "doc_freqs": self.doc_freqs,
-        }
-
-    def load_vocab_from_pickle(self) -> dict[str, dict[str, int]]:
-        vocab_pickle_path = TOKEN_FREQS_ROOT / f"{self.vocab_prefix}.pickle"
-        if self.verbose:
-            logger.note("> Loading vocab pickle from file:")
-            logger.file(f"  * {vocab_pickle_path}")
-        with vocab_pickle_path.open("rb") as f:
-            pickle_dict = pickle.load(f)
-        term_freqs = pickle_dict["term_freqs"]
-        doc_freqs = pickle_dict["doc_freqs"]
-        # since the freqs are already sorted, no need to sort again
-        if self.vocab_max_count:
-            term_freqs = term_freqs[: self.vocab_max_count]
-            doc_freqs = doc_freqs[: self.vocab_max_count]
-        if self.verbose:
-            vocab_info = {
-                "vocab_size": len(term_freqs),
-                "min_term_freq": min(term_freqs.values()),
-                "min_doc_freq": min(doc_freqs.values()),
-            }
-            logger.mesg(dict_to_str(vocab_info), indent=2)
-
-        return {
-            "term_freqs": term_freqs,
-            "doc_freqs": doc_freqs,
-        }
-
-
-class FasttextModelDataLoader(SentencesDataloader):
-    def __iter__(self):
-        self.__epoch_start__()
-        for batch_idx, batch in enumerate(
-            self.doc_batch_generator(doc_type="sentence")
-        ):
-            if self.max_batch is not None and batch_idx >= self.max_batch:
-                break
-            tokenize_results: list[dict[str, str]] = self.tokenizer.tokenize_list(
-                batch, sort=False
-            )
-            for result in tokenize_results:
-                yield result["tokens"]
-        self.__epoch_end__()
-
-
-class FasttextModelParquetDataLoader(ParquetRowsDataLoader):
-    def __iter__(self):
-        self.__epoch_start__()
-        self.batch_bar.reset()
-        self.batch_bar.update(flush=True)
-        sample_idx = 0
-        for batch_idx, tokens_batch in enumerate(self.batch_generator):
-            self.batch_bar.update(increment=1, flush=True)
-            if self.max_batch is not None and batch_idx >= self.max_batch:
-                break
-            self.sample_bar.total = len(tokens_batch)
-            self.sample_bar.update(flush=True)
-            for tokens in tokens_batch:
-                self.sample_bar.update(1)
-                sample_idx += 1
-                if hasattr(self, "model_class") and self.model_class == "doc2vec":
-                    yield TaggedDocument(tokens, [sample_idx])
-                else:
-                    yield tokens
-            self.sample_bar.reset()
-        self.__epoch_end__()
-
-    def get_count_from_local(self):
-        self.count_json = self.parquet_reader.data_root / (
-            self.parquet_reader.dataset_name + ".count.json"
-        )
-        if self.count_json.exists():
-            with self.count_json.open("r") as f:
-                count_dict = json.load(f)
-            return (
-                count_dict.get("total_words", None),
-                count_dict.get("corpus_count", None),
-            )
-        else:
-            return None, None
-
-    def get_corpus_count(self):
-        _, corpus_count = self.get_count_from_local()
-        if not corpus_count:
-            # read number of rows from parquet file
-            corpus_count = self.parquet_reader.total_row_count
-        return corpus_count
-
-    def get_count(self) -> tuple[int, int]:
-        logger.note("> Counting vocab:")
-        total_words, corpus_count = self.get_count_from_local()
-        if not total_words or not corpus_count:
-            total_words, corpus_count = 0, 0
-            for tokens in self:
-                total_words += len(tokens)
-                corpus_count += 1
-        count_info = {
-            "total_words": total_words,
-            "corpus_count": corpus_count,
-        }
-        with self.count_json.open("w") as f:
-            json.dump(count_info, f, indent=4)
-        logger.mesg(dict_to_str(count_info), indent=2)
-        return total_words, corpus_count
 
 
 class FasttextModelTrainer:
@@ -183,7 +40,7 @@ class FasttextModelTrainer:
         skip_trained: bool = True,
         use_local_model: bool = True,
         use_kv: bool = False,
-        vocab_loader: FasttextModelVocabLoader = None,
+        vocab_loader: FasttextVocabLoader = None,
     ):
         self.model_prefix = model_prefix
         self.train_stage = train_stage
@@ -250,7 +107,7 @@ class FasttextModelTrainer:
 
     def init_data_loader(
         self,
-        data_loader: Union[FasttextModelDataLoader, FasttextModelParquetDataLoader],
+        data_loader: Union[FasttextDataLoader, FasttextParquetDataLoader],
     ):
         self.data_loader = data_loader
 
@@ -261,6 +118,7 @@ class FasttextModelTrainer:
         self.model.raw_vocab = vocab_dict["term_freqs"]
         self.model.corpus_count = corpus_count
         # self.model.corpus_total_words = total_words
+        logger.mesg(f"  * corpus count: [{corpus_count}]")
 
         logger.note("> Preparing vocab and weights:")
         # TODO: need to adapt for post_train
@@ -489,13 +347,7 @@ class Doc2VecArgParser(argparse.ArgumentParser):
         return self.args
 
 
-if __name__ == "__main__":
-    timer = Runtimer()
-    timer.__enter__()
-    arg_parser = DATA_LOADER_ARG_PARSER
-    arg_parser.add_parser_class(ModelTrainerArgParser, Doc2VecArgParser)
-    args = arg_parser.parse_args()
-
+def main(args):
     if args.train_stage == "pre_train":
         args.skip_trained = False
         args.use_local_model = False
@@ -509,7 +361,7 @@ if __name__ == "__main__":
         raise ValueError(f"× Invalid train_stage: {args.train_stage}")
 
     if args.vocab_file:
-        vocab_loader = FasttextModelVocabLoader(
+        vocab_loader = FasttextVocabLoader(
             args.vocab_file, vocab_max_count=args.vocab_max_count, verbose=True
         )
     else:
@@ -577,7 +429,7 @@ if __name__ == "__main__":
                 "show_epoch_bar": True,
                 "verbose": True,
             }
-            data_loader = FasttextModelDataLoader(**data_params, tokenizer=tokenizer)
+            data_loader = FasttextDataLoader(**data_params, tokenizer=tokenizer)
             logger.mesg(dict_to_str(data_params), indent=2)
         elif args.data_source == "parquet":
             parquet_params = {
@@ -596,7 +448,7 @@ if __name__ == "__main__":
                 "show_epoch_bar": True,
                 "verbose": True,
             }
-            data_loader = FasttextModelParquetDataLoader(
+            data_loader = FasttextParquetDataLoader(
                 **data_params, parquet_reader=parquet_reader
             )
             data_loader.model_class = args.model_class
@@ -619,12 +471,15 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"× Invalid model_class: {args.model_class}")
 
-    timer.__exit__(None, None, None)
 
-    # python -m models.fasttext.train
-    # python -m models.fasttext.train -t
-
-    # python -m models.fasttext.train -ms doc2vec -m doc2vec_tid_17 -t
+if __name__ == "__main__":
+    arg_parser = DATA_LOADER_ARG_PARSER
+    arg_parser.add_parser_class(ModelTrainerArgParser, Doc2VecArgParser)
+    args = arg_parser.parse_args()
+    with Runtimer() as timer:
+        main(args)
 
     # python -m models.fasttext.train -m fasttext_other_game -ep 1 -dr "parquets" -dn "video_texts_other_game" -vf video_texts_other_game_nt -bs 20000 -mv 300000
     # python -m models.fasttext.train -m fasttext_other_game -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf video_texts_music_dance_nt -bs 20000 -mv 300000
+
+    # python -m models.fasttext.train -ts test

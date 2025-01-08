@@ -1,101 +1,83 @@
-from sedb import MongoOperator
-from tclogger import logger, logstr, TCLogbar, ts_to_str
-from typing import Literal
+import json
 
-from configs.envs import MONGO_ENVS
+from gensim.models.doc2vec import TaggedDocument
+from tclogger import logger, dict_to_str
 
-
-class DataProgressBar:
-    def __init__(self, total: int = None):
-        self.total = total
-        self.init_bar()
-
-    def init_bar(self):
-        self.bar = TCLogbar(total=self.total, flush_interval=0.25)
-
-    def update(self, increment: int = None, head: str = None, desc: str = None):
-        if increment is not None:
-            self.bar.update(increment)
-        if head is not None:
-            self.bar.set_head(head)
-        if desc is not None:
-            self.bar.set_desc(desc)
-
-    def reset(self):
-        self.bar.reset()
+from datasets.videos.data import SentencesDataloader, ParquetRowsDataLoader
 
 
-class VideosTagsDataLoader:
-    def __init__(
-        self,
-        collection: str = "videos_tags",
-        max_count: int = None,
-        iter_val: Literal["doc", "tag_list"] = "tag_list",
-        iter_log: bool = False,
-        iter_epochs: int = None,
-    ):
-        self.collection = collection
-        self.init_mongo()
-        self.max_count = max_count
-        self.iter_val = iter_val
-        self.iter_log = iter_log
-        self.iter_epochs = iter_epochs
-        self.iter_epoch = 0
-        if iter_log:
-            self.progress_bar = DataProgressBar(total=max_count)
-
-    def init_mongo(self):
-        self.mongo = MongoOperator(
-            MONGO_ENVS, connect_msg=f"from {self.__class__.__name__}", indent=2
-        )
-        self.cursor = self.mongo.get_cursor(self.collection)
-        self.store_cursor()
-
-    def store_cursor(self):
-        self.cursor_unevaluated = self.cursor.clone()
-
-    def restore_cursor(self):
-        self.cursor = self.cursor_unevaluated.clone()
-        if self.iter_epochs is not None:
-            self.iter_epoch += 1
-        self.progress_bar.reset()
-
-    def get_tag_list(self, doc):
-        return [tag.strip() for tag in doc["tags"].split(",")]
-
+class FasttextDataLoader(SentencesDataloader):
     def __iter__(self):
-        for idx, doc in enumerate(self.cursor):
-            if self.max_count is not None and idx >= self.max_count:
+        self.__epoch_start__()
+        for batch_idx, batch in enumerate(
+            self.doc_batch_generator(doc_type="sentence")
+        ):
+            if self.max_batch is not None and batch_idx >= self.max_batch:
                 break
-            else:
-                if self.iter_val == "tag_list":
-                    res = self.get_tag_list(doc)
+            tokenize_results: list[dict[str, str]] = self.tokenizer.tokenize_list(
+                batch, sort=False
+            )
+            for result in tokenize_results:
+                yield result["tokens"]
+        self.__epoch_end__()
+
+
+class FasttextParquetDataLoader(ParquetRowsDataLoader):
+    def __iter__(self):
+        self.__epoch_start__()
+        self.batch_bar.reset()
+        self.batch_bar.update(flush=True)
+        sample_idx = 0
+        for batch_idx, tokens_batch in enumerate(self.batch_generator):
+            self.batch_bar.update(increment=1, flush=True)
+            if self.max_batch is not None and batch_idx >= self.max_batch:
+                break
+            self.sample_bar.total = len(tokens_batch)
+            self.sample_bar.update(flush=True)
+            for tokens in tokens_batch:
+                self.sample_bar.update(1)
+                sample_idx += 1
+                if getattr(self, "model_class", None) == "doc2vec":
+                    yield TaggedDocument(tokens, [sample_idx])
                 else:
-                    res = doc
+                    yield tokens
+            self.sample_bar.reset()
+        self.__epoch_end__()
 
-                if self.iter_log and self.progress_bar:
-                    if self.iter_epochs is not None:
-                        epoch_str = f"[{logstr.file(self.iter_epoch+1)}/{logstr.mesg(self.iter_epochs)}]"
-                    else:
-                        epoch_str = ""
-                    head = f"* {epoch_str}"
-                    desc = f"{doc['bvid']}"
-                    self.progress_bar.update(increment=1, head=head, desc=desc)
-                yield res
-        self.restore_cursor()
-
-
-if __name__ == "__main__":
-    from tqdm import tqdm
-
-    max_count = 10000
-    loader = VideosTagsDataLoader(max_count=max_count, iter_val="doc", iter_log=True)
-    logger.note(f"> Iterating over documents: [{logstr.mesg(max_count)}]")
-
-    for doc in loader:
-        if doc is None:
-            break
+    def get_count_from_local(self):
+        self.count_json = self.parquet_reader.data_root / (
+            self.parquet_reader.dataset_name + ".count.json"
+        )
+        if self.count_json.exists():
+            with self.count_json.open("r") as f:
+                count_dict = json.load(f)
+            return (
+                count_dict.get("total_words", None),
+                count_dict.get("corpus_count", None),
+            )
         else:
-            pass
+            return None, None
 
-    # python -m models.fasttext.data
+    def get_corpus_count(self):
+        _, corpus_count = self.get_count_from_local()
+        if not corpus_count:
+            # read number of rows from parquet file
+            corpus_count = self.parquet_reader.total_row_count
+        return corpus_count
+
+    def get_count(self) -> tuple[int, int]:
+        logger.note("> Counting vocab:")
+        total_words, corpus_count = self.get_count_from_local()
+        if not total_words or not corpus_count:
+            total_words, corpus_count = 0, 0
+            for tokens in self:
+                total_words += len(tokens)
+                corpus_count += 1
+        count_info = {
+            "total_words": total_words,
+            "corpus_count": corpus_count,
+        }
+        with self.count_json.open("w") as f:
+            json.dump(count_info, f, indent=4)
+        logger.mesg(dict_to_str(count_info), indent=2)
+        return total_words, corpus_count
