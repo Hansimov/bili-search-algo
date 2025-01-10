@@ -36,8 +36,8 @@ class VideoTextsTokenFreqCounter:
     def count_tokens_freq(self, tokens: list[str]):
         for token in tokens:
             self.term_freqs[token] += 1
-            if self.doc_freqs[token] == 0:
-                self.doc_freqs[token] = 1
+        for token in set(tokens):
+            self.doc_freqs[token] += 1
 
     def sort_freqs(self):
         self.term_freqs = dict(
