@@ -17,16 +17,23 @@ class FasttextVocabLoader:
         self,
         vocab_prefix: str,
         vocab_max_count: int = None,
-        return_format: Literal["df", "dict"] = "dict",
+        return_format: Literal["df", "dict"] = "df",
+        order: Literal["sort", "shuffle"] = "sort",
         verbose: bool = False,
     ):
         self.vocab_prefix = vocab_prefix
         self.vocab_max_count = vocab_max_count
         self.return_format = return_format
+        self.order = order
         self.verbose = verbose
         self.vocab_dict = {}
 
-    def load_vocab_from_csv(self) -> Union[dict[str, dict[str, int]], pd.DataFrame]:
+    def load_vocab_from_csv(
+        self,
+        return_format: Literal["df", "dict"] = None,
+        order: Literal["sort", "shuffle"] = None,
+        sort_first: Literal["doc_freq", "term_freq"] = "doc_freq",
+    ) -> Union[dict[str, dict[str, int]], pd.DataFrame]:
         csv_path = TOKEN_FREQS_ROOT / f"{self.vocab_prefix}.csv"
         if self.verbose:
             logger.note("> Loading vocab from csv:")
@@ -34,9 +41,21 @@ class FasttextVocabLoader:
         df_params = {"na_filter": False}
         if self.vocab_max_count:
             df_params["nrows"] = self.vocab_max_count
+
         df = pd.read_csv(csv_path, **df_params)
         df = df.drop_duplicates(subset=["token"], keep="first")
-        df = df.sort_values(by=["doc_freq", "term_freq"], ascending=False)
+
+        order = order or self.order
+        if order == "sort":
+            if sort_first == "doc_freq":
+                sort_list = ["doc_freq", "term_freq"]
+            else:
+                sort_list = ["term_freq", "doc_freq"]
+            df = df.sort_values(by=sort_list, ascending=False)
+        elif order == "shuffle":
+            df = df.sample(frac=1).reset_index(drop=True)
+        else:
+            pass
         # df = df.head(self.vocab_max_count)
         # df = df.sort_values(by="term_freq", ascending=False)
 
@@ -48,7 +67,8 @@ class FasttextVocabLoader:
             }
             logger.mesg(dict_to_str(vocab_info), indent=2)
 
-        if self.return_format == "df":
+        return_format = return_format or self.return_format
+        if return_format == "df":
             res = df
         else:
             term_freqs = dict(zip(df["token"], df["term_freq"]))
@@ -137,6 +157,7 @@ class FasttextVocabMerger:
                 vocab_prefix,
                 vocab_max_count=self.merged_count,
                 return_format="df",
+                order="sort",
                 verbose=self.verbose,
             )
             df = loader.load_vocab_from_csv()
