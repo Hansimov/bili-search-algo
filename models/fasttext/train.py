@@ -1,5 +1,6 @@
 import argparse
 import numpy as np
+import pandas as pd
 import sys
 
 from gensim.models import FastText, KeyedVectors
@@ -8,7 +9,7 @@ from pathlib import Path
 from tclogger import Runtimer, logger, logstr, dict_to_str, brk
 from typing import Union, Literal
 
-from configs.envs import FASTTEXT_CKPT_ROOT, SP_MERGED_MODEL_PATH
+from configs.envs import FASTTEXT_CKPT_ROOT, SP_MERGED_MODEL_PATH, TOKEN_FREQS_ROOT
 
 from datasets.videos.parquet import VideoTextsParquetReader
 from datasets.args import DATA_LOADER_ARG_PARSER
@@ -32,6 +33,8 @@ class FasttextModelTrainer:
         min_n: int = 3,
         max_n: int = 6,
         max_final_vocab: int = None,
+        sample: float = 1e-3,
+        seed: int = 1,
         shrink_windows: bool = False,
         sg: int = 0,
         vector_size: int = 128,
@@ -63,6 +66,8 @@ class FasttextModelTrainer:
             "min_n": min_n,
             "max_n": max_n,
             "max_final_vocab": max_final_vocab,
+            "sample": sample,
+            "seed": seed,
             "shrink_windows": shrink_windows,
             "sg": sg,
             "vector_size": vector_size,
@@ -111,31 +116,141 @@ class FasttextModelTrainer:
     ):
         self.data_loader = data_loader
 
-    def load_vocab(self):
-        vocab_dict = self.vocab_loader.load_vocab_from_pickle()
-        # total_words, corpus_count = self.data_loader.get_count()
-        corpus_count = self.data_loader.get_corpus_count()
-        self.model.raw_vocab = vocab_dict["term_freqs"]
-        self.model.corpus_count = corpus_count
-        # self.model.corpus_total_words = total_words
-        logger.mesg(f"  * corpus count: [{corpus_count}]")
+    def prepare_vocab(self):
+        # create model.wv with index_to_key, key_to_index, and set 'count' for each word
+        self.model.wv.index_to_key = []
+        self.model.wv.key_to_index = {}
+        for word, v in self.retain_vocab.items():
+            self.model.wv.key_to_index[word] = len(self.model.wv.index_to_key)
+            self.model.wv.index_to_key.append(word)
+        for word in self.model.wv.index_to_key:
+            self.model.wv.set_vecattr(word, "count", self.retain_vocab[word])
 
+        # calculate threadhold_count of sample, and set sample_int for each word
+        retain_total = sum(self.retain_vocab.values())
+        threshold_count = self.model.sample * retain_total
+        downsample_total, downsample_unique = 0, 0
+        for word, v in self.retain_vocab.items():
+            word_probability = (np.sqrt(v / threshold_count) + 1) * (
+                threshold_count / v
+            )
+            if word_probability < 1.0:
+                downsample_unique += 1
+                downsample_total += word_probability * v
+            else:
+                word_probability = 1.0
+                downsample_total += v
+            self.model.wv.set_vecattr(
+                word, "sample_int", np.uint32(word_probability * (2**32 - 1))
+            )
+
+        # sort model.wv vocab , create_binary_tree (if hs),  make_cum_table (if negative)
+        self.model.wv.sort_by_descending_frequency()
+        if self.model.hs:
+            # add info about each word's Huffman encoding
+            self.model.create_binary_tree()
+        if self.model.negative:
+            # build the table for drawing random words (for negative sampling)
+            self.model.make_cum_table()
+
+        prepare_vocab_info = {
+            "sample": self.model.sample,
+            "hs": self.model.hs,
+            "negative": self.model.negative,
+            "seed": self.model.seed,
+            "retain_total": retain_total,
+            "threadhold_count": threshold_count,
+            "downsample_unique": downsample_unique,
+            "downsample_total": downsample_total,
+        }
+        logger.mesg(dict_to_str(prepare_vocab_info), indent=2)
+
+    def dump_wv_info(self):
+        # dump debug vocab info to csv
+        logger.note("> Dumping wv info:")
+        wv_infos = [
+            {
+                "token": word,
+                "count": self.model.wv.get_vecattr(word, "count"),
+                "sample_int": self.model.wv.get_vecattr(word, "sample_int"),
+            }
+            for word in self.model.wv.key_to_index
+        ]
+        df = pd.DataFrame(wv_infos)
+        wv_vocab_path = TOKEN_FREQS_ROOT / f"{self.model_prefix}.wv"
+        df.to_csv(wv_vocab_path, index=False)
+        logger.file(f"  * [{wv_vocab_path}]")
+
+    def load_vocab(self):
+        # empty loop over data_loader to fix bug of train
+        for _ in self.data_loader:
+            pass
+
+        # load vocab from csv
+        vocab_dict = self.vocab_loader.load_vocab_from_csv(
+            return_format="dict", order="sort", sort_first="term_freq"
+        )
+        token_freqs = vocab_dict["term_freqs"]
+
+        # original gensim's implementation set limit of term_freq,
+        #   where vocab size smaller than max_final_vocab
+        sorted_tokens = sorted(
+            token_freqs, key=lambda word: token_freqs[word], reverse=True
+        )
+        calc_min_count = token_freqs[sorted_tokens[self.model.max_final_vocab]] + 1
+        calc_min_count = max(calc_min_count, self.model.min_count)
+        # if would like the vocab size to be exactly max_final_vocab,
+        #   comment the above, and uncomment the following line:
+        # calc_min_count = self.model.min_count
+
+        # get retain_vocab with filtering term_freqs by min_count and max_final_vocab
+        self.retain_vocab = {}
+        retain_vocab_count = 0
+        for word, v in token_freqs.items():
+            if retain_vocab_count >= self.model.max_final_vocab:
+                break
+            if v >= calc_min_count:
+                self.retain_vocab[word] = v
+                retain_vocab_count += 1
+
+        # get corpus_count and total_words
+        total_words, corpus_count = self.data_loader.get_count()
+        # corpus_count = self.data_loader.get_corpus_count()
+        # total_words = sum(token_freqs.values())
+        self.model.corpus_count = corpus_count
+        self.model.corpus_total_words = total_words
+        count_info = {
+            "corpus_count": corpus_count,
+            "total_words": total_words,
+        }
+        logger.mesg(dict_to_str(count_info), indent=2)
+
+        # prepare vocab and weights
         logger.note("> Preparing vocab and weights:")
+        self.prepare_vocab()
         # TODO: need to adapt for post_train
-        self.model.prepare_vocab(update=False, keep_raw_vocab=False, trim_rule=None)
         self.model.prepare_weights(update=False)
-        logger.mesg(f"  * wv vocab size: {len(self.model.wv.key_to_index)}")
+        prepare_weights_info = {
+            "wv_vocab_size": len(self.model.wv.key_to_index),
+            "top_wv_words": list(self.model.wv.key_to_index.keys())[:5],
+        }
+        logger.mesg(dict_to_str(prepare_weights_info), indent=2)
 
     def init_vocab(self):
-        logger.note("> Initialzing vocab:")
+        logger.note("> Initiating vocab:")
         if self.is_model_trained and self.skip_trained:
             logger.file("  * model already trained, skip init vocab")
-        elif self.vocab_loader:
-            self.load_vocab()
+            return
+
+        if self.vocab_loader:
+            with logger.temp_indent(2):
+                self.load_vocab()
             logger.success("  ✓ vocab loaded")
         else:
             self.model.build_vocab(corpus_iterable=self.data_loader)
             logger.success("  ✓ vocab built")
+
+        self.dump_wv_info()
 
     def refresh_data_loader_status(self):
         self.data_loader.iter_epochs = self.train_params["epochs"]
@@ -347,7 +462,7 @@ class Doc2VecArgParser(argparse.ArgumentParser):
         return self.args
 
 
-def main(args):
+def main(args: argparse.Namespace):
     if args.train_stage == "pre_train":
         args.skip_trained = False
         args.use_local_model = False
@@ -480,6 +595,9 @@ if __name__ == "__main__":
         main(args)
 
     # python -m models.fasttext.train -m fasttext_other_game -ep 1 -dr "parquets" -dn "video_texts_other_game" -vf video_texts_other_game_nt -bs 20000 -mv 300000
-    # python -m models.fasttext.train -m fasttext_other_game -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf video_texts_music_dance_nt -bs 20000 -mv 300000
+    # python -m models.fasttext.train -m fasttext_music_dance -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf "merged_video_texts" -bs 20000 -mv 500000
+    # python -m models.fasttext.train -m fasttext_tech_sports -ep 1 -dr "parquets" -dn "video_texts_tech_sports" -bs 20000 -mv 500000
+    # python -m models.fasttext.train -m fasttext_tech_sports_vf -ep 1 -dr "parquets" -dn "video_texts_tech_sports" -vf "video_texts_tech_sports_nt" -bs 20000 -mv 500000
 
-    # python -m models.fasttext.train -ts test
+    # python -m models.fasttext.train -m fasttext_tid_all_mv_30w -ts test
+    # python -m models.fasttext.train -m fasttext_music_dance -ts test
