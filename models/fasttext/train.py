@@ -492,7 +492,10 @@ def main(args: argparse.Namespace):
 
     if args.vocab_file:
         vocab_loader = FasttextVocabLoader(
-            args.vocab_file, vocab_max_count=args.vocab_max_count, verbose=True
+            args.vocab_file,
+            vocab_max_count=args.vocab_max_count,
+            token_format="parquet",
+            verbose=True,
         )
     else:
         vocab_loader = None
@@ -621,5 +624,11 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_tech_sports -ep 1 -dr "parquets" -dn "video_texts_tech_sports" -bs 20000 -mv 500000
     # python -m models.fasttext.train -m fasttext_tech_sports_vf -ep 1 -dr "parquets" -dn "video_texts_tech_sports" -vf "video_texts_tech_sports_nt" -bs 20000 -mv 500000
 
+    # python -m models.fasttext.train -m fasttext_music_dance_vf_pkl -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf "video_texts_music_dance_nt" -vl pickle -bs 20000 -mv 500000
+    # python -m models.fasttext.train -m fasttext_music_dance_vf_csv -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf "video_texts_music_dance_nt" -vl csv -bs 20000 -mv 500000
+
     # python -m models.fasttext.train -m fasttext_tid_all_mv_30w -ts test
     # python -m models.fasttext.train -m fasttext_music_dance -ts test
+
+    # python -m models.fasttext.train -m fasttext_music_dance_vf_csv_dy -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf "video_texts_music_dance_nt" -vl csv -bs 20000 -mv 500000 -dy
+    # python -m models.fasttext.train -m fasttext_music_dance_vf_pkl_dy -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf "video_texts_music_dance_nt" -vl pickle -bs 20000 -mv 500000

@@ -1,5 +1,6 @@
 import argparse
 import pandas as pd
+import pyarrow as pa
 import pickle
 import sys
 
@@ -17,12 +18,14 @@ class FasttextVocabLoader:
         self,
         vocab_prefix: str,
         vocab_max_count: int = None,
+        token_format: Literal["str", "parquet"] = "parquet",
         return_format: Literal["df", "dict"] = "df",
         order: Literal["sort", "shuffle"] = "sort",
         verbose: bool = False,
     ):
         self.vocab_prefix = vocab_prefix
         self.vocab_max_count = vocab_max_count
+        self.token_format = token_format
         self.return_format = return_format
         self.order = order
         self.verbose = verbose
@@ -38,11 +41,14 @@ class FasttextVocabLoader:
         if self.verbose:
             logger.note("> Loading vocab from csv:")
             logger.file(f"  * {csv_path}")
-        df_params = {"na_filter": False}
+        read_csv_params = {
+            # "dtype": {"token": str, "doc_freq": int, "term_freq": int},
+            "na_filter": False,
+        }
         if self.vocab_max_count:
-            df_params["nrows"] = self.vocab_max_count
+            read_csv_params["nrows"] = self.vocab_max_count
 
-        df = pd.read_csv(csv_path, **df_params)
+        df = pd.read_csv(csv_path, **read_csv_params)
         df = df.drop_duplicates(subset=["token"], keep="first")
 
         order = order or self.order
@@ -58,6 +64,11 @@ class FasttextVocabLoader:
             pass
         # df = df.head(self.vocab_max_count)
         # df = df.sort_values(by="term_freq", ascending=False)
+
+        # convert keys of tokens from str to pyarrow StringScalar,
+        # this is to be compatible with the training data loaded from parquet, which is in pyarrow format
+        if self.token_format == "parquet":
+            df["token"] = df["token"].apply(pa.scalar)
 
         if self.verbose:
             vocab_info = {
