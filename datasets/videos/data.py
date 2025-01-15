@@ -319,12 +319,12 @@ class ParquetRowsDataLoader:
             subbar_indent = 2
         else:
             subbar_indent = 0
-        batch_bar_head_str = " " * subbar_indent + "* Batch:"
-        sample_bar_head_str = " " * subbar_indent + "* Sample:"
+        batch_bar_head_str = " " * subbar_indent + "* Batch "
+        sample_bar_head_str = " " * subbar_indent + "* Sample"
         self.batch_bar = TCLogbar(head=logstr.note(batch_bar_head_str))
         self.sample_bar = TCLogbar(head=logstr.note(sample_bar_head_str))
         if self.show_epoch_bar:
-            self.epoch_bar = TCLogbar(head=logstr.note("> Epoch:"))
+            self.epoch_bar = TCLogbar(head=logstr.note("> Epoch"))
             self.logbars = [self.epoch_bar, self.batch_bar, self.sample_bar]
         else:
             self.epoch_bar = None
