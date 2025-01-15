@@ -3,14 +3,14 @@ import numpy as np
 import pandas as pd
 import sys
 
+from collections import defaultdict
 from gensim.models import FastText, KeyedVectors
 from gensim.models.doc2vec import Doc2Vec
 from pathlib import Path
-from tclogger import Runtimer, logger, logstr, dict_to_str, brk
+from tclogger import Runtimer, logger, logstr, dict_to_str, brk, attrs_to_dict
 from typing import Union, Literal
 
 from configs.envs import FASTTEXT_CKPT_ROOT, SP_MERGED_MODEL_PATH, TOKEN_FREQS_ROOT
-
 from datasets.videos.parquet import VideoTextsParquetReader
 from datasets.args import DATA_LOADER_ARG_PARSER
 from models.fasttext.data import FasttextDataLoader, FasttextParquetDataLoader
@@ -44,6 +44,7 @@ class FasttextModelTrainer:
         use_local_model: bool = True,
         use_kv: bool = False,
         vocab_loader: FasttextVocabLoader = None,
+        vocab_load_format: Literal["csv", "pickle"] = "csv",
     ):
         self.model_prefix = model_prefix
         self.train_stage = train_stage
@@ -51,6 +52,7 @@ class FasttextModelTrainer:
         self.use_local_model = use_local_model
         self.use_kv = use_kv
         self.vocab_loader = vocab_loader
+        self.vocab_load_format = vocab_load_format
 
         self.post_train_model_prefix = post_train_model_prefix
         self.model_path = FASTTEXT_CKPT_ROOT / f"{model_prefix}.model"
@@ -144,6 +146,9 @@ class FasttextModelTrainer:
                 word, "sample_int", np.uint32(word_probability * (2**32 - 1))
             )
 
+        # delete raw_vocab
+        self.model.raw_vocab = defaultdict(int)
+
         # sort model.wv vocab , create_binary_tree (if hs),  make_cum_table (if negative)
         self.model.wv.sort_by_descending_frequency()
         if self.model.hs:
@@ -171,6 +176,7 @@ class FasttextModelTrainer:
         wv_infos = [
             {
                 "token": word,
+                "index": self.model.wv.key_to_index[word],
                 "count": self.model.wv.get_vecattr(word, "count"),
                 "sample_int": self.model.wv.get_vecattr(word, "sample_int"),
             }
@@ -182,20 +188,20 @@ class FasttextModelTrainer:
         logger.file(f"  * [{wv_vocab_path}]")
 
     def load_vocab(self):
-        # empty loop over data_loader to fix bug of train
-        for _ in self.data_loader:
-            pass
+        # load vocab from csv or pickle
+        if self.vocab_load_format == "csv":
+            vocab_dict = self.vocab_loader.load_vocab_from_csv(
+                return_format="dict", order="sort", sort_first="term_freq"
+            )
+        else:
+            vocab_dict = self.vocab_loader.load_vocab_from_pickle()
 
-        # load vocab from csv
-        vocab_dict = self.vocab_loader.load_vocab_from_csv(
-            return_format="dict", order="sort", sort_first="term_freq"
-        )
         token_freqs = vocab_dict["term_freqs"]
 
         # original gensim's implementation set limit of term_freq,
         #   where vocab size smaller than max_final_vocab
         sorted_tokens = sorted(
-            token_freqs, key=lambda word: token_freqs[word], reverse=True
+            token_freqs.keys(), key=lambda word: token_freqs[word], reverse=True
         )
         calc_min_count = token_freqs[sorted_tokens[self.model.max_final_vocab]] + 1
         calc_min_count = max(calc_min_count, self.model.min_count)
@@ -220,8 +226,8 @@ class FasttextModelTrainer:
         self.model.corpus_count = corpus_count
         self.model.corpus_total_words = total_words
         count_info = {
-            "corpus_count": corpus_count,
             "total_words": total_words,
+            "corpus_count": corpus_count,
         }
         logger.mesg(dict_to_str(count_info), indent=2)
 
@@ -231,7 +237,8 @@ class FasttextModelTrainer:
         # TODO: need to adapt for post_train
         self.model.prepare_weights(update=False)
         prepare_weights_info = {
-            "wv_vocab_size": len(self.model.wv.key_to_index),
+            "model_attrs": attrs_to_dict(self.model),
+            # "wv_attrs": attrs_to_dict(self.model.wv),
             "top_wv_words": list(self.model.wv.key_to_index.keys())[:5],
         }
         logger.mesg(dict_to_str(prepare_weights_info), indent=2)
@@ -308,7 +315,7 @@ class FasttextModelTrainer:
                 corpus_iterable=self.data_loader,
                 total_examples=self.model.corpus_count,
                 epochs=self.model.epochs,
-                # total_words=self.self.model.corpus_total_words,
+                # total_words=self.model.corpus_total_words,
             )
             logger.success(f"  ✓ model trained")
 
@@ -423,6 +430,7 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
             choices=["pre_train", "post_train", "test"],
             default="pre_train",
         )
+        self.add_argument("-dy", "--dry-run", action="store_true")
         self.add_argument("-pm", "--post-train-model-prefix", type=str, default=None)
         self.add_argument("-ep", "--epochs", type=int, default=1)
         self.add_argument("-hs", "--hs", type=int, default=0)
@@ -435,6 +443,13 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-sw", "--shrink-windows", action="store_true")
         self.add_argument("-vs", "--vector-size", type=int, default=256)
         self.add_argument("-vf", "--vocab-file", type=str, default=None)
+        self.add_argument(
+            "-vl",
+            "--vocab-load-format",
+            type=str,
+            choices=["csv", "pickle"],
+            default="csv",
+        )
         self.add_argument("-vm", "--vocab-max-count", type=int, default=None)
         self.add_argument("-wd", "--window", type=int, default=5)
         self.add_argument("-wk", "--workers", type=int, default=32)
@@ -500,6 +515,7 @@ def main(args: argparse.Namespace):
         "use_local_model": args.use_local_model,
         "use_kv": args.use_kv,
         "vocab_loader": vocab_loader,
+        "vocab_load_format": args.vocab_load_format,
     }
 
     if args.model_class == "fasttext":
@@ -572,9 +588,15 @@ def main(args: argparse.Namespace):
             raise ValueError(f"× Invalid data_source: {args.data_source}")
         trainer.init_data_loader(data_loader)
         trainer.init_vocab()
-        trainer.train()
+        if not args.dry_run:
+            trainer.train()
+        else:
+            trainer.save_model()
         if args.data_source == "mongo":
             data_loader.tokenizer.terminate()
+
+    if args.dry_run:
+        return
 
     if args.model_class == "fasttext":
         trainer.test(tokenizer=None, restrict_vocab=150000)
