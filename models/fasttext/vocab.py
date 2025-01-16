@@ -214,7 +214,7 @@ class FasttextVocabMerger:
                         "term_freq": term_freq,
                     }
                     unique_token_count += 1
-                    token_str = chars_slice(token, end=8)
+                    token_str = chars_slice(str(token), end=8)
                     logbar.update(increment=1, desc=f"[{token_str}]: {doc_freq:>6}")
                 line_idx_by_prefix[prefix_idx] += 1
 
@@ -287,4 +287,4 @@ if __name__ == "__main__":
     with Runtimer():
         main(args)
 
-    # python -m models.fasttext.vocab -mv 800000 -o merged_video_texts
+    # python -m models.fasttext.vocab -mv 8000000 -o merged_video_texts

@@ -27,6 +27,7 @@ class FasttextModelTrainer:
         train_stage: Literal["pre_train", "post_train", "test"] = "pre_train",
         post_train_model_prefix: Union[str, Path] = None,
         epochs: int = 5,
+        bucket: int = 2000000,
         hs: int = 0,
         min_alpha: float = 0.0001,
         min_count: int = 5,
@@ -45,6 +46,7 @@ class FasttextModelTrainer:
         use_kv: bool = False,
         vocab_loader: FasttextVocabLoader = None,
         vocab_load_format: Literal["csv", "pickle"] = "csv",
+        sample_ratio: float = 1.0,
     ):
         self.model_prefix = model_prefix
         self.train_stage = train_stage
@@ -53,6 +55,7 @@ class FasttextModelTrainer:
         self.use_kv = use_kv
         self.vocab_loader = vocab_loader
         self.vocab_load_format = vocab_load_format
+        self.sample_ratio = sample_ratio
 
         self.post_train_model_prefix = post_train_model_prefix
         self.model_path = FASTTEXT_CKPT_ROOT / f"{model_prefix}.model"
@@ -62,6 +65,7 @@ class FasttextModelTrainer:
 
         self.train_params = {
             "epochs": epochs,
+            "bucket": bucket,
             "hs": hs,
             "min_alpha": min_alpha,
             "min_count": min_count,
@@ -130,7 +134,18 @@ class FasttextModelTrainer:
 
         # calculate threadhold_count of sample, and set sample_int for each word
         retain_total = sum(self.retain_vocab.values())
-        threshold_count = self.model.sample * retain_total
+
+        # 1. `sample_ratio` is used when vocab freqs is not "aligned" with trained corpus,
+        #   for example, if vocab freqs is calculated from a large corpus, and the train corpus is a subset of it,
+        #   then the sample_ratio should be set close to the corpuse ratio:
+        #       train_corpus_count / vocab_freqs_corpus_count
+        #   for example, if sample_ratio is about 0.1 ~ 1.0, then this means the count of train corpus is about 5% ~ 100% of the vocab freqs corpus
+        # 2. `threshold_count` is inherited from gensim's original naming convention,
+        #   which is the threshold of the word frequency to be sampled
+        #   the smaller the threshold_count, the more words will be downsampled, and the faster the training speed
+        # 3. `downsample_unique` is the count of words that will be downsampled,
+        #    next step i would like to enable this (or a new `downsample_vocab_ratio`) as cli arg to enhances flexibility
+        threshold_count = self.model.sample * retain_total * self.sample_ratio
         downsample_total, downsample_unique = 0, 0
         for word, v in self.retain_vocab.items():
             word_probability = (np.sqrt(v / threshold_count) + 1) * (
@@ -159,12 +174,13 @@ class FasttextModelTrainer:
             self.model.make_cum_table()
 
         prepare_vocab_info = {
-            "sample": self.model.sample,
             "hs": self.model.hs,
             "negative": self.model.negative,
+            "sample": self.model.sample,
+            "sample_ratio": self.sample_ratio,
             "seed": self.model.seed,
             "retain_total": retain_total,
-            "threadhold_count": threshold_count,
+            "threshold_count": threshold_count,
             "downsample_unique": downsample_unique,
             "downsample_total": downsample_total,
         }
@@ -433,6 +449,7 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-dy", "--dry-run", action="store_true")
         self.add_argument("-pm", "--post-train-model-prefix", type=str, default=None)
         self.add_argument("-ep", "--epochs", type=int, default=1)
+        self.add_argument("-bk", "--bucket", type=int, default=2000000)
         self.add_argument("-hs", "--hs", type=int, default=0)
         self.add_argument("-ma", "--min-alpha", type=float, default=0.0001)
         self.add_argument("-mc", "--min-count", type=int, default=20)
@@ -451,6 +468,7 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
             default="csv",
         )
         self.add_argument("-vm", "--vocab-max-count", type=int, default=None)
+        self.add_argument("-sr", "--sample-ratio", type=float, default=1.0)
         self.add_argument("-wd", "--window", type=int, default=5)
         self.add_argument("-wk", "--workers", type=int, default=32)
         self.add_argument("-st", "--skip-trained", action="store_true")
@@ -503,6 +521,7 @@ def main(args: argparse.Namespace):
     train_params = {
         "model_prefix": args.model_prefix,
         "epochs": args.epochs,
+        "bucket": args.bucket,
         "hs": args.hs,
         "min_alpha": args.min_alpha,
         "min_count": args.min_count,
@@ -519,6 +538,7 @@ def main(args: argparse.Namespace):
         "use_kv": args.use_kv,
         "vocab_loader": vocab_loader,
         "vocab_load_format": args.vocab_load_format,
+        "sample_ratio": args.sample_ratio,
     }
 
     if args.model_class == "fasttext":
@@ -620,15 +640,9 @@ if __name__ == "__main__":
         main(args)
 
     # python -m models.fasttext.train -m fasttext_other_game -ep 1 -dr "parquets" -dn "video_texts_other_game" -vf video_texts_other_game_nt -bs 20000 -mv 300000
-    # python -m models.fasttext.train -m fasttext_music_dance -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf "merged_video_texts" -bs 20000 -mv 500000
-    # python -m models.fasttext.train -m fasttext_tech_sports -ep 1 -dr "parquets" -dn "video_texts_tech_sports" -bs 20000 -mv 500000
     # python -m models.fasttext.train -m fasttext_tech_sports_vf -ep 1 -dr "parquets" -dn "video_texts_tech_sports" -vf "video_texts_tech_sports_nt" -bs 20000 -mv 500000
-
-    # python -m models.fasttext.train -m fasttext_music_dance_vf_pkl -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf "video_texts_music_dance_nt" -vl pickle -bs 20000 -mv 500000
-    # python -m models.fasttext.train -m fasttext_music_dance_vf_csv -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf "video_texts_music_dance_nt" -vl csv -bs 20000 -mv 500000
 
     # python -m models.fasttext.train -m fasttext_tid_all_mv_30w -ts test
     # python -m models.fasttext.train -m fasttext_music_dance -ts test
 
-    # python -m models.fasttext.train -m fasttext_music_dance_vf_csv_dy -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf "video_texts_music_dance_nt" -vl csv -bs 20000 -mv 500000 -dy
-    # python -m models.fasttext.train -m fasttext_music_dance_vf_pkl_dy -ep 1 -dr "parquets" -dn "video_texts_music_dance" -vf "video_texts_music_dance_nt" -vl pickle -bs 20000 -mv 500000
+    # python -m models.fasttext.train -m fasttext_other_game_vf_merged_csv -ep 1 -dr "parquets" -dn "video_texts_other_game" -vf "merged_video_texts" -vl csv -bs 20000 -mv 900000 -bk 5000000 -sr 0.1
