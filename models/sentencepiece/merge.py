@@ -148,6 +148,7 @@ class SentencePieceModelMerger:
 class MergerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.add_argument("-i", "--input-prefix", type=str, default="sp_507m_")
         self.add_argument("-o", "--output-prefix", type=str, default="sp_merged")
         self.add_argument("-vs", "--vocab-size", type=int, default=None)
 
@@ -165,7 +166,7 @@ if __name__ == "__main__":
     # ]
     input_model_prefixes = ["sp_wiki_all_400k_0.9995"]
     input_model_prefixes.extend(
-        [f"sp_507m_{suffix}" for suffix in REGION_MONGO_FILTERS.keys()]
+        [f"{args.input_prefix}{suffix}" for suffix in REGION_MONGO_FILTERS.keys()]
     )
     input_model_paths = [
         SENTENCEPIECE_CKPT_ROOT / f"{prefix}.model" for prefix in input_model_prefixes
@@ -184,5 +185,6 @@ if __name__ == "__main__":
 
     # python -m models.sentencepiece.merge
     # python -m models.sentencepiece.merge -vs 1000000
+    # python -m models.sentencepiece.merge -vs 1000000 -i sp_518m_ -o sp_merged
     # python -m models.sentencepiece.train -m sp_400k_merged_old -t
     # python -m models.sentencepiece.train -m sp_merged -t
