@@ -268,7 +268,8 @@ class SentenceFullTokenizer:
                 if self.drop_non_word:
                     token = PT_NON_WORD.sub("", part)
                 if self.drop_whitespace:
-                    token = token.strip()
+                    # token = token.strip()
+                    token = token.replace(" ", "")
                 if token:
                     tokens.append(token)
         return tokens

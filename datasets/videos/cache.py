@@ -1,7 +1,7 @@
 import argparse
 import sys
 
-from tclogger import logger, logstr, dict_to_str, brk
+from tclogger import Runtimer, logger, logstr, dict_to_str, brk
 
 from configs.envs import SP_MERGED_MODEL_PATH
 from datasets.args import DATA_LOADER_ARG_PARSER
@@ -58,11 +58,10 @@ class VideoTextsTokenCacher:
 class TokenCacherArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument(
-            "-o", "--output-prefix", type=str, default="video_texts_tokens"
-        )
+        self.add_argument("-o", "--output-prefix", type=str, default="video_texts_")
         self.add_argument("-mcb", "--max-count-batch", type=int, default=None)
         self.add_argument("-fd", "--force-delete", action="store_true")
+        self.add_argument("-fl", "--for-loop", action="store_true")
 
     def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
@@ -139,17 +138,32 @@ if __name__ == "__main__":
     arg_parser.add_parser_class(TokenCacherArgParser)
     args = arg_parser.parse_args()
 
-    regions = list(REGION_MONGO_FILTERS.keys())
+    if not args.dataset_root:
+        args.dataset_root = "parquets"
 
-    for idx, region in enumerate(regions):
-        region_str = logstr.file(brk(region))
-        idx_str = f"{logstr.mesg(str(idx+1))}/{logstr.file(str(len(regions)))}"
-        logger.note(f"> [{idx_str}] Caching region: {region_str}")
-        args.filter_group = region
-        args.data_root = "parquets"
-        args.dataset_name = f"video_texts_{region}"
-        main(args)
-        logger.success(f"✓ [{idx_str}] Cached region: {region_str}")
+    if args.for_loop:
+        regions = list(REGION_MONGO_FILTERS.keys())
+        for idx, region in enumerate(regions):
+            args.filter_group = region
+            args.dataset_name = f"{args.output_prefix}{region}"
+            region_str = logstr.file(brk(region))
+            idx_str = f"{logstr.mesg(str(idx+1))}/{logstr.file(str(len(regions)))}"
+            with Runtimer():
+                logger.note(f"> [{idx_str}] Caching region: {region_str}")
+                main(args)
+                logger.success(f"✓ [{idx_str}] Cached region: {region_str}")
+    elif args.filter_group:
+        region = args.filter_group
+        args.dataset_name = f"{args.output_prefix}{region}"
+        with Runtimer():
+            logger.note(f"> Caching region: {region}")
+            main(args)
+            logger.success(f"✓ Cached region: {region}")
+    elif args.dataset_name:
+        with Runtimer():
+            main(args)
+    else:
+        raise ValueError("× Must provide output dataset_name")
 
     # python -m datasets.videos.cache -ec -mcb 22 -bw 5 -fw 10
     # python -m datasets.videos.cache -dn video_texts_tid_17
@@ -159,4 +173,5 @@ if __name__ == "__main__":
 
     # WARNING: Run multiple region-tasks could make mongodb out-of-memory
 
-    # python -m datasets.videos.cache -fd
+    # python -m datasets.videos.cache -fd -fl
+    # python -m datasets.videos.cache -fd -fg douga_anime
