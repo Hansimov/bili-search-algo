@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import sys
 
+from copy import deepcopy
 from collections import defaultdict
 from gensim.models import FastText, KeyedVectors
 from gensim.models.doc2vec import Doc2Vec
@@ -46,7 +47,7 @@ class FasttextModelTrainer:
         use_kv: bool = False,
         vocab_loader: FasttextVocabLoader = None,
         vocab_load_format: Literal["csv", "pickle"] = "csv",
-        sample_ratio: float = 1.0,
+        sample_ratio: float = None,
     ):
         self.model_prefix = model_prefix
         self.train_stage = train_stage
@@ -145,7 +146,8 @@ class FasttextModelTrainer:
         #   the smaller the threshold_count, the more words will be downsampled, and the faster the training speed
         # 3. `downsample_unique` is the count of words that will be downsampled,
         #    next step i would like to enable this (or a new `downsample_vocab_ratio`) as cli arg to enhances flexibility
-        threshold_count = self.model.sample * retain_total * self.sample_ratio
+        sample_ratio = self.sample_ratio if self.sample_ratio else 1.0
+        threshold_count = self.model.sample * retain_total * sample_ratio
         downsample_total, downsample_unique = 0, 0
         for word, v in self.retain_vocab.items():
             word_probability = (np.sqrt(v / threshold_count) + 1) * (
@@ -449,7 +451,6 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-dy", "--dry-run", action="store_true")
         self.add_argument("-pm", "--post-train-model-prefix", type=str, default=None)
         self.add_argument("-ep", "--epochs", type=int, default=1)
-        self.add_argument("-bk", "--bucket", type=int, default=2000000)
         self.add_argument("-hs", "--hs", type=int, default=0)
         self.add_argument("-ma", "--min-alpha", type=float, default=0.0001)
         self.add_argument("-mc", "--min-count", type=int, default=20)
@@ -468,7 +469,7 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
             default="csv",
         )
         self.add_argument("-vm", "--vocab-max-count", type=int, default=None)
-        self.add_argument("-sr", "--sample-ratio", type=float, default=1.0)
+        self.add_argument("-sr", "--sample-ratio", type=float, default=None)
         self.add_argument("-wd", "--window", type=int, default=5)
         self.add_argument("-wk", "--workers", type=int, default=32)
         self.add_argument("-st", "--skip-trained", action="store_true")
@@ -518,10 +519,15 @@ def main(args: argparse.Namespace):
     else:
         vocab_loader = None
 
+    if args.max_final_vocab:
+        bucket = int(args.max_final_vocab * 10)
+    else:
+        bucket = 2000000
+
     train_params = {
         "model_prefix": args.model_prefix,
         "epochs": args.epochs,
-        "bucket": args.bucket,
+        "bucket": bucket,
         "hs": args.hs,
         "min_alpha": args.min_alpha,
         "min_count": args.min_count,
@@ -586,12 +592,22 @@ def main(args: argparse.Namespace):
             data_loader = FasttextDataLoader(**data_params, tokenizer=tokenizer)
             logger.mesg(dict_to_str(data_params), indent=2)
         elif args.data_source == "parquet":
-            parquet_params = {
+            root_parquet_params = {
                 "dataset_root": args.dataset_root,
-                "dataset_name": args.dataset_name,
                 "parquet_prefix": args.parquet_prefix,
             }
+            parquet_params = deepcopy(root_parquet_params)
+            parquet_params["dataset_name"] = args.dataset_name
+            root_parquet_reader = VideoTextsParquetReader(**root_parquet_params)
             parquet_reader = VideoTextsParquetReader(**parquet_params)
+            if not trainer.sample_ratio:
+                sample_ratio = round(
+                    parquet_reader.total_row_count
+                    / root_parquet_reader.total_row_count,
+                    2,
+                )
+                trainer.sample_ratio = sample_ratio
+                logger.mesg(f"  * sample_ratio: {sample_ratio}")
             logger.mesg(dict_to_str(parquet_params), indent=2)
             data_params = {
                 "column": "tokens",
@@ -613,8 +629,8 @@ def main(args: argparse.Namespace):
         trainer.init_vocab()
         if not args.dry_run:
             trainer.train()
-        else:
-            trainer.save_model()
+        # else:
+        #     trainer.save_model()
         if args.data_source == "mongo":
             data_loader.tokenizer.terminate()
 
@@ -645,4 +661,7 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_tid_all_mv_30w -ts test
     # python -m models.fasttext.train -m fasttext_music_dance -ts test
 
-    # python -m models.fasttext.train -m fasttext_other_game_vf_merged_csv -ep 1 -dr "parquets" -dn "video_texts_other_game" -vf "merged_video_texts" -vl csv -bs 20000 -mv 900000 -bk 5000000 -sr 0.1
+    # python -m models.fasttext.train -m fasttext_merged -ep 1 -dr "parquets" -dn "video_texts_other_game" -vf "merged_video_texts" -vl csv -bs 20000 -mv 500000
+
+    # python -m cProfile -o fasttext_train.prof -m models.fasttext.train -m fasttext_merged -ep 1 -dr "parquets" -dn "video_texts_other_game" -vf "merged_video_texts" -vl csv -bs 20000 -mv 500000 -mb 100
+    # snakeviz fasttext_train.prof -H 0.0.0.0 -p 10888
