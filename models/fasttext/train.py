@@ -301,20 +301,29 @@ class FasttextModelTrainer:
             for model_file in model_files:
                 model_file.unlink()
 
-    def save_model(self):
+    def save_model(self, is_checkpoint: bool = False):
         logger.note("> Saving model:")
-        if not self.model_path.parent.exists():
-            self.model_path.parent.mkdir(parents=True, exist_ok=True)
-
         if self.train_stage == "post_train":
             if self.post_train_model_prefix:
                 save_model_prefix = self.post_train_model_prefix
             else:
                 save_model_prefix = f"{self.model_prefix}_post_train"
-            model_save_path = FASTTEXT_CKPT_ROOT / f"{save_model_prefix}.model"
         else:
-            model_save_path = self.model_path
+            save_model_prefix = self.model_prefix
 
+        if is_checkpoint:
+            epoch_count = self.data_loader.epoch_bar.count
+            batch_count = self.data_loader.batch_bar.count
+            checkpoint_str = f"epoch_{epoch_count}_batch_{batch_count}"
+            logger.mesg(f"  * checkpoint: {checkpoint_str}")
+            model_save_path = (
+                FASTTEXT_CKPT_ROOT / save_model_prefix / f"{checkpoint_str}.model"
+            )
+        else:
+            model_save_path = FASTTEXT_CKPT_ROOT / f"{save_model_prefix}.model"
+
+        if not model_save_path.parent.exists():
+            model_save_path.parent.mkdir(parents=True, exist_ok=True)
         self.model.save(str(model_save_path))
         logger.success(f"  * [{model_save_path}]")
 
@@ -323,12 +332,19 @@ class FasttextModelTrainer:
             self.model.wv.save(str(kv_save_path))
             logger.success(f"  * [{kv_save_path}]")
 
+    def checkpoint_func(self):
+        self.save_model(is_checkpoint=True)
+
+    def bind_checkpoint_func(self):
+        self.data_loader.checkpoint_func = self.checkpoint_func
+
     def train(self):
         logger.note("> Training model:")
         if self.is_model_trained and self.skip_trained:
             logger.file("  * model already trained, skip train()")
         else:
             self.refresh_data_loader_status()
+            self.bind_checkpoint_func()
             self.model.train(
                 corpus_iterable=self.data_loader,
                 total_examples=self.model.corpus_count,
@@ -451,6 +467,7 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-dy", "--dry-run", action="store_true")
         self.add_argument("-pm", "--post-train-model-prefix", type=str, default=None)
         self.add_argument("-ep", "--epochs", type=int, default=1)
+        self.add_argument("-kn", "--checkpoint-num", type=int, default=None)
         self.add_argument("-hs", "--hs", type=int, default=0)
         self.add_argument("-ma", "--min-alpha", type=float, default=0.0001)
         self.add_argument("-mc", "--min-count", type=int, default=20)
@@ -471,7 +488,7 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-vm", "--vocab-max-count", type=int, default=None)
         self.add_argument("-sr", "--sample-ratio", type=float, default=None)
         self.add_argument("-wd", "--window", type=int, default=5)
-        self.add_argument("-wk", "--workers", type=int, default=32)
+        self.add_argument("-wk", "--workers", type=int, default=8)
         self.add_argument("-st", "--skip-trained", action="store_true")
         self.add_argument("-lm", "--use-local-model", action="store_true")
         self.add_argument("-kv", "--use-kv", action="store_true")
@@ -622,6 +639,8 @@ def main(args: argparse.Namespace):
                 **data_params, parquet_reader=parquet_reader
             )
             data_loader.model_class = args.model_class
+            data_loader.checkpoint_num = args.checkpoint_num
+            logger.mesg(f"  * checkpoint_num: {data_loader.checkpoint_num}")
             logger.mesg(dict_to_str(data_params), indent=2)
         else:
             raise ValueError(f"× Invalid data_source: {args.data_source}")
@@ -662,6 +681,7 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_music_dance -ts test
 
     # python -m models.fasttext.train -m fasttext_merged -ep 1 -dr "parquets" -dn "video_texts_other_game" -vf "merged_video_texts" -vl csv -bs 20000 -mv 500000
+    # python -m models.fasttext.train -m fasttext_merged -ep 1 -dr "parquets" -vf "merged_video_texts" -vl csv -bs 20000 -mv 500000 -kn 2000 -sr 0.15 -wk 8
 
     # python -m cProfile -o fasttext_train.prof -m models.fasttext.train -m fasttext_merged -ep 1 -dr "parquets" -dn "video_texts_other_game" -vf "merged_video_texts" -vl csv -bs 20000 -mv 500000 -mb 100
     # snakeviz fasttext_train.prof -H 0.0.0.0 -p 10888
