@@ -45,17 +45,21 @@ class FasttextParquetDataLoader(ParquetRowsDataLoader):
         self.__epoch_end__()
 
     def get_count_from_local(self):
-        self.count_json = self.parquet_reader.data_root / (
-            self.parquet_reader.dataset_name + ".count.json"
+        self.count_json = (
+            self.parquet_reader.data_root.parent
+            / "parquets_count"
+            / (self.parquet_reader.dataset_name + ".count.json")
         )
         if self.count_json.exists():
             with self.count_json.open("r") as f:
-                count_dict = json.load(f)
+                self.json_data = json.load(f)
+            count_dict = self.json_data.get(str(self.max_batch), {})
             return (
                 count_dict.get("total_words", None),
                 count_dict.get("corpus_count", None),
             )
         else:
+            self.json_data = {}
             return None, None
 
     def get_corpus_count(self):
@@ -65,19 +69,30 @@ class FasttextParquetDataLoader(ParquetRowsDataLoader):
             corpus_count = self.parquet_reader.total_row_count
         return corpus_count
 
+    def save_count_info(self, count_info: dict):
+        if not self.count_json.parent.exists():
+            self.count_json.parent.mkdir(parents=True, exist_ok=True)
+        with self.count_json.open("w") as f:
+            self.json_data.update(count_info)
+            json.dump(self.json_data, f, indent=4)
+
     def get_count(self) -> tuple[int, int]:
         logger.note("> Counting vocab:")
+        is_newly_counted = False
         total_words, corpus_count = self.get_count_from_local()
         if not total_words or not corpus_count:
             total_words, corpus_count = 0, 0
             for tokens in self:
                 total_words += len(tokens)
                 corpus_count += 1
+            is_newly_counted = True
         count_info = {
-            "total_words": total_words,
-            "corpus_count": corpus_count,
+            str(self.max_batch): {
+                "total_words": total_words,
+                "corpus_count": corpus_count,
+            }
         }
-        with self.count_json.open("w") as f:
-            json.dump(count_info, f, indent=4)
-        logger.mesg(dict_to_str(count_info), indent=2)
+        # logger.mesg(dict_to_str(count_info), indent=2)
+        if is_newly_counted:
+            self.save_count_info(count_info)
         return total_words, corpus_count
