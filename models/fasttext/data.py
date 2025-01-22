@@ -23,13 +23,27 @@ class FasttextDataLoader(SentencesDataloader):
 
 
 class FasttextParquetDataLoader(ParquetRowsDataLoader):
+    def check_use_checkpoint(self):
+        self.use_checkpoint = (
+            hasattr(self, "checkpoint_num")
+            and hasattr(self, "checkpoint_func")
+            and self.checkpoint_num
+            and callable(self.checkpoint_func)
+        )
+
+    def process_checkpoint(self, batch_idx: int):
+        if self.use_checkpoint and (batch_idx + 1) % self.checkpoint_num == 0:
+            self.checkpoint_func()
+
     def __iter__(self):
         self.__epoch_start__()
         self.batch_bar.reset()
         self.batch_bar.update(flush=True)
         sample_idx = 0
+        self.check_use_checkpoint()
         for batch_idx, tokens_batch in enumerate(self.batch_generator):
             self.batch_bar.update(increment=1, flush=True)
+            self.process_checkpoint(batch_idx)
             if self.max_batch is not None and batch_idx >= self.max_batch:
                 break
             self.sample_bar.total = len(tokens_batch)
@@ -45,10 +59,14 @@ class FasttextParquetDataLoader(ParquetRowsDataLoader):
         self.__epoch_end__()
 
     def get_count_from_local(self):
+        if self.parquet_reader.dataset_name:
+            count_name = self.parquet_reader.dataset_name
+        else:
+            count_name = "_"
         self.count_json = (
             self.parquet_reader.data_root.parent
             / "parquets_count"
-            / (self.parquet_reader.dataset_name + ".count.json")
+            / f"{count_name}.count.json"
         )
         if self.count_json.exists():
             with self.count_json.open("r") as f:
