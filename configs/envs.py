@@ -17,9 +17,12 @@ SECRETS = OSEnver(SECRETS_PATH)
 MONGO_ENVS = SECRETS["mongo"]
 ELASTIC_ENVS = SECRETS["elastic"]
 
-FASTTEXT_CKPT_ROOT = REPO_ROOT / "models" / "fasttext" / "checkpoints"
 SENTENCEPIECE_CKPT_ROOT = REPO_ROOT / "models" / "sentencepiece" / "checkpoints"
-TOKEN_FREQS_ROOT = DATA_ROOT / "token_freqs"
-
 SP_MERGED_MODEL_PREFIX = "sp_merged"
 SP_MERGED_MODEL_PATH = SENTENCEPIECE_CKPT_ROOT / f"{SP_MERGED_MODEL_PREFIX}.model"
+
+TOKEN_FREQS_ROOT = DATA_ROOT / "token_freqs"
+TOKEN_FREQ_PREFIX = "merged_video_texts"
+
+FASTTEXT_CKPT_ROOT = REPO_ROOT / "models" / "fasttext" / "checkpoints"
+FASTTEXT_MERGED_MODEL_PREFIX = "fasttext_merged"

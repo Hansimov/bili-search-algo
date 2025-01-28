@@ -14,6 +14,8 @@ from typing import Union, Literal
 
 import models.fasttext.test
 from configs.envs import PYRO_ENVS, FASTTEXT_CKPT_ROOT
+from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
+from configs.envs import FASTTEXT_MERGED_MODEL_PREFIX
 from models.fasttext.preprocess import FasttextModelPreprocessor
 from models.fasttext.preprocess import FasttextModelFrequenizer
 from models.vectors.similarity import dot_sim
@@ -27,7 +29,7 @@ PYRO_NS = "fasttext_model_runner"
 class FasttextModelRunner:
     def __init__(
         self,
-        model_prefix: Union[str, Path] = "fasttext",
+        model_prefix: Union[str, Path] = FASTTEXT_MERGED_MODEL_PREFIX,
         frequenizer: FasttextModelFrequenizer = None,
         preprocessor: FasttextModelPreprocessor = None,
         restrict_vocab: int = 150000,
@@ -47,6 +49,8 @@ class FasttextModelRunner:
         model_files = list(FASTTEXT_CKPT_ROOT.glob(f"*.model"))
         model_files.sort()
         model_info_dict = {}
+        logger.file(f"* {FASTTEXT_CKPT_ROOT}")
+        logger.note(f"* name: (model_size_in_mb, vocab_size_in_mb)")
         for model_file in model_files:
             model_prefix = model_file.stem
             vocab_file = (
@@ -380,10 +384,14 @@ class FasttextModelRunnerClient:
 class FasttextModelRunnerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument("-m", "--model-prefix", type=str, default="fasttext")
-        self.add_argument("-k", "--tokenizer-prefix", type=str, default="sp_merged")
         self.add_argument(
-            "-q", "--token-freq-prefix", type=str, default="video_texts_freq_all"
+            "-m", "--model-prefix", type=str, default=FASTTEXT_MERGED_MODEL_PREFIX
+        )
+        self.add_argument(
+            "-k", "--tokenizer-prefix", type=str, default=SP_MERGED_MODEL_PREFIX
+        )
+        self.add_argument(
+            "-q", "--token-freq-prefix", type=str, default=TOKEN_FREQ_PREFIX
         )
         self.add_argument("-w", "--vector-weighted", action="store_true")
         self.add_argument("-v", "--restrict-vocab", type=int, default=150000)
@@ -469,7 +477,7 @@ if __name__ == "__main__":
 
     # Run remote server:
     # python -m models.fasttext.run -r -m fasttext_tid_all_mv_30w -v 150000
-    # python -m models.fasttext.run -r -m fasttext_tid_all_mv_30w -v 150000 -w
+    # python -m models.fasttext.run -r -m fasttext_merged -v 150000 -w
 
     # Test remote client:
     # python -m models.fasttext.run -tc

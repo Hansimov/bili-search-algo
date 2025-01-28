@@ -6,14 +6,14 @@ from tclogger import logger, logstr, brk, dict_to_str, Runtimer
 from typing import Union, Literal
 
 from configs.envs import SENTENCEPIECE_CKPT_ROOT, TOKEN_FREQS_ROOT
-from configs.envs import SP_MERGED_MODEL_PREFIX
+from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 
 
 class FasttextModelFrequenizer:
     def __init__(
         self,
-        token_freq_prefix: str = "video_texts_freq_all",
+        token_freq_prefix: str = TOKEN_FREQ_PREFIX,
         tf_max_rows: int = 600000,
         tf_min_freq: int = 100,
         min_weight: float = 0.01,
@@ -208,7 +208,7 @@ if __name__ == "__main__":
     timer = Runtimer()
     timer.__enter__()
     frequenizer = FasttextModelFrequenizer(
-        token_freq_prefix="video_texts_freq_all",
+        token_freq_prefix=TOKEN_FREQ_PREFIX,
         tf_max_rows=600000,
         tf_min_freq=100,
         min_weight=0.001,
