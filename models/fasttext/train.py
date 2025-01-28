@@ -332,11 +332,12 @@ class FasttextModelTrainer:
             self.model.wv.save(str(kv_save_path))
             logger.success(f"  * [{kv_save_path}]")
 
-    def checkpoint_func(self):
-        self.save_model(is_checkpoint=True)
-
     def bind_checkpoint_func(self):
-        self.data_loader.checkpoint_func = self.checkpoint_func
+        def checkpoint_func():
+            print()
+            self.save_model(is_checkpoint=True)
+
+        self.data_loader.checkpoint_func = checkpoint_func
 
     def train(self):
         logger.note("> Training model:")
@@ -541,7 +542,7 @@ def main(args: argparse.Namespace):
     else:
         bucket = 2000000
 
-    train_params = {
+    trainer_params = {
         "model_prefix": args.model_prefix,
         "epochs": args.epochs,
         "bucket": bucket,
@@ -565,7 +566,7 @@ def main(args: argparse.Namespace):
     }
 
     if args.model_class == "fasttext":
-        trainer = FasttextModelTrainer(**train_params)
+        trainer = FasttextModelTrainer(**trainer_params)
     elif args.model_class == "doc2vec":
         doc2vec_params = {
             "dm": args.dm,
@@ -574,8 +575,8 @@ def main(args: argparse.Namespace):
             "dm_tag_count": args.dm_tag_count,
             "dbow_words": args.dbow_words,
         }
-        train_params.update(doc2vec_params)
-        trainer = Doc2VecModelTrainer(**train_params)
+        trainer_params.update(doc2vec_params)
+        trainer = Doc2VecModelTrainer(**trainer_params)
     else:
         raise ValueError(f"× Invalid model_class: {args.model_class}")
 
@@ -681,7 +682,7 @@ if __name__ == "__main__":
     # python -m models.fasttext.train -m fasttext_music_dance -ts test
 
     # python -m models.fasttext.train -m fasttext_merged -ep 1 -dr "parquets" -dn "video_texts_other_game" -vf "merged_video_texts" -vl csv -bs 20000 -mv 500000
-    # python -m models.fasttext.train -m fasttext_merged -ep 1 -dr "parquets" -vf "merged_video_texts" -vl csv -bs 20000 -mv 500000 -kn 2000 -sr 0.15 -wk 8
+    # python -m models.fasttext.train -m fasttext_merged -ep 1 -dr "parquets" -vf "merged_video_texts" -vl csv -bs 20000 -mv 500000 -vs 320 -sr 0.15 -wk 6
 
     # python -m cProfile -o fasttext_train.prof -m models.fasttext.train -m fasttext_merged -ep 1 -dr "parquets" -dn "video_texts_other_game" -vf "merged_video_texts" -vl csv -bs 20000 -mv 500000 -mb 100
     # snakeviz fasttext_train.prof -H 0.0.0.0 -p 10888
