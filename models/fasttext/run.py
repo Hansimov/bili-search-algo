@@ -18,8 +18,8 @@ from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
 from configs.envs import FASTTEXT_MERGED_MODEL_PREFIX
 from models.fasttext.preprocess import FasttextModelPreprocessor
 from models.fasttext.preprocess import FasttextModelFrequenizer
-from models.vectors.similarity import dot_sim
-from models.vectors.trunc import trunc
+from models.vectors.calcs import dot_sim
+from models.vectors.forms import trunc
 
 
 PYRO_NS = "fasttext_model_runner"
@@ -86,6 +86,7 @@ class FasttextModelRunner:
     def is_in_vocab(self, word: str):
         return word in self.model.wv.key_to_index
 
+    @Pyro5.server.expose
     def preprocess(self, words: Union[str, list[str]]) -> list[str]:
         return self.preprocessor.preprocess(words)
 
@@ -98,9 +99,57 @@ class FasttextModelRunner:
         return getattr(self.model.wv, func)(*args, **kwargs)
 
     @Pyro5.server.expose
+    def calc_weight_of_token(
+        self,
+        word: str,
+        score_func: Literal["ratio", "quantile", "log", "power"] = "log",
+        base: Union[int, float] = None,
+        min_weight: float = None,
+        max_weight: float = None,
+    ) -> float:
+        return self.frequenizer.calc_weight_of_token(
+            word,
+            score_func=score_func,
+            base=base,
+            min_weight=min_weight,
+            max_weight=max_weight,
+        )
+
+    @Pyro5.server.expose
+    def calc_weight_of_words(
+        self,
+        word: Union[str, list[str]],
+        score_func: Literal["ratio", "quantile", "log", "power"] = "log",
+        base: Union[int, float] = None,
+        min_weight: float = None,
+        max_weight: float = None,
+    ):
+        pwords = self.preprocess(word)
+        return [
+            self.calc_weight_of_token(
+                word,
+                score_func=score_func,
+                base=base,
+                min_weight=min_weight,
+                max_weight=max_weight,
+            )
+            for word in pwords
+        ]
+
+    @Pyro5.server.expose
     def max_pool_vectors(self, vectors: list[np.ndarray]) -> np.ndarray:
         pooled_vector = np.max(vectors, axis=0)
         return pooled_vector / np.linalg.norm(pooled_vector)
+
+    @Pyro5.server.expose
+    def get_vector(
+        self, word: str, tolist: bool = False
+    ) -> Union[np.ndarray, list[float]]:
+        vector = self.model.wv.get_vector(word, norm=True)
+        if tolist:
+            return vector.tolist()
+        else:
+            return vector
 
     @Pyro5.server.expose
     def calc_vector(
@@ -108,20 +157,37 @@ class FasttextModelRunner:
         word: Union[str, list[str]],
         ignore_duplicates: bool = True,
         weight_func: Literal["max", "mean", "sum", "freq"] = "mean",
+        score_func: Literal["ratio", "quantile", "log", "power"] = "log",
+        base: Union[int, float] = None,
+        min_weight: float = None,
+        max_weight: float = None,
         normalize: bool = True,
-    ) -> np.ndarray:
+        tolist: bool = False,
+    ) -> Union[np.ndarray, list[float]]:
         pwords = self.preprocess(word)
         if ignore_duplicates:
             pwords = list(set(pwords))
         pword_vectors = [self.model.wv.get_vector(pword, norm=True) for pword in pwords]
         if weight_func == "max":
-            return self.max_pool_vectors(pword_vectors)
+            vector = self.max_pool_vectors(pword_vectors)
+            if tolist:
+                return vector.tolist()
+            else:
+                return vector
         elif weight_func in ["freq", "mean", "sum"]:
             vector = np.zeros(self.model.vector_size)
             for pword_vector in pword_vectors:
                 vector += pword_vector
             if weight_func == "freq" and self.frequenizer:
-                weights = np.array(self.frequenizer.calc_weights_of_tokens(pwords))
+                weights = np.array(
+                    self.frequenizer.calc_weights_of_tokens(
+                        pwords,
+                        score_func=score_func,
+                        base=base,
+                        min_weight=min_weight,
+                        max_weight=max_weight,
+                    )
+                )
             else:
                 weights = np.ones(len(pwords))
             weights_abs_sum = np.sum(np.abs(weights))
@@ -129,17 +195,24 @@ class FasttextModelRunner:
                 vector /= weights_abs_sum
             if normalize:
                 vector /= np.linalg.norm(vector)
-            return vector
+            if tolist:
+                return vector.tolist()
+            else:
+                return vector
         else:
             raise ValueError(f"× Invalid weight_func: {weight_func}")
 
     @Pyro5.server.expose
-    def calc_query_vector(self, word: Union[str, list[str]]) -> np.ndarray:
-        return self.calc_vector(word, weight_func="freq")
+    def calc_query_vector(
+        self, word: Union[str, list[str]], tolist: bool = False
+    ) -> Union[np.ndarray, list[float]]:
+        return self.calc_vector(word, weight_func="freq", tolist=tolist)
 
     @Pyro5.server.expose
-    def calc_sample_vector(self, word: Union[str, list[str]]) -> np.ndarray:
-        return self.calc_vector(word, weight_func="sum", normalize=False)
+    def calc_sample_vector(
+        self, word: Union[str, list[str]], tolist: bool = False
+    ) -> Union[np.ndarray, list[float]]:
+        return self.calc_vector(word, weight_func="sum", normalize=False, tolist=tolist)
 
     @Pyro5.server.expose
     def word_similarity(
@@ -315,7 +388,6 @@ class FasttextModelRunner:
             )
             for result in results:
                 sample_tokens, sample_score, token_scores, token_weights = result
-
                 tokens_str_list = []
                 for token, token_weight, token_score in zip(
                     sample_tokens, token_weights, token_scores
