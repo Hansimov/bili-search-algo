@@ -52,8 +52,8 @@ class FasttextModelFrequenizer:
         self.tf_df_quantiles = self.tf_df["doc_freq"].quantile(
             self.quantiles, interpolation="nearest"
         )
-        self.tf_df_min_freq = self.tf_df["doc_freq"].min()
-        self.tf_df_max_freq = self.tf_df["doc_freq"].max()
+        self.tf_df_min_freq = self.tf_df["doc_freq"].min().astype(int)
+        self.tf_df_max_freq = self.tf_df["doc_freq"].max().astype(int)
         self.tf_df_qmin_freq = self.tf_df_quantiles[0]
         self.tf_df_qmax_freq = self.tf_df_quantiles[self.quantiles[-2]]
         self.tf_df_min_log_freq = self.calc_log_of_freq(self.tf_df_min_freq)
@@ -92,45 +92,112 @@ class FasttextModelFrequenizer:
             quantile = self.quantiles[i - 1]
         return quantile
 
-    def calc_log_of_freq(self, freq: int) -> float:
-        return math.log(freq + 10, 10)
+    def calc_log_of_freq(self, freq: int, base: Union[int, float] = None) -> float:
+        return math.log(freq + 10, base or 10)
 
-    def calc_log_ratio_of_freq(self, freq: int) -> float:
-        return (self.calc_log_of_freq(freq) - self.tf_df_min_log_freq) / (
-            self.tf_df_max_log_freq - self.tf_df_min_log_freq
+    def calc_log_ratio_of_freq(
+        self, freq: int, base: Union[int, float] = None
+    ) -> float:
+        min_log = self.calc_log_of_freq(self.tf_df_min_freq, base)
+        max_log = self.calc_log_of_freq(self.tf_df_max_freq, base)
+        return (self.calc_log_of_freq(freq, base) - min_log) / (max_log - min_log)
+
+    def calc_power_of_freq(self, freq: int, base: Union[int, float] = None) -> float:
+        return math.pow(freq, base or 0.5)
+
+    def calc_power_ratio_of_freq(
+        self, freq: int, base: Union[int, float] = None
+    ) -> float:
+        min_power = self.calc_power_of_freq(self.tf_df_min_freq, base)
+        max_power = self.calc_power_of_freq(self.tf_df_max_freq, base)
+        return (self.calc_power_of_freq(freq, base) - min_power) / (
+            max_power - min_power
         )
 
-    def calc_weight_of_score(self, score: float) -> float:
-        weight = self.min_weight + (self.max_weight - self.min_weight) * (1 - score)
+    def calc_weight_of_score(
+        self,
+        score: float,
+        min_weight: float = None,
+        max_weight: float = None,
+    ) -> float:
+        min_weight = min_weight or self.min_weight
+        max_weight = max_weight or self.max_weight
+        weight = min_weight + (max_weight - min_weight) * (1 - score)
         return weight
 
     def calc_weight_of_freq(
-        self, freq: int, score_func: Literal["ratio", "quantile", "log"] = "log"
+        self,
+        freq: int,
+        score_func: Literal["ratio", "quantile", "log", "power"] = "log",
+        base: Union[int, float] = None,
+        min_weight: float = None,
+        max_weight: float = None,
     ) -> float:
+        min_weight = min_weight or self.min_weight
+        max_weight = max_weight or self.max_weight
         if freq <= self.tf_df_qmin_freq:
-            weight = self.max_weight
+            weight = max_weight
         elif freq >= self.tf_df_qmax_freq:
-            weight = self.min_weight
+            weight = min_weight
         else:
             if score_func == "ratio":
                 score = self.calc_ratio_of_freq(freq)
             elif score_func == "quantile":
                 score = self.calc_quantile_of_freq(freq)
+            elif score_func == "log":
+                score = self.calc_log_ratio_of_freq(freq, base=base)
             else:
-                score = self.calc_log_ratio_of_freq(freq)
-            weight = self.calc_weight_of_score(score)
+                score = self.calc_power_ratio_of_freq(freq, base=base)
+            weight = self.calc_weight_of_score(
+                score, min_weight=min_weight, max_weight=max_weight
+            )
+        print(
+            # f"score_func: {score_func}, base: {base}, "
+            # f"min_weight: {min_weight}, max_weight: {max_weight}, "
+            f"weight: {round(weight,4)}, freq: {freq}"
+        )
         return weight
 
-    def calc_weight_of_token(self, word: str) -> float:
+    def calc_weight_of_token(
+        self,
+        word: str,
+        score_func: Literal["ratio", "quantile", "log", "power"] = "log",
+        base: Union[int, float] = None,
+        min_weight: float = None,
+        max_weight: float = None,
+    ) -> float:
         token_freq = self.get_token_freq(word)
         if token_freq is None:
-            weight = (self.min_weight + self.max_weight) / 2
+            weight = (min_weight or self.min_weight + max_weight or self.max_weight) / 2
         else:
-            weight = self.calc_weight_of_freq(token_freq)
+            print(word, end=": ")
+            weight = self.calc_weight_of_freq(
+                token_freq,
+                score_func=score_func,
+                base=base,
+                min_weight=min_weight,
+                max_weight=max_weight,
+            )
         return round(weight, 4)
 
-    def calc_weights_of_tokens(self, words: list[str]) -> list[float]:
-        return [self.calc_weight_of_token(word) for word in words]
+    def calc_weights_of_tokens(
+        self,
+        words: list[str],
+        score_func: Literal["ratio", "quantile", "log", "power"] = "log",
+        base: Union[int, float] = None,
+        min_weight: float = None,
+        max_weight: float = None,
+    ) -> list[float]:
+        return [
+            self.calc_weight_of_token(
+                word,
+                score_func=score_func,
+                base=base,
+                min_weight=min_weight,
+                max_weight=max_weight,
+            )
+            for word in words
+        ]
 
 
 class FasttextModelPreprocessor:
