@@ -26,3 +26,4 @@ TOKEN_FREQ_PREFIX = "merged_video_texts"
 
 FASTTEXT_CKPT_ROOT = REPO_ROOT / "models" / "fasttext" / "checkpoints"
 FASTTEXT_MERGED_MODEL_PREFIX = "fasttext_merged"
+FASTTEXT_MERGED_MODEL_DIMENSION = 320
