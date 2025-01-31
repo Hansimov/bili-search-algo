@@ -7,15 +7,16 @@ from configs.envs import FASTTEXT_MERGED_MODEL_DIMENSION
 from models.fasttext.run import FasttextModelRunnerClient
 from models.fasttext.preprocess import FasttextModelPreprocessor
 from models.vectors.calcs import dot_sim
-from models.vectors.forms import trunc, stretch_copy, stretch_shift_add
+from models.vectors.forms import trunc, stretch_copy, stretch_shift_add, downsample
 
 
 class FasttextDocVecRunner:
     def __init__(self):
         self.client = FasttextModelRunnerClient()
         self.runner = self.client.runner
-        self.vec_dim_scale = 5
-        self.vec_dim = FASTTEXT_MERGED_MODEL_DIMENSION * self.vec_dim_scale
+        self.dim = FASTTEXT_MERGED_MODEL_DIMENSION
+        self.dim_scale = 6
+        self.downsample_ratio = 2 / 3
 
     def preprocess(self, doc: str) -> list[str]:
         # return self.runner.preprocess(doc)
@@ -80,11 +81,15 @@ class FasttextDocVecRunner:
 
     def calc_stretch_query_vector(self, doc: Union[str, list[str]]) -> np.ndarray:
         query_vector = self.calc_query_vector(doc)
-        return stretch_copy(query_vector, scale=self.vec_dim_scale)
+        downsampled_vector = downsample(query_vector, self.downsample_ratio)
+        stretched_vector = stretch_copy(downsampled_vector, scale=self.dim_scale)
+        return stretched_vector
 
     def calc_stretch_sample_vector(self, doc: Union[str, list[str]]) -> np.ndarray:
         token_vectors = self.calc_sample_token_vectors(doc)
-        return stretch_shift_add(token_vectors, scale=self.vec_dim_scale)
+        downsampled_vector = downsample(token_vectors, self.downsample_ratio)
+        stretched_vector = stretch_shift_add(downsampled_vector, scale=self.dim_scale)
+        return stretched_vector
 
     def test_doc_sims(self):
         from models.fasttext.test import TEST_PAIRS
