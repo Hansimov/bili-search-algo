@@ -4,6 +4,7 @@ import hanlp.pretrained
 from tclogger import logger, logstr, brk
 from typing import Literal, Union
 
+# https://hanlp.hankcs.com/docs/annotations/pos/pku.html
 PKU_POS_NAMES = {
     "Ag": "形语素",
     "a": "形容词",
