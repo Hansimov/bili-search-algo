@@ -1,13 +1,14 @@
 import math
 import pandas as pd
 
-from pathlib import Path
+from itertools import chain
 from tclogger import logger, logstr, brk, dict_to_str, Runtimer
 from typing import Union, Literal
 
 from configs.envs import SENTENCEPIECE_CKPT_ROOT, TOKEN_FREQS_ROOT
 from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
+from models.hanlp.pos import HanlpPosTagger
 
 
 class FasttextModelFrequenizer:
@@ -58,6 +59,8 @@ class FasttextModelFrequenizer:
         self.tf_df_qmax_freq = self.tf_df_quantiles[self.quantiles[-2]]
         self.tf_df_min_log_freq = self.calc_log_of_freq(self.tf_df_min_freq)
         self.tf_df_max_log_freq = self.calc_log_of_freq(self.tf_df_max_freq)
+        self.tf_df_min_power_freq = self.calc_power_of_freq(self.tf_df_min_freq)
+        self.tf_df_max_power_freq = self.calc_power_of_freq(self.tf_df_max_freq)
         self.token_doc_freq_dict = dict(
             zip(self.tf_df["token"], self.tf_df["doc_freq"])
         )
@@ -70,6 +73,8 @@ class FasttextModelFrequenizer:
             # logger.file(self.tf_df_quantiles, indent=4)
             logger.mesg(f"  * tf_df_min_log_freq: {self.tf_df_min_log_freq}")
             logger.mesg(f"  * tf_df_max_log_freq: {self.tf_df_max_log_freq}")
+            logger.mesg(f"  * tf_df_min_power_freq: {self.tf_df_min_power_freq}")
+            logger.mesg(f"  * tf_df_max_power_freq: {self.tf_df_max_power_freq}")
 
     def get_token_freq(self, word: str) -> int:
         return self.token_doc_freq_dict.get(word, None)
@@ -114,7 +119,7 @@ class FasttextModelFrequenizer:
             max_power - min_power
         )
 
-    def calc_weight_of_score(
+    def calc_weight_of_freq_score(
         self,
         score: float,
         min_weight: float = None,
@@ -128,7 +133,7 @@ class FasttextModelFrequenizer:
     def calc_weight_of_freq(
         self,
         freq: int,
-        score_func: Literal["ratio", "quantile", "log", "power"] = "log",
+        score_func: Literal["ratio", "quantile", "log", "power", "pos"] = "log",
         base: Union[int, float] = None,
         min_weight: float = None,
         max_weight: float = None,
@@ -148,14 +153,15 @@ class FasttextModelFrequenizer:
                 score = self.calc_log_ratio_of_freq(freq, base=base)
             else:
                 score = self.calc_power_ratio_of_freq(freq, base=base)
-            weight = self.calc_weight_of_score(
+            weight = self.calc_weight_of_freq_score(
                 score, min_weight=min_weight, max_weight=max_weight
             )
-        print(
-            # f"score_func: {score_func}, base: {base}, "
-            # f"min_weight: {min_weight}, max_weight: {max_weight}, "
-            f"weight: {round(weight,4)}, freq: {freq}"
-        )
+            logger.mesg(
+                # f"score_func: {score_func}, base: {base}, "
+                # f"min_weight: {min_weight}, max_weight: {max_weight}, "
+                f"score: {round(score,4)}, weight: {round(weight,4)}, freq: {freq}",
+                verbose=self.verbose,
+            )
         return weight
 
     def calc_weight_of_token(
@@ -167,10 +173,12 @@ class FasttextModelFrequenizer:
         max_weight: float = None,
     ) -> float:
         token_freq = self.get_token_freq(word)
+        min_weight = min_weight or self.min_weight
+        max_weight = max_weight or self.max_weight
         if token_freq is None:
-            weight = (min_weight or self.min_weight + max_weight or self.max_weight) / 2
+            weight = (min_weight + max_weight) / 2
         else:
-            print(word, end=": ")
+            logger.note(word, end=": ", verbose=self.verbose)
             weight = self.calc_weight_of_freq(
                 token_freq,
                 score_func=score_func,
@@ -271,6 +279,7 @@ class FasttextModelPreprocessor:
 
 if __name__ == "__main__":
     from models.fasttext.test import TEST_KEYWORDS, TEST_PAIRS
+    from models.sentencepiece.test import TEST_SENTENCES
 
     timer = Runtimer()
     timer.__enter__()
@@ -286,17 +295,30 @@ if __name__ == "__main__":
         tokenizer_prefix=SP_MERGED_MODEL_PREFIX, verbose=True
     )
     res = {}
-    for word, words in TEST_PAIRS:
-        # tword = words[0]
-        tword = word
-        pwords = preprocessor.preprocess(tword)
-        freqs = frequenizer.get_tokens_freqs(pwords)
-        weights = frequenizer.calc_weights_of_tokens(pwords)
-        res[str(tword)] = {
-            "tokens": pwords,
-            "freqs": freqs,
-            "weights": weights,
-        }
+    TEST_SENTS = (
+        list(chain.from_iterable([words for word, words in TEST_PAIRS]))
+        + TEST_SENTENCES
+    )
+    tagger = HanlpPosTagger(verbose=True)
+    for sentence in TEST_SENTS:
+        tokens = preprocessor.preprocess(sentence)
+        logger.mesg(f"* {tokens}")
+        tags = tagger.tag_pos(tokens)
+        token_tags = " ".join(
+            [
+                f"{logstr.success(token)}/{logstr.file(tagger.tags_to_names(tag))}"
+                for token, tag in zip(tokens, tags)
+            ]
+        )
+        logger.mesg(f"  * {token_tags}")
+        # freqs = frequenizer.get_tokens_freqs(tokens)
+        # weights = frequenizer.calc_weights_of_tokens(tokens)
+        # res[str(word)] = {
+        #     "tokens": tokens,
+        #     "freqs": freqs,
+        #     "weights": weights,
+        # }
+
         # logger.mesg(f"* {logstr.mesg(brk(word))}: {logstr.success(pword)}")
     logger.mesg(dict_to_str(res, align_list=False))
     timer.__exit__(None, None, None)
