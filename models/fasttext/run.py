@@ -19,6 +19,7 @@ from configs.envs import FASTTEXT_MERGED_MODEL_PREFIX
 from configs.envs import FASTTEXT_MERGED_MODEL_DIMENSION
 from models.fasttext.preprocess import FasttextModelPreprocessor
 from models.fasttext.preprocess import FasttextModelFrequenizer
+from models.fasttext.preprocess import TokenScoreFuncType, FreqScoreFuncType
 from models.vectors.calcs import dot_sim
 from models.vectors.forms import trunc, stretch_copy, stretch_shift_add, downsample
 
@@ -100,7 +101,7 @@ class FasttextModelRunner:
     def calc_weight_of_token(
         self,
         word: str,
-        score_func: Literal["ratio", "quantile", "log", "power"] = "log",
+        score_func: TokenScoreFuncType = "one",
         base: Union[int, float] = None,
         min_weight: float = None,
         max_weight: float = None,
@@ -117,7 +118,7 @@ class FasttextModelRunner:
     def calc_weight_of_words(
         self,
         word: Union[str, list[str]],
-        score_func: Literal["ratio", "quantile", "log", "power"] = "log",
+        score_func: TokenScoreFuncType = "one",
         base: Union[int, float] = None,
         min_weight: float = None,
         max_weight: float = None,
@@ -154,8 +155,8 @@ class FasttextModelRunner:
         self,
         word: Union[str, list[str]],
         ignore_duplicates: bool = True,
-        weight_func: Literal["max", "mean", "sum", "freq"] = "mean",
-        score_func: Literal["ratio", "quantile", "log", "power"] = "log",
+        weight_func: Literal["max", "mean", "sum", "score"] = "mean",
+        score_func: TokenScoreFuncType = "one",
         base: Union[int, float] = None,
         min_weight: float = None,
         max_weight: float = None,
@@ -172,11 +173,11 @@ class FasttextModelRunner:
                 return vector.tolist()
             else:
                 return vector
-        elif weight_func in ["freq", "mean", "sum"]:
+        elif weight_func in ["mean", "sum", "score"]:
             vector = np.zeros(self.model.vector_size)
             for pword_vector in pword_vectors:
                 vector += pword_vector
-            if weight_func == "freq" and self.frequenizer:
+            if weight_func == "score" and self.frequenizer:
                 weights = np.array(
                     self.frequenizer.calc_weights_of_tokens(
                         pwords,
@@ -189,7 +190,7 @@ class FasttextModelRunner:
             else:
                 weights = np.ones(len(pwords))
             weights_abs_sum = np.sum(np.abs(weights))
-            if weight_func in ["freq", "mean"] and weights_abs_sum > 0:
+            if weight_func in ["score", "mean"] and weights_abs_sum > 0:
                 vector /= weights_abs_sum
             if normalize:
                 vector /= np.linalg.norm(vector)
@@ -204,7 +205,7 @@ class FasttextModelRunner:
     def calc_query_vector(
         self, word: Union[str, list[str]], tolist: bool = False
     ) -> Union[np.ndarray, list[float]]:
-        return self.calc_vector(word, weight_func="freq", tolist=tolist)
+        return self.calc_vector(word, weight_func="score", tolist=tolist)
 
     @Pyro5.server.expose
     def calc_sample_vector(
@@ -423,27 +424,18 @@ class FasttextDocVecModelRunner(FasttextModelRunner):
         self.downsample_ratio = 2 / 3
 
     @Pyro5.server.expose
-    def calc_weight_of_sample_token(self, token: str) -> float:
-        return self.calc_weight_of_token(
-            token,
-            score_func="log",
-            base=10,
-            min_weight=0.1,
-            max_weight=1,
-        )
-
-    @Pyro5.server.expose
     def calc_query_vector(self, doc: Union[str, list[str]]) -> np.ndarray:
         return self.calc_vector(
             doc,
             ignore_duplicates=False,
-            weight_func="freq",
-            score_func="log",
-            base=10,
-            min_weight=0.01,
-            max_weight=1,
-            normalize=True,
+            weight_func="score",
+            score_func="pos",
+            normalize=False,
         )
+
+    @Pyro5.server.expose
+    def calc_weight_of_sample_token(self, token: str) -> float:
+        return self.calc_weight_of_token(token, score_func="pos")
 
     @Pyro5.server.expose
     def calc_sample_token_vectors(self, doc: Union[str, list[str]]) -> np.ndarray:
