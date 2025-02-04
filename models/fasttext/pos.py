@@ -6,16 +6,16 @@ from tclogger import logger, logstr, dict_to_str, TCLogbar, chars_slice, decolor
 from configs.envs import TOKEN_FREQS_ROOT, TOKEN_FREQ_PREFIX
 from models.hanlp.pos import HanlpPosTagger
 
+INCLUDE_POS_NAMES = ["名词", "动词", "人名"]
+MID_POS_NAMES = ["动词", "数词", "方位词", "形容词", "量词"]
+EXCLUDE_POS_NAMES = [
+    *["连词", "副语素", "副词", "叹词", "后接成分"],
+    *["拟声词", "介词", "代语素", "代词"],
+    *["助词", "标点符号", "非语素字", "语气语素", "语气词"],
+]
+
 
 class TokenFreqPosTagger:
-    INCLUDE_POS_NAMES = ["名词", "动词", "人名"]
-    MID_POS_NAMES = ["动词", "数词", "方位词", "形容词", "量词"]
-    EXCLUDE_POS_NAMES = [
-        *["连词", "副语素", "副词", "叹词", "后接成分"],
-        *["拟声词", "介词", "代语素", "代词"],
-        *["助词", "标点符号", "非语素字", "语气语素", "语气词"],
-    ]
-
     def __init__(self, verbose: bool = False):
         self.token_freq_path = TOKEN_FREQS_ROOT / f"{TOKEN_FREQ_PREFIX}.csv"
         self.token_pos_path = TOKEN_FREQS_ROOT / f"{TOKEN_FREQ_PREFIX}_pos.csv"
@@ -36,16 +36,20 @@ class TokenFreqPosTagger:
         for idx, row in self.tf_df.iterrows():
             if idx >= max_idx:
                 break
-            token = row["token"]
-            tags = self.tagger.tag_pos(token)
+            token = str(row["token"])
+            try:
+                tags = self.tagger.tag_pos(token)
+            except Exception as e:
+                logger.warn(f"  * [{token}]: {e}")
+                continue
             tag = tags[0]
             tag_name = self.tagger.tags_to_names(tag)
             self.tf_df.at[idx, "pos"] = tag_name
-            if tag_name in self.EXCLUDE_POS_NAMES:
+            if tag_name in EXCLUDE_POS_NAMES:
                 stats["exclude"] = stats["exclude"] + 1
                 line = f"  * {token} -> {tag_name}"
                 logger.warn(line, verbose=self.verbose)
-            elif tag_name in self.MID_POS_NAMES:
+            elif tag_name in MID_POS_NAMES:
                 stats["mid"] = stats["mid"] + 1
                 line = f"  * {token} -> {tag_name}"
                 logger.note(line, verbose=self.verbose)
