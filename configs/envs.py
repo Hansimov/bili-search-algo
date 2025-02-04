@@ -22,7 +22,8 @@ SP_MERGED_MODEL_PREFIX = "sp_merged"
 SP_MERGED_MODEL_PATH = SENTENCEPIECE_CKPT_ROOT / f"{SP_MERGED_MODEL_PREFIX}.model"
 
 TOKEN_FREQS_ROOT = DATA_ROOT / "token_freqs"
-TOKEN_FREQ_PREFIX = "merged_video_texts"
+# TOKEN_FREQ_PREFIX = "merged_video_texts"
+TOKEN_FREQ_PREFIX = "merged_video_texts_pos"
 
 FASTTEXT_CKPT_ROOT = REPO_ROOT / "models" / "fasttext" / "checkpoints"
 FASTTEXT_MERGED_MODEL_PREFIX = "fasttext_merged"

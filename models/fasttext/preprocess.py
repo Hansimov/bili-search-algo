@@ -7,8 +7,11 @@ from typing import Union, Literal
 
 from configs.envs import SENTENCEPIECE_CKPT_ROOT, TOKEN_FREQS_ROOT
 from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
+from models.fasttext.pos import INCLUDE_POS_NAMES, MID_POS_NAMES, EXCLUDE_POS_NAMES
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
-from models.hanlp.pos import HanlpPosTagger
+
+TokenScoreFuncType = Literal["one", "ratio", "quantile", "log", "power", "pos"]
+FreqScoreFuncType = Literal["ratio", "quantile", "log", "power"]
 
 
 class FasttextModelFrequenizer:
@@ -28,7 +31,7 @@ class FasttextModelFrequenizer:
         self.max_weight = max_weight
         self.verbose = verbose
         self.load_token_freq()
-        self.init_tf_min_max()
+        self.init_tf_vars()
 
     def load_token_freq(self):
         self.token_freq_path = TOKEN_FREQS_ROOT / f"{self.token_freq_prefix}.csv"
@@ -41,7 +44,7 @@ class FasttextModelFrequenizer:
             logger.mesg(f"  * max_weight: {self.max_weight}")
         self.tf_df = pd.read_csv(self.token_freq_path)
 
-    def init_tf_min_max(self):
+    def init_tf_vars(self):
         if self.tf_max_rows:
             self.tf_df = self.tf_df.head(self.tf_max_rows)
         if self.tf_min_freq:
@@ -64,6 +67,10 @@ class FasttextModelFrequenizer:
         self.token_doc_freq_dict = dict(
             zip(self.tf_df["token"], self.tf_df["doc_freq"])
         )
+        if "pos" in self.tf_df.columns:
+            self.token_pos_dict = dict(zip(self.tf_df["token"], self.tf_df["pos"]))
+        else:
+            self.token_pos_dict = None
         if self.verbose:
             logger.mesg(f"  * tf_df_min_freq: {self.tf_df_min_freq}")
             logger.mesg(f"  * tf_df_max_freq: {self.tf_df_max_freq}")
@@ -133,7 +140,7 @@ class FasttextModelFrequenizer:
     def calc_weight_of_freq(
         self,
         freq: int,
-        score_func: Literal["ratio", "quantile", "log", "power", "pos"] = "log",
+        score_func: FreqScoreFuncType = "log",
         base: Union[int, float] = None,
         min_weight: float = None,
         max_weight: float = None,
@@ -164,29 +171,50 @@ class FasttextModelFrequenizer:
             )
         return weight
 
+    def calc_weight_of_pos(
+        self, word: str, min_weight: float = None, max_weight: float = None
+    ) -> float:
+        min_weight = min_weight or self.min_weight
+        max_weight = max_weight or self.max_weight
+        word_pos = self.token_pos_dict.get(word, None)
+        if word_pos in EXCLUDE_POS_NAMES:
+            weight = min_weight
+        elif word_pos in MID_POS_NAMES:
+            weight = (min_weight + max_weight) / 2
+        else:
+            weight = max_weight
+        return weight
+
     def calc_weight_of_token(
         self,
         word: str,
-        score_func: Literal["ratio", "quantile", "log", "power"] = "log",
+        score_func: TokenScoreFuncType = "one",
         base: Union[int, float] = None,
         min_weight: float = None,
         max_weight: float = None,
     ) -> float:
-        token_freq = self.get_token_freq(word)
-        min_weight = min_weight or self.min_weight
-        max_weight = max_weight or self.max_weight
-        if token_freq is None:
-            weight = (min_weight + max_weight) / 2
-        else:
-            logger.note(word, end=": ", verbose=self.verbose)
-            weight = self.calc_weight_of_freq(
-                token_freq,
-                score_func=score_func,
-                base=base,
-                min_weight=min_weight,
-                max_weight=max_weight,
+        if score_func == "one":
+            return base or 1.0
+        elif score_func == "pos":
+            return self.calc_weight_of_pos(
+                word, min_weight=min_weight, max_weight=max_weight
             )
-        return round(weight, 4)
+        else:
+            token_freq = self.get_token_freq(word)
+            min_weight = min_weight or self.min_weight
+            max_weight = max_weight or self.max_weight
+            if token_freq is None:
+                weight = (min_weight + max_weight) / 2
+            else:
+                logger.note(word, end=": ", verbose=self.verbose)
+                weight = self.calc_weight_of_freq(
+                    token_freq,
+                    score_func=score_func,
+                    base=base,
+                    min_weight=min_weight,
+                    max_weight=max_weight,
+                )
+            return round(weight, 4)
 
     def calc_weights_of_tokens(
         self,
@@ -278,6 +306,7 @@ class FasttextModelPreprocessor:
 
 
 if __name__ == "__main__":
+    from models.hanlp.pos import HanlpPosTagger
     from models.fasttext.test import TEST_KEYWORDS, TEST_PAIRS
     from models.sentencepiece.test import TEST_SENTENCES
 
