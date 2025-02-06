@@ -1,5 +1,7 @@
 import numpy as np
 
+from typing import Literal
+
 
 def trunc(num: float, trunc_at: float = 0, trunc_to: float = 0) -> float:
     if num < trunc_at:
@@ -43,13 +45,32 @@ def stretch_shift_add(arr2d: np.ndarray, scale: int = 5) -> np.ndarray:
     return arr_added
 
 
-def downsample(arr: np.ndarray, ratio: float) -> np.ndarray:
-    # select every nth element for arr
-    # example: arr = [1, 2, 3, 4, 5, 6, 7, 8, 9], ratio = 0.5
-    # result = [1, 3, 5, 7]
-    if ratio == 1.0:
+def downsample(
+    arr: np.ndarray,
+    ratio: float = None,
+    to_num: int = None,
+    method: Literal["successive", "step"] = "step",
+) -> np.ndarray:
+    if ratio is None and to_num is None:
         return arr
-    return arr[:: int(1 / ratio)]
+
+    arr_dims = len(arr.shape)
+    arr_cols = arr.shape[1] if arr_dims > 1 else len(arr)
+
+    if to_num is None and ratio is not None:
+        to_num = int(arr_cols * ratio)
+
+    if method == "step" and arr_cols >= to_num * 2:
+        step = arr_cols // to_num
+        if arr_dims == 1:
+            return arr[::step]
+        else:
+            return arr[:, ::step]
+    else:
+        if arr_dims == 1:
+            return arr[:to_num]
+        else:
+            return arr[:, :to_num]
 
 
 def sample_to_dim(arr: np.ndarray, dim: int, n_window: int) -> np.ndarray:
@@ -69,6 +90,6 @@ if __name__ == "__main__":
     print(list(arr2d))
     print(list(stretch_shift_add(arr2d, scale=5)))
     arr1d2 = np.array([1.1, 2.2, 3.3, 4.4, 5.5, 6.6])
-    print(list(downsample(arr1d2, 1 / 2)))
+    print(list(downsample(arr1d2, to_num=2)))
 
     # python -m models.vectors.forms
