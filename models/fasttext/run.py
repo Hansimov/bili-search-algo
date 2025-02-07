@@ -6,9 +6,9 @@ import Pyro5.core
 import Pyro5.server
 import sys
 
+from functools import partial
 from gensim.models import FastText, KeyedVectors
 from pathlib import Path
-
 from tclogger import logger, logstr, dict_to_str, brk, brp, Runtimer
 from typing import Union, Literal
 
@@ -421,7 +421,10 @@ class FasttextDocVecModelRunner(FasttextModelRunner):
         super().__init__(*args, **kwargs)
         self.dim = FASTTEXT_MERGED_MODEL_DIMENSION
         self.dim_scale = 6
-        self.downsample_to_num = 160
+        self.downsample_nume_deno = (2, 3)
+        self.downsample = partial(
+            downsample, nume_deno=self.downsample_nume_deno, method="window"
+        )
 
     @Pyro5.server.expose
     def calc_query_vector(self, doc: Union[str, list[str]]) -> np.ndarray:
@@ -449,14 +452,14 @@ class FasttextDocVecModelRunner(FasttextModelRunner):
     @Pyro5.server.expose
     def calc_stretch_query_vector(self, doc: Union[str, list[str]]) -> np.ndarray:
         query_vector = self.calc_query_vector(doc)
-        downsampled_vector = downsample(query_vector, to_num=self.downsample_to_num)
+        downsampled_vector = self.downsample(query_vector)
         stretched_vector = stretch_copy(downsampled_vector, scale=self.dim_scale)
         return stretched_vector
 
     @Pyro5.server.expose
     def calc_stretch_sample_vector(self, doc: Union[str, list[str]]) -> np.ndarray:
         token_vectors = self.calc_sample_token_vectors(doc)
-        downsampled_vector = downsample(token_vectors, to_num=self.downsample_to_num)
+        downsampled_vector = self.downsample(token_vectors)
         stretched_vector = stretch_shift_add(downsampled_vector, scale=self.dim_scale)
         return stretched_vector
 

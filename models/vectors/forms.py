@@ -45,29 +45,59 @@ def stretch_shift_add(arr2d: np.ndarray, scale: int = 5) -> np.ndarray:
     return arr_added
 
 
+def padding_zeros(arr: np.ndarray, padding_len: int) -> np.ndarray:
+    arr_cols = arr.shape[1] if arr.ndim > 1 else len(arr)
+    if arr.ndim == 1:
+        if padding_len == arr_cols:
+            arr_padded = arr
+        else:
+            arr_padded = np.pad(arr, (0, padding_len - arr_cols), mode="constant")
+    else:
+        if padding_len == arr_cols:
+            arr_padded = arr
+        else:
+            arr_padded = np.pad(
+                arr, ((0, 0), (0, padding_len - arr_cols)), mode="constant"
+            )
+    return arr_padded
+
+
 def downsample(
     arr: np.ndarray,
     ratio: float = None,
     to_num: int = None,
-    method: Literal["successive", "step"] = "step",
+    nume_deno: tuple[int, int] = None,
+    method: Literal["successive", "step", "window"] = "window",
 ) -> np.ndarray:
-    if ratio is None and to_num is None:
+    if ratio is None and to_num is None and nume_deno is None:
         return arr
 
-    arr_dims = len(arr.shape)
-    arr_cols = arr.shape[1] if arr_dims > 1 else len(arr)
+    arr_cols = arr.shape[1] if arr.ndim > 1 else len(arr)
+    arr_rows = arr.shape[0] if arr.ndim > 1 else 1
 
-    if to_num is None and ratio is not None:
+    if nume_deno is None and to_num is None and ratio is not None:
         to_num = int(arr_cols * ratio)
 
     if method == "step" and arr_cols >= to_num * 2:
         step = arr_cols // to_num
-        if arr_dims == 1:
+        if arr.ndim == 1:
             return arr[::step]
         else:
             return arr[:, ::step]
+    elif method == "window":
+        nume, deno = nume_deno
+        # padding zeros to make arr cols be divided by deno
+        padding_len = (arr_cols + deno - 1) // deno * deno
+        if arr.ndim == 1:
+            arr_padded = padding_zeros(arr, padding_len)
+            return arr_padded.reshape(-1, deno)[:, :nume].flatten()
+        else:
+            arr_padded = padding_zeros(arr, padding_len)
+            return arr_padded.reshape(arr_rows, -1, deno)[:, :, :nume].reshape(
+                arr_rows, -1
+            )
     else:
-        if arr_dims == 1:
+        if arr.ndim == 1:
             return arr[:to_num]
         else:
             return arr[:, :to_num]
@@ -86,10 +116,17 @@ if __name__ == "__main__":
     arr1d = np.array([1.1, 2.2, 3.3])
     print(list(arr1d))
     print(list(stretch_copy(arr1d, scale=5)))
-    arr2d = np.array([[1.1, 2.2, 3.3], [4.2, 5.3, 6.4], [7.3, 8.4, 9.5]])
+    arr2d = np.array(
+        [
+            [1.1, 2.2, 3.3, 4.4],
+            [4.2, 5.3, 6.4, 7.5],
+            [7.3, 8.4, 9.5, 10.6],
+        ]
+    )
     print(list(arr2d))
     print(list(stretch_shift_add(arr2d, scale=5)))
     arr1d2 = np.array([1.1, 2.2, 3.3, 4.4, 5.5, 6.6])
-    print(list(downsample(arr1d2, to_num=2)))
+    print(list(downsample(arr1d2, nume_deno=(2, 3), method="window")))
+    print(downsample(arr2d, nume_deno=(2, 3), method="window"))
 
     # python -m models.vectors.forms
