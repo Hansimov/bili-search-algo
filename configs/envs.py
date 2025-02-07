@@ -16,6 +16,7 @@ SECRETS_PATH = CONFIGS_ROOT / "secrets.json"
 SECRETS = OSEnver(SECRETS_PATH)
 MONGO_ENVS = SECRETS["mongo"]
 ELASTIC_ENVS = SECRETS["elastic"]
+MILVUS_ENVS = SECRETS["milvus"]
 
 SENTENCEPIECE_CKPT_ROOT = REPO_ROOT / "models" / "sentencepiece" / "checkpoints"
 SP_MERGED_MODEL_PREFIX = "sp_merged"

@@ -1,7 +1,8 @@
 {
     "logs": {
         "mongo": "mongo.log",
-        "elastic": "elastic.log"
+        "elastic": "elastic.log",
+        "milvus": "milvus.log"
     },
     "pyro": {
         "host": "localhost",
