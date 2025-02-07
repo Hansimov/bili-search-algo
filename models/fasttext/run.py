@@ -22,6 +22,7 @@ from models.fasttext.preprocess import FasttextModelFrequenizer
 from models.fasttext.preprocess import TokenScoreFuncType, FreqScoreFuncType
 from models.vectors.calcs import dot_sim
 from models.vectors.forms import trunc, stretch_copy, stretch_shift_add, downsample
+from models.vectors.forms import calc_padded_downsampled_cols
 
 
 @Pyro5.server.behavior(instance_mode="single")
@@ -417,11 +418,13 @@ class FasttextModelRunner:
 
 @Pyro5.server.behavior(instance_mode="single")
 class FasttextDocVecModelRunner(FasttextModelRunner):
+    dim = FASTTEXT_MERGED_MODEL_DIMENSION
+    dim_scale = 6
+    downsample_nume_deno = (2, 3)
+    docvec_dim = calc_padded_downsampled_cols(dim, downsample_nume_deno) * dim_scale
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.dim = FASTTEXT_MERGED_MODEL_DIMENSION
-        self.dim_scale = 6
-        self.downsample_nume_deno = (2, 3)
         self.downsample = partial(
             downsample, nume_deno=self.downsample_nume_deno, method="window"
         )
@@ -483,6 +486,10 @@ class FasttextDocVecModelRunner(FasttextModelRunner):
             for sample, sim in sample_sims:
                 sim_str = logstr.mesg(f"{sim:.4f}")
                 logger.mesg(f"  * {sim_str}: {sample}")
+        logger.mesg(
+            f"* docvec_dim: {logstr.success(self.docvec_dim)}\n"
+            f"* vector_dim: {logstr.success(query_vec.shape)}"
+        )
 
 
 PYRO_NS = {

@@ -42,17 +42,32 @@ class MilvusCollectionCreator:
             index_params.add_index(field_name=field_name, **field_params)
         return schema, index_params
 
+    def drop_collection(self, collection_name: str):
+        if not self.milvus.client.has_collection(collection_name):
+            logger.mesg(f"  * No existed collection: [{collection_name}]")
+            return
+        collection_str = logstr.file(collection_name)
+        logger.warn(f"  ! WARNING: You are dropping collection: [{collection_str}]")
+
+        confirmation = None
+        while confirmation != collection_name:
+            confirmation = input(f'  > Type "{collection_str}" to confirm deletion: ')
+        self.milvus.client.drop_collection(collection_name)
+        logger.warn(f"  ✓ Dropped collection: [{collection_str}]")
+
     def create_collection(self, collection_name: str):
         schema, index_params = self.create_schema_and_indexes()
+        self.drop_collection(collection_name)
         self.milvus.client.create_collection(
             collection_name,
             schema=schema,
             index_params=index_params,
         )
+        logger.success(f"  ✓ Created collection: [{logstr.file(collection_name)}]")
 
 
 if __name__ == "__main__":
     creator = MilvusCollectionCreator(verbose=True)
-    creator.create_collection("videos_vecs")
+    creator.create_collection("videos")
 
     # python -m workers.milvus_videos.create

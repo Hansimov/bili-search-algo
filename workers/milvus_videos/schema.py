@@ -1,12 +1,14 @@
 from pymilvus import DataType
 
+from models.fasttext.run import FasttextDocVecModelRunner
+
 """Useful docs:
 In-memory Index | Milvus Documentation
   * https://milvus.io/docs/index.md?tab=floating
   * This doc describes suitable indexes in different scenarios.
 """
 
-DOCVEC_DIM = 960
+DOCVEC_DIM = FasttextDocVecModelRunner.docvec_dim
 
 DEFAULT_SCHEMA_PARAMS = {
     "auto_id": False,
