@@ -39,7 +39,8 @@ class MilvusCollectionCreator:
         # add indexes
         index_params = self.milvus.client.prepare_index_params()
         for field_name, field_params in index_params_dict.items():
-            index_params.add_index(field_name=field_name, **field_params)
+            if field_params:
+                index_params.add_index(field_name=field_name, **field_params)
         return schema, index_params
 
     def drop_collection(self, collection_name: str):
