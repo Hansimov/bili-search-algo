@@ -23,6 +23,10 @@ from models.fasttext.preprocess import TokenScoreFuncType, FreqScoreFuncType
 from models.vectors.calcs import dot_sim
 from models.vectors.forms import trunc, stretch_copy, stretch_shift_add, downsample
 from models.vectors.forms import calc_padded_downsampled_cols
+from models.vectors.serialize import ndarray_to_dict, dict_to_ndarray
+
+Pyro5.api.register_class_to_dict(np.ndarray, ndarray_to_dict)
+Pyro5.api.register_dict_to_class("numpy.ndarray", dict_to_ndarray)
 
 
 @Pyro5.server.behavior(instance_mode="single")
@@ -32,6 +36,7 @@ class FasttextModelRunner:
         model_prefix: Union[str, Path] = FASTTEXT_MERGED_MODEL_PREFIX,
         frequenizer: FasttextModelFrequenizer = None,
         preprocessor: FasttextModelPreprocessor = None,
+        run_mode: Literal["local", "remote"] = "local",
         restrict_vocab: int = 150000,
         vector_weighted: bool = False,
         verbose: bool = False,
@@ -39,6 +44,7 @@ class FasttextModelRunner:
         self.model_prefix = model_prefix
         self.frequenizer = frequenizer
         self.preprocessor = preprocessor or FasttextModelPreprocessor()
+        self.run_mode = run_mode
         self.restrict_vocab = restrict_vocab
         self.vector_weighted = vector_weighted
         self.verbose = verbose
@@ -142,14 +148,9 @@ class FasttextModelRunner:
         return pooled_vector / np.linalg.norm(pooled_vector)
 
     @Pyro5.server.expose
-    def get_vector(
-        self, word: str, tolist: bool = False
-    ) -> Union[np.ndarray, list[float]]:
+    def get_vector(self, word: str) -> np.ndarray:
         vector = self.model.wv.get_vector(word, norm=True)
-        if tolist:
-            return vector.tolist()
-        else:
-            return vector
+        return vector
 
     @Pyro5.server.expose
     def calc_vector(
@@ -162,18 +163,16 @@ class FasttextModelRunner:
         min_weight: float = None,
         max_weight: float = None,
         normalize: bool = True,
-        tolist: bool = False,
-    ) -> Union[np.ndarray, list[float]]:
+    ) -> np.ndarray:
         pwords = self.preprocess(word)
+        if not pwords:
+            return np.zeros(self.model.vector_size)
         if ignore_duplicates:
             pwords = list(set(pwords))
         pword_vectors = [self.model.wv.get_vector(pword, norm=True) for pword in pwords]
         if weight_func == "max":
             vector = self.max_pool_vectors(pword_vectors)
-            if tolist:
-                return vector.tolist()
-            else:
-                return vector
+            return vector
         elif weight_func in ["mean", "sum", "score"]:
             vector = np.zeros(self.model.vector_size)
             for pword_vector in pword_vectors:
@@ -195,24 +194,17 @@ class FasttextModelRunner:
                 vector /= weights_abs_sum
             if normalize:
                 vector /= np.linalg.norm(vector)
-            if tolist:
-                return vector.tolist()
-            else:
-                return vector
+            return vector
         else:
             raise ValueError(f"× Invalid weight_func: {weight_func}")
 
     @Pyro5.server.expose
-    def calc_query_vector(
-        self, word: Union[str, list[str]], tolist: bool = False
-    ) -> Union[np.ndarray, list[float]]:
-        return self.calc_vector(word, weight_func="score", tolist=tolist)
+    def calc_query_vector(self, word: Union[str, list[str]]) -> np.ndarray:
+        return self.calc_vector(word, weight_func="score")
 
     @Pyro5.server.expose
-    def calc_sample_vector(
-        self, word: Union[str, list[str]], tolist: bool = False
-    ) -> Union[np.ndarray, list[float]]:
-        return self.calc_vector(word, weight_func="sum", normalize=False, tolist=tolist)
+    def calc_sample_vector(self, word: Union[str, list[str]]) -> np.ndarray:
+        return self.calc_vector(word, weight_func="sum", normalize=False)
 
     @Pyro5.server.expose
     def word_similarity(
@@ -446,6 +438,8 @@ class FasttextDocVecModelRunner(FasttextModelRunner):
     @Pyro5.server.expose
     def calc_sample_token_vectors(self, doc: Union[str, list[str]]) -> np.ndarray:
         tokens = self.preprocess(doc)
+        if not tokens:
+            return np.zeros((1, self.dim))
         vectors = np.array([self.get_vector(token) for token in tokens])
         weights = np.array(
             [self.calc_weight_of_sample_token(token) for token in tokens]
@@ -518,6 +512,7 @@ class FasttextModelRunnerServer:
             logger.mesg(f"  * {self.host}:{self.port}")
         # Pyro5.server.serve({runner: self.nameserver}, host=self.host, port=self.port)
         daemon = Pyro5.server.Daemon(host=self.host, port=self.port)
+        runner.run_mode = "remote"
         self.uri = daemon.register(runner, objectId=self.nameserver, weak=True)
         logger.file(f"  * {self.uri}", verbose=self.verbose)
         daemon.requestLoop()
