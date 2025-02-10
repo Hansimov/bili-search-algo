@@ -7,6 +7,7 @@ from typing import Union
 
 from configs.envs import SP_MERGED_MODEL_PATH
 from datasets.videos.convert import CH_CJK, CH_AB, CH_DIGIT_PREFIX, RE_UNITS_ALL
+from models.sentencepiece.test import TEST_TOKENS, TEST_WORDS, TEST_SENTENCES
 
 """Naming conventions by typings:
 - tokenize: str -> list[str]
@@ -38,6 +39,7 @@ RE_DIGITS_ALL = rf"(?:{RE_DIGITS_NUMBER_WITH_PREFIX_AND_UNIT}|{RE_DIGITS_WITH_DO
 
 RE_NOT_DIGIT_DOT = r"\.(?!\d)"
 RE_NON_WORD = rf"[^{CH_CJK}〇{CH_AB}\-\.%‰{CH_LB}{CH_RB}]+|{RE_NOT_DIGIT_DOT}"
+RE_CH_CJK = rf"[{CH_CJK}]"
 
 RE_DIGITS_ZH = (
     rf"(([{CH_DIGIT_ZH}][{CH_DIGIT_ZH_MUL}])+[{CH_DIGIT_ZH}]?|[{CH_DIGIT_ZH}]+)"
@@ -49,6 +51,7 @@ RE_DASHED_ATOZ_AND_DIGITS = rf"[a-z0-9]+(\-[a-z0-9]+)+"
 RE_DIGITS_UNITS_AND_NON_WORD = rf"(?P<dashed_atoz_and_digits>{RE_DASHED_ATOZ_AND_DIGITS}{RE_UNITS_ALL}?)|(?P<digits_with_unit>{RE_DIGITS_NUMBER_WITH_PREFIX_AND_UNIT})|(?P<digits_zh_with_unit>{RE_DIGITS_ZH_WITH_UNIT})|(?P<non_word>{RE_NON_WORD})"
 
 PT_NON_WORD = re.compile(RE_NON_WORD)
+PT_CH_CJK = re.compile(RE_CH_CJK)
 PT_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
 PT_DIGITS_ZH_WITH_UNIT = re.compile(RE_DIGITS_ZH_WITH_UNIT)
 PT_DIGITS_UNITS_AND_NON_WORDS = re.compile(RE_DIGITS_UNITS_AND_NON_WORD)
@@ -101,9 +104,40 @@ class SentencePieceModelTokenizer:
         self.model_file = str(model_path)
         self.sp = spm.SentencePieceProcessor(model_file=self.model_file)
 
-    def tokenize(self, sentence: str) -> list[str]:
-        tokens = self.sp.EncodeAsPieces(sentence)
-        return tokens
+    def tokenize(
+        self, sentence: str, nbest_size: int = None
+    ) -> Union[list[str], list[list[str]]]:
+        if nbest_size is None:
+            return self.sp.EncodeAsPieces(sentence)
+        else:
+            return self.sp.NBestEncodeAsPieces(sentence, nbest_size=nbest_size)
+
+    def tokenize_nbest(self, sentence: str, nbest_size: int = None) -> list[list[str]]:
+        return self.sp.NBestEncodeAsPieces(sentence, nbest_size=nbest_size)
+
+    @staticmethod
+    def calc_cjk_char_len(token: str) -> int:
+        return sum(1 for char in token if PT_CH_CJK.match(char))
+
+    def tokenize_maxlen(
+        self, sentence: str, max_char_len: int = None, level: int = 0
+    ) -> list[str]:
+        """Tokenize sentence to tokens, in which each CJK token's char length is <= max_char_len"""
+        if max_char_len is None or max_char_len <= 1 or max_char_len >= len(sentence):
+            return self.tokenize(sentence)
+
+        if level == 0:
+            tokens = self.tokenize_nbest(sentence, nbest_size=1)[0]
+        else:
+            tokens = self.tokenize_nbest(sentence, nbest_size=2)[-1]
+
+        res = []
+        for token in tokens:
+            if self.calc_cjk_char_len(token) <= max_char_len:
+                res.append(token)
+            else:
+                res.extend(self.tokenize_maxlen(token, max_char_len, level + 1))
+        return res
 
 
 # post-tokenizer regex
@@ -305,16 +339,14 @@ class SentenceFullTokenizer:
         return tokens
 
 
-if __name__ == "__main__":
-    from tclogger import logger
-    from models.sentencepiece.test import TEST_TOKENS, TEST_SENTENCES
-
-    sentence = TEST_TOKENS
+def test_pre_tokenizer():
     logger.note("> Pre-Tokenizing ...")
     pre_tokenizer = SentencePreTokenizer()
-    parts = pre_tokenizer.tokenize(sentence)
+    parts = pre_tokenizer.tokenize(TEST_TOKENS)
     logger.success(parts)
 
+
+def test_full_tokenizer():
     logger.note("> Full-Tokenizing ...")
     tokenizer = SentenceFullTokenizer(
         SP_MERGED_MODEL_PATH, drop_non_word=True, verbose=True
@@ -323,5 +355,23 @@ if __name__ == "__main__":
         tokens = tokenizer.tokenize(sentence)
         pretty_tokens = tokenizer.stringify(tokens)
         logger.mesg(f"  * {pretty_tokens}")
+
+
+def test_model_tokenizer():
+    logger.note("> Model-Tokenizing ...")
+    tokenizer = SentencePieceModelTokenizer(SP_MERGED_MODEL_PATH)
+    for word in TEST_WORDS:
+        with logger.temp_indent(2):
+            logger.note(f"> {word}")
+            nbest_tokens = tokenizer.tokenize_nbest(word, nbest_size=1)[0]
+            maxlen_tokens = tokenizer.tokenize_maxlen(word, max_char_len=3)
+            logger.mesg(f"  * {nbest_tokens}")
+            logger.mesg(f"  * {maxlen_tokens}")
+
+
+if __name__ == "__main__":
+    # test_pre_tokenizer()
+    # test_full_tokenizer()
+    test_model_tokenizer()
 
     # python -m models.sentencepiece.tokenizer
