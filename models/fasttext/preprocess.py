@@ -304,14 +304,14 @@ class FasttextModelPreprocessor:
                 res.extend(word_segs)
         return res
 
-    def get_split_tokens_and_idxs(
+    def get_tokens_splits_and_idxs(
         self, tokens: list[str], max_char_len: int
-    ) -> list[tuple[list[str], int]]:
+    ) -> tuple[list[list[str]], list[int]]:
         """Similar to `split_max_len`, but there are two differences:
         1.  (a) input of this func is `list[str]`, which is tokenized sequences,
-                (b) while `split_max_len` accpets `str`, which is a not-tokenized sentence;
-        2.  (a) output of this func `list[tuple]`, which is subset-list of the splitted-only sub-tokens and indexes, which is meant to reduce the times of calling `calc_vector`.
-                (b) while `split_max_len` returns `list[str]`, which is a full-list of all splitted tokens
+            (b) while `split_max_len` accpets `str`, which is a not-tokenized sentence;
+        2.  (a) output of this func `tuple`, which is subset-list of splitale-only tokens and indexes, which is meant to reduce the times of calling `calc_vector`.
+            (b) while `split_max_len` returns `list[str]`, which is a full-list of all splitted tokens
 
         This function should be used after `preprocess`.
         And the following two stages should not be done at the same time:
@@ -319,7 +319,8 @@ class FasttextModelPreprocessor:
         2. call `get_sub_tokens_and_idxs` after `preprocess`,
         Otherwise it would tokenize the same words list twice.
         """
-        res = []
+        tokens_splits = []
+        idxs = []
         for idx, word in enumerate(tokens):
             if (
                 max_char_len >= calc_cjk_char_len(word)
@@ -328,11 +329,12 @@ class FasttextModelPreprocessor:
             ):
                 pass
             else:
-                word_segs = self.model_tokenizer.tokenize_maxlen(
+                word_splits = self.model_tokenizer.tokenize_maxlen(
                     word, max_char_len=max_char_len
                 )
-                res.append((word_segs, idx))
-        return res
+                tokens_splits.append(word_splits)
+                idxs.append(idx)
+        return tokens_splits, idxs
 
     def preprocess(
         self,
@@ -413,10 +415,11 @@ def test_split_tokens(test_sentences: list[str]):
     )
     for sentence in test_sentences:
         tokens = preprocessor.preprocess(sentence)
-        splitable_tokens_idxs = preprocessor.get_split_tokens_and_idxs(
+        tokens_splits, token_idxs = preprocessor.get_tokens_splits_and_idxs(
             tokens, max_char_len=3
         )
-        logger.mesg(f"* {splitable_tokens_idxs}")
+        logger.mesg(f"  * {tokens_splits}")
+        # logger.mesg(f"  * {list(zip(tokens_splits, token_idxs))}")
 
 
 def test_max_len(test_sentences: list[str]):
