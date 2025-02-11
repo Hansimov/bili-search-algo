@@ -355,13 +355,7 @@ class FasttextModelPreprocessor:
         return words
 
 
-if __name__ == "__main__":
-    from models.hanlp.pos import HanlpPosTagger
-    from models.fasttext.test import TEST_KEYWORDS, TEST_PAIRS
-    from models.sentencepiece.test import TEST_SENTENCES
-
-    timer = Runtimer()
-    timer.__enter__()
+def test_frequenizer(test_sentences: list[str]):
     frequenizer = FasttextModelFrequenizer(
         token_freq_prefix=TOKEN_FREQ_PREFIX,
         tf_max_rows=600000,
@@ -374,13 +368,27 @@ if __name__ == "__main__":
         tokenizer_prefix=SP_MERGED_MODEL_PREFIX, verbose=True
     )
     res = {}
-    TEST_SENTS = (
-        list(chain.from_iterable([words for word, words in TEST_PAIRS]))
-        + TEST_SENTENCES
-    )
-    tagger = HanlpPosTagger(verbose=True)
-    for sentence in TEST_SENTS:
+    for sentence in test_sentences:
         tokens = preprocessor.preprocess(sentence)
+        logger.mesg(f"* {tokens}")
+        freqs = frequenizer.get_tokens_freqs(tokens)
+        weights = frequenizer.calc_weights_of_tokens(tokens)
+        res[str(sentence)] = {
+            "tokens": tokens,
+            "freqs": freqs,
+            "weights": weights,
+        }
+    logger.mesg(dict_to_str(res, align_list=False))
+
+
+def test_pos_tagger(test_sentences: list[str]):
+    preprocessor = FasttextModelPreprocessor(
+        tokenizer_prefix=SP_MERGED_MODEL_PREFIX, verbose=True
+    )
+    res = {}
+    tagger = HanlpPosTagger(verbose=True)
+    for sentence in test_sentences:
+        tokens = preprocessor.preprocess(sentence, concat_singles=True, max_char_len=3)
         logger.mesg(f"* {tokens}")
         tags = tagger.tag_pos(tokens)
         token_tags = " ".join(
@@ -390,16 +398,43 @@ if __name__ == "__main__":
             ]
         )
         logger.mesg(f"  * {token_tags}")
-        # freqs = frequenizer.get_tokens_freqs(tokens)
-        # weights = frequenizer.calc_weights_of_tokens(tokens)
-        # res[str(word)] = {
-        #     "tokens": tokens,
-        #     "freqs": freqs,
-        #     "weights": weights,
-        # }
-
-        # logger.mesg(f"* {logstr.mesg(brk(word))}: {logstr.success(pword)}")
     logger.mesg(dict_to_str(res, align_list=False))
-    timer.__exit__(None, None, None)
+
+
+def test_split_tokens(test_sentences: list[str]):
+    preprocessor = FasttextModelPreprocessor(
+        tokenizer_prefix=SP_MERGED_MODEL_PREFIX, verbose=True
+    )
+    for sentence in test_sentences:
+        tokens = preprocessor.preprocess(sentence)
+        splitable_tokens_idxs = preprocessor.get_split_tokens_and_idxs(
+            tokens, max_char_len=3
+        )
+        logger.mesg(f"* {splitable_tokens_idxs}")
+
+
+def test_max_len(test_sentences: list[str]):
+    preprocessor = FasttextModelPreprocessor(
+        tokenizer_prefix=SP_MERGED_MODEL_PREFIX, verbose=True
+    )
+    for sentence in test_sentences:
+        tokens = preprocessor.preprocess(sentence, max_char_len=3)
+        logger.mesg(f"* {tokens}")
+
+
+if __name__ == "__main__":
+    from models.hanlp.pos import HanlpPosTagger
+    from models.fasttext.test import TEST_KEYWORDS, TEST_PAIRS
+    from models.sentencepiece.test import TEST_SENTENCES
+
+    TEST_SENTS = (
+        list(chain.from_iterable([words for word, words in TEST_PAIRS]))
+        + TEST_SENTENCES
+    )
+    with Runtimer():
+        # test_frequenizer(TEST_SENTS)
+        # test_pos_tagger(TEST_SENTS)
+        # test_split_tokens(TEST_SENTS)
+        test_max_len(TEST_SENTS)
 
     # python -m models.fasttext.preprocess
