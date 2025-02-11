@@ -157,7 +157,7 @@ class FasttextModelRunner:
         self,
         word: Union[str, list[str]],
         ignore_duplicates: bool = True,
-        weight_func: Literal["max", "mean", "sum", "score"] = "mean",
+        weight_func: Literal["mean", "sum", "score"] = "mean",
         score_func: TokenScoreFuncType = "one",
         base: Union[int, float] = None,
         min_weight: float = None,
@@ -170,33 +170,29 @@ class FasttextModelRunner:
         if ignore_duplicates:
             pwords = list(set(pwords))
         pword_vectors = [self.model.wv.get_vector(pword, norm=True) for pword in pwords]
-        if weight_func == "max":
-            vector = self.max_pool_vectors(pword_vectors)
-            return vector
-        elif weight_func in ["mean", "sum", "score"]:
-            vector = np.zeros(self.model.vector_size)
-            for pword_vector in pword_vectors:
-                vector += pword_vector
-            if weight_func == "score" and self.frequenizer:
-                weights = np.array(
-                    self.frequenizer.calc_weights_of_tokens(
-                        pwords,
-                        score_func=score_func,
-                        base=base,
-                        min_weight=min_weight,
-                        max_weight=max_weight,
-                    )
-                )
-            else:
-                weights = np.ones(len(pwords))
-            weights_abs_sum = np.sum(np.abs(weights))
-            if weight_func in ["score", "mean"] and weights_abs_sum > 0:
-                vector /= weights_abs_sum
-            if normalize:
-                vector /= np.linalg.norm(vector)
-            return vector
+        vector = np.zeros(self.model.vector_size)
+        if weight_func == "score" and self.frequenizer:
+            weight_params = {
+                "score_func": score_func,
+                "base": base,
+                "min_weight": min_weight,
+                "max_weight": max_weight,
+            }
+            weights = np.array(
+                self.frequenizer.calc_weights_of_tokens(pwords, **weight_params)
+            )
         else:
-            raise ValueError(f"× Invalid weight_func: {weight_func}")
+            weights = np.ones(len(pwords))
+        for pword_vector, weight in zip(pword_vectors, weights):
+            vector += pword_vector * weight
+        if normalize:
+            vector /= np.linalg.norm(vector)
+        else:
+            if weight_func not in ["sum"]:
+                weights_abs_sum = np.sum(np.abs(weights))
+                if weights_abs_sum > 0:
+                    vector /= weights_abs_sum
+        return vector
 
     @Pyro5.server.expose
     def calc_query_vector(self, word: Union[str, list[str]]) -> np.ndarray:
