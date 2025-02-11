@@ -9,6 +9,8 @@ from configs.envs import SENTENCEPIECE_CKPT_ROOT, TOKEN_FREQS_ROOT
 from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
 from models.fasttext.pos import INCLUDE_POS_NAMES, MID_POS_NAMES, EXCLUDE_POS_NAMES
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
+from models.sentencepiece.tokenizer import PT_DIGITS_ZH_WITH_UNIT, PT_DIGITS_ZH
+from models.sentencepiece.tokenizer import calc_cjk_char_len
 
 TokenScoreFuncType = Literal["one", "ratio", "quantile", "log", "power", "pos"]
 FreqScoreFuncType = Literal["ratio", "quantile", "log", "power"]
@@ -293,7 +295,7 @@ class FasttextModelPreprocessor:
     def split_by_maxlen(self, words: str, max_char_len: int) -> list[str]:
         res = []
         for word in words:
-            if max_char_len >= self.model_tokenizer.calc_cjk_char_len(word):
+            if max_char_len >= calc_cjk_char_len(word):
                 res.append(word)
             else:
                 word_segs = self.model_tokenizer.tokenize_maxlen(
@@ -319,7 +321,11 @@ class FasttextModelPreprocessor:
         """
         res = []
         for idx, word in enumerate(tokens):
-            if max_char_len >= self.model_tokenizer.calc_cjk_char_len(word):
+            if (
+                max_char_len >= calc_cjk_char_len(word)
+                or PT_DIGITS_ZH_WITH_UNIT.match(word)
+                or PT_DIGITS_ZH.match(word)
+            ):
                 pass
             else:
                 word_segs = self.model_tokenizer.tokenize_maxlen(
@@ -434,7 +440,7 @@ if __name__ == "__main__":
     with Runtimer():
         # test_frequenizer(TEST_SENTS)
         # test_pos_tagger(TEST_SENTS)
-        # test_split_tokens(TEST_SENTS)
-        test_max_len(TEST_SENTS)
+        test_split_tokens(TEST_SENTS)
+        # test_max_len(TEST_SENTS)
 
     # python -m models.fasttext.preprocess
