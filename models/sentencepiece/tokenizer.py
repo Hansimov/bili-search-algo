@@ -281,21 +281,27 @@ class SentenceFullTokenizer:
         model_path: Union[Path, str],
         drop_non_word: bool = False,
         drop_whitespace: bool = False,
+        max_char_len: int = None,
         verbose: bool = False,
     ):
         self.model_path = model_path
         self.drop_non_word = drop_non_word
         self.drop_whitespace = drop_whitespace
+        self.max_char_len = max_char_len
         self.verbose = verbose
         self.pre_tokenizer = SentencePreTokenizer()
         self.post_tokenizer = SentencePostTokenizer()
         self.model_tokenizer = SentencePieceModelTokenizer(model_path)
 
-    def tokenize_parts(self, parts: list[tuple]) -> list[str]:
+    def tokenize_parts(self, parts: list[tuple], max_char_len: int = None) -> list[str]:
         res: list[str] = []
         for token, token_type in parts:
             if token_type == "str":
-                segs = self.model_tokenizer.tokenize(token)
+                max_char_len = max_char_len or self.max_char_len
+                if max_char_len:
+                    segs = self.model_tokenizer.tokenize_maxlen(token, max_char_len)
+                else:
+                    segs = self.model_tokenizer.tokenize(token)
                 res.extend(segs)
             else:
                 res.append(token)
@@ -349,6 +355,22 @@ class SentenceFullTokenizer:
         )
         tokens = self.clean_tokens(tokens)
         return tokens
+
+    class TempMaxCharLen:
+        def __init__(self, full_tokenizer, max_char_len: int = None):
+            self.full_tokenizer = full_tokenizer
+            self.old_max_char_len = self.full_tokenizer.max_char_len
+            self.max_char_len = max_char_len
+
+        def __enter__(self):
+            self.full_tokenizer.max_char_len = self.max_char_len
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            self.full_tokenizer.max_char_len = self.old_max_char_len
+
+    def temp_max_char_len(self, max_char_len: int = None):
+        return self.TempMaxCharLen(self, max_char_len=max_char_len)
 
 
 def test_pre_tokenizer():
