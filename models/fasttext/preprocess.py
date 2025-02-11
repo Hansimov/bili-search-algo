@@ -219,7 +219,7 @@ class FasttextModelFrequenizer:
     def calc_weights_of_tokens(
         self,
         words: list[str],
-        score_func: Literal["ratio", "quantile", "log", "power"] = "log",
+        score_func: TokenScoreFuncType = "one",
         base: Union[int, float] = None,
         min_weight: float = None,
         max_weight: float = None,
@@ -252,11 +252,14 @@ class FasttextModelPreprocessor:
         self.tokenizer = SentenceFullTokenizer(
             model_path=self.tokenizer_path, drop_non_word=True, drop_whitespace=True
         )
+        self.model_tokenizer = self.tokenizer.model_tokenizer
 
     def tokenize(self, word: str) -> list[str]:
         return self.tokenizer.tokenize(word)
 
     def get_sep_indexes(self, words: list[str]) -> set[tuple[int, int]]:
+        """This function is to get indexes of separated chars in original sentence,
+        which serves later single-char words concat."""
         sep_indexes = []
         start = 0
         for word in words:
@@ -287,8 +290,50 @@ class FasttextModelPreprocessor:
                 res.append(word)
         return res
 
+    def split_by_maxlen(self, words: str, max_char_len: int) -> list[str]:
+        res = []
+        for word in words:
+            if max_char_len >= self.model_tokenizer.calc_cjk_char_len(word):
+                res.append(word)
+            else:
+                word_segs = self.model_tokenizer.tokenize_maxlen(
+                    word, max_char_len=max_char_len
+                )
+                res.extend(word_segs)
+        return res
+
+    def get_split_tokens_and_idxs(
+        self, tokens: list[str], max_char_len: int
+    ) -> list[tuple[list[str], int]]:
+        """Similar to `split_max_len`, but there are two differences:
+        1.  (a) input of this func is `list[str]`, which is tokenized sequences,
+                (b) while `split_max_len` accpets `str`, which is a not-tokenized sentence;
+        2.  (a) output of this func `list[tuple]`, which is subset-list of the splitted-only sub-tokens and indexes, which is meant to reduce the times of calling `calc_vector`.
+                (b) while `split_max_len` returns `list[str]`, which is a full-list of all splitted tokens
+
+        This function should be used after `preprocess`.
+        And the following two stages should not be done at the same time:
+        1. specify `max_char_len` in `preprocess`;
+        2. call `get_sub_tokens_and_idxs` after `preprocess`,
+        Otherwise it would tokenize the same words list twice.
+        """
+        res = []
+        for idx, word in enumerate(tokens):
+            if max_char_len >= self.model_tokenizer.calc_cjk_char_len(word):
+                pass
+            else:
+                word_segs = self.model_tokenizer.tokenize_maxlen(
+                    word, max_char_len=max_char_len
+                )
+                res.append((word_segs, idx))
+        return res
+
     def preprocess(
-        self, words: Union[str, list[str]], tokenize: bool = True
+        self,
+        words: Union[str, list[str]],
+        tokenize: bool = True,
+        concat_singles: bool = True,
+        max_char_len: int = None,
     ) -> list[str]:
         if words is None:
             return None
@@ -300,8 +345,13 @@ class FasttextModelPreprocessor:
 
         words = [word.lower() for word in words]
         if tokenize:
-            words = [token for word in words for token in self.tokenize(word)]
-            words = self.concat_singles(words, sep_indexes=sep_indexes)
+            if max_char_len:
+                with self.tokenizer.temp_max_char_len(max_char_len):
+                    words = [token for word in words for token in self.tokenize(word)]
+            else:
+                words = [token for word in words for token in self.tokenize(word)]
+                if concat_singles:
+                    words = self.concat_singles(words, sep_indexes=sep_indexes)
         return words
 
 
