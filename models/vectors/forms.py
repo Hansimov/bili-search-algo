@@ -64,7 +64,10 @@ def padding_zeros(arr: np.ndarray, padding_len: int) -> np.ndarray:
 
 def calc_padded_downsampled_cols(cols: int, nume_deno: tuple[int, int]) -> int:
     nume, deno = nume_deno
-    return (cols + deno - 1) // deno * nume
+    if nume == deno:
+        return cols
+    else:
+        return (cols + deno - 1) // deno * nume
 
 
 def downsample(
@@ -91,6 +94,8 @@ def downsample(
             return arr[:, ::step]
     elif method == "window":
         nume, deno = nume_deno
+        if nume == deno:
+            return arr
         # padding zeros to make arr cols be divided by deno
         padding_len = (arr_cols + deno - 1) // deno * deno
         if arr.ndim == 1:
@@ -132,7 +137,7 @@ if __name__ == "__main__":
     print(list(stretch_shift_add(arr2d, scale=5)))
     arr1d2 = np.array([1.1, 2.2, 3.3, 4.4, 5.5, 6.6])
     print(list(downsample(arr1d2, nume_deno=(2, 3), method="window")))
-    print(downsample(arr2d, nume_deno=(2, 3), method="window"))
-    print(calc_padded_downsampled_cols(320, (2, 3)))
+    print(downsample(arr2d, nume_deno=(1, 1), method="window"))
+    print(calc_padded_downsampled_cols(320, (3, 3)))
 
     # python -m models.vectors.forms

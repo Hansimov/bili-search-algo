@@ -412,7 +412,7 @@ class FasttextModelRunner:
 class FasttextDocVecModelRunner(FasttextModelRunner):
     dim = FASTTEXT_MERGED_MODEL_DIMENSION
     dim_scale = 6
-    downsample_nume_deno = (2, 3)
+    downsample_nume_deno = (3, 3)
     docvec_dim = calc_padded_downsampled_cols(dim, downsample_nume_deno) * dim_scale
 
     def __init__(self, *args, **kwargs):
