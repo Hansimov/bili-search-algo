@@ -410,6 +410,8 @@ class FasttextDocVecModelRunner(FasttextModelRunner):
     dim_scale = 6
     downsample_nume_deno = (3, 3)
     docvec_dim = calc_padded_downsampled_cols(dim, downsample_nume_deno) * dim_scale
+    max_char_len = 3
+    token_wr, split_wr = 1.0, 0.4
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -431,16 +433,40 @@ class FasttextDocVecModelRunner(FasttextModelRunner):
     def calc_weight_of_sample_token(self, token: str) -> float:
         return self.calc_weight_of_token(token, score_func="pos")
 
+    def calc_tokens_splits_vectors(
+        self, tokens_splits: list[list[str]]
+    ) -> list[np.ndarray]:
+        vectors = []
+        for token_splits in tokens_splits:
+            token_splits_vector = np.zeros(self.dim)
+            weight_sum = 0
+            for split in token_splits:
+                vector = self.get_vector(split)
+                weight = self.calc_weight_of_sample_token(split)
+                token_splits_vector += vector * weight
+                weight_sum += weight
+            vectors.append(token_splits_vector / weight_sum)
+        return vectors
+
     @Pyro5.server.expose
     def calc_sample_token_vectors(self, doc: Union[str, list[str]]) -> np.ndarray:
         tokens = self.preprocess(doc)
         if not tokens:
             return np.zeros((1, self.dim))
-        vectors = np.array([self.get_vector(token) for token in tokens])
-        weights = np.array(
-            [self.calc_weight_of_sample_token(token) for token in tokens]
-        )
-        return vectors * weights[:, np.newaxis]
+        vectors = [self.get_vector(token) for token in tokens]
+        weights = [self.calc_weight_of_sample_token(token) for token in tokens]
+        res = [vector * weight for vector, weight in zip(vectors, weights)]
+        if self.max_char_len:
+            tokens_splits, token_idxs = self.preprocessor.get_tokens_splits_and_idxs(
+                tokens, max_char_len=self.max_char_len
+            )
+            token_splits_vectors = self.calc_tokens_splits_vectors(tokens_splits)
+            for i, token_idx in enumerate(token_idxs):
+                res[token_idx] = (
+                    res[token_idx] * self.token_wr
+                    + token_splits_vectors[i] * self.split_wr
+                )
+        return np.array(res)
 
     @Pyro5.server.expose
     def calc_stretch_query_vector(self, doc: Union[str, list[str]]) -> np.ndarray:
