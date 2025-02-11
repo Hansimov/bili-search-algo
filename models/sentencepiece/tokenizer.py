@@ -53,8 +53,13 @@ RE_DIGITS_UNITS_AND_NON_WORD = rf"(?P<dashed_atoz_and_digits>{RE_DASHED_ATOZ_AND
 PT_NON_WORD = re.compile(RE_NON_WORD)
 PT_CH_CJK = re.compile(RE_CH_CJK)
 PT_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
+PT_DIGITS_ZH = re.compile(RE_DIGITS_ZH)
 PT_DIGITS_ZH_WITH_UNIT = re.compile(RE_DIGITS_ZH_WITH_UNIT)
 PT_DIGITS_UNITS_AND_NON_WORDS = re.compile(RE_DIGITS_UNITS_AND_NON_WORD)
+
+
+def calc_cjk_char_len(token: str) -> int:
+    return sum(1 for char in token if PT_CH_CJK.match(char))
 
 
 class SentencePreTokenizer:
@@ -110,10 +115,6 @@ class SentencePieceModelTokenizer:
     def tokenize_nbest(self, sentence: str, nbest_size: int = None) -> list[list[str]]:
         return self.sp.NBestEncodeAsPieces(sentence, nbest_size=nbest_size)
 
-    @staticmethod
-    def calc_cjk_char_len(token: str) -> int:
-        return sum(1 for char in token if PT_CH_CJK.match(char))
-
     def tokenize_maxlen(
         self,
         sentence: str,
@@ -134,7 +135,7 @@ class SentencePieceModelTokenizer:
 
         res = []
         for token in tokens:
-            if self.calc_cjk_char_len(token) <= max_char_len:
+            if calc_cjk_char_len(token) <= max_char_len:
                 res.append(token)
             else:
                 sub_tokens = self.tokenize_maxlen(
@@ -143,12 +144,9 @@ class SentencePieceModelTokenizer:
                     level=level + 1,
                     combine_singles=combine_singles,
                 )
-                if combine_singles and all(
-                    self.calc_cjk_char_len(ssub_token) <= 1 for ssub_token in sub_tokens
-                ):
-                    res.append(token)
-                else:
-                    res.extend(sub_tokens)
+                res.extend(sub_tokens)
+        if combine_singles and all(calc_cjk_char_len(token) <= 1 for token in res):
+            res = ["".join(res)]
         return res
 
 
