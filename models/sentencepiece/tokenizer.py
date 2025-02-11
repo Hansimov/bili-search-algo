@@ -104,13 +104,8 @@ class SentencePieceModelTokenizer:
         self.model_file = str(model_path)
         self.sp = spm.SentencePieceProcessor(model_file=self.model_file)
 
-    def tokenize(
-        self, sentence: str, nbest_size: int = None
-    ) -> Union[list[str], list[list[str]]]:
-        if nbest_size is None:
-            return self.sp.EncodeAsPieces(sentence)
-        else:
-            return self.sp.NBestEncodeAsPieces(sentence, nbest_size=nbest_size)
+    def tokenize(self, sentence: str) -> list[str]:
+        return self.sp.EncodeAsPieces(sentence)
 
     def tokenize_nbest(self, sentence: str, nbest_size: int = None) -> list[list[str]]:
         return self.sp.NBestEncodeAsPieces(sentence, nbest_size=nbest_size)
@@ -120,14 +115,20 @@ class SentencePieceModelTokenizer:
         return sum(1 for char in token if PT_CH_CJK.match(char))
 
     def tokenize_maxlen(
-        self, sentence: str, max_char_len: int = None, level: int = 0
+        self,
+        sentence: str,
+        max_char_len: int = None,
+        level: int = 0,
+        combine_singles: bool = True,
     ) -> list[str]:
-        """Tokenize sentence to tokens, in which each CJK token's char length is <= max_char_len"""
-        if max_char_len is None or max_char_len <= 1 or max_char_len >= len(sentence):
+        """Tokenize sentence to tokens with max_char_len,
+        which means that, for each CJK token, its char length should be <= max_char_len.
+        """
+        if max_char_len is None or max_char_len < 1:
             return self.tokenize(sentence)
 
         if level == 0:
-            tokens = self.tokenize_nbest(sentence, nbest_size=1)[0]
+            tokens = self.tokenize(sentence)
         else:
             tokens = self.tokenize_nbest(sentence, nbest_size=2)[-1]
 
@@ -136,7 +137,18 @@ class SentencePieceModelTokenizer:
             if self.calc_cjk_char_len(token) <= max_char_len:
                 res.append(token)
             else:
-                res.extend(self.tokenize_maxlen(token, max_char_len, level + 1))
+                sub_tokens = self.tokenize_maxlen(
+                    token,
+                    max_char_len=max_char_len,
+                    level=level + 1,
+                    combine_singles=combine_singles,
+                )
+                if combine_singles and all(
+                    self.calc_cjk_char_len(ssub_token) <= 1 for ssub_token in sub_tokens
+                ):
+                    res.append(token)
+                else:
+                    res.extend(sub_tokens)
         return res
 
 
