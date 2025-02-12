@@ -468,9 +468,17 @@ class FasttextDocVecModelRunner(FasttextModelRunner):
                 )
         return np.array(res)
 
+    # @Pyro5.server.expose
+    # def calc_stretch_query_vector(self, doc: Union[str, list[str]]) -> np.ndarray:
+    #     query_vector = self.calc_query_vector(doc)
+    #     downsampled_vector = self.downsample(query_vector)
+    #     stretched_vector = stretch_copy(downsampled_vector, scale=self.dim_scale)
+    #     return stretched_vector
+
     @Pyro5.server.expose
     def calc_stretch_query_vector(self, doc: Union[str, list[str]]) -> np.ndarray:
-        query_vector = self.calc_query_vector(doc)
+        token_vectors = self.calc_sample_token_vectors(doc)
+        query_vector = np.sum(token_vectors, axis=0)
         downsampled_vector = self.downsample(query_vector)
         stretched_vector = stretch_copy(downsampled_vector, scale=self.dim_scale)
         return stretched_vector
