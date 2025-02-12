@@ -81,17 +81,20 @@ class MongoDocToMilvusDocConverter:
 
     def convert_batch(self, docs: list[dict]) -> list[dict]:
         results = []
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=self.max_workers
-        ) as executor:
-            futures = [executor.submit(self.convert, doc) for doc in docs]
-            for future in concurrent.futures.as_completed(futures):
-                results.append(future.result())
+        # with concurrent.futures.ThreadPoolExecutor(
+        #     max_workers=self.max_workers
+        # ) as executor:
+        #     futures = [executor.submit(self.convert, doc) for doc in docs]
+        #     for future in concurrent.futures.as_completed(futures):
+        #         results.append(future.result())
+        for doc in docs:
+            results.append(self.convert(doc))
         return results
 
 
 def test_converter():
     import json
+    from tclogger import dict_to_str
     from configs.envs import LOG_ROOT
 
     converter = MongoDocToMilvusDocConverter("remote")
@@ -108,7 +111,7 @@ def test_converter():
         json_data = {}
     json_data.update(text_vecs)
     with open(json_path, "w") as f:
-        json.dump(json_data, f, ensure_ascii=False)
+        f.write(dict_to_str(json_data, add_quotes=True, is_colored=False))
 
 
 if __name__ == "__main__":

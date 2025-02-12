@@ -434,12 +434,13 @@ def test_max_len(test_sentences: list[str]):
 if __name__ == "__main__":
     from models.hanlp.pos import HanlpPosTagger
     from models.fasttext.test import TEST_KEYWORDS, TEST_PAIRS
-    from models.sentencepiece.test import TEST_SENTENCES
+    from models.sentencepiece.test import TEST_WORDS, TEST_SENTENCES
 
-    TEST_SENTS = (
-        list(chain.from_iterable([words for word, words in TEST_PAIRS]))
-        + TEST_SENTENCES
-    )
+    TEST_SENTS = [
+        *list(chain.from_iterable([words for word, words in TEST_PAIRS])),
+        *TEST_SENTENCES,
+        *TEST_WORDS,
+    ]
     with Runtimer():
         # test_frequenizer(TEST_SENTS)
         # test_pos_tagger(TEST_SENTS)

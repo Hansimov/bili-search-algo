@@ -139,5 +139,4 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
     main(args)
 
-    # python -m workers.milvus_videos.indexer -s "2025-02-08 20:00:00"
-    # python -m workers.milvus_videos.indexer -s "2025-02-09 00:00:00" -c 500
+    # python -m workers.milvus_videos.indexer -f pubdate -s "2025-02-10" -e "2025-02-12" -c 50000
