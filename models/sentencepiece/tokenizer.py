@@ -120,6 +120,7 @@ class SentencePieceModelTokenizer:
         sentence: str,
         max_char_len: int = None,
         level: int = 0,
+        max_level: int = 5,
         combine_singles: bool = True,
     ) -> list[str]:
         """Tokenize sentence to tokens with max_char_len,
@@ -132,6 +133,8 @@ class SentencePieceModelTokenizer:
             tokens = self.tokenize(sentence)
         else:
             tokens = self.tokenize_nbest(sentence, nbest_size=2)[-1]
+            if len(tokens) == 1 or level >= max_level:
+                return tokens
 
         res = []
         for token in tokens:
@@ -142,6 +145,7 @@ class SentencePieceModelTokenizer:
                     token,
                     max_char_len=max_char_len,
                     level=level + 1,
+                    max_level=max_level,
                     combine_singles=combine_singles,
                 )
                 res.extend(sub_tokens)
