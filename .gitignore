@@ -16,3 +16,4 @@ secrets.json
 *.csv
 *.jsonv
 *.pickle
+*.out

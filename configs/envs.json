@@ -3,9 +3,5 @@
         "mongo": "mongo.log",
         "elastic": "elastic.log",
         "milvus": "milvus.log"
-    },
-    "pyro": {
-        "host": "localhost",
-        "port": 9090
     }
 }

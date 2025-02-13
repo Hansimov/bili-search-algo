@@ -10,13 +10,14 @@ LOG_ROOT = REPO_ROOT / "logs"
 
 ENVS_ENVER = OSEnver(ENVS_PATH)
 LOGS_ENVS = ENVS_ENVER["logs"]
-PYRO_ENVS = ENVS_ENVER["pyro"]
 
 SECRETS_PATH = CONFIGS_ROOT / "secrets.json"
 SECRETS = OSEnver(SECRETS_PATH)
 MONGO_ENVS = SECRETS["mongo"]
 ELASTIC_ENVS = SECRETS["elastic"]
 MILVUS_ENVS = SECRETS["milvus"]
+QDRANT_ENVS = SECRETS["qdrant"]
+PYRO_ENVS = SECRETS["pyro"]
 
 SENTENCEPIECE_CKPT_ROOT = REPO_ROOT / "models" / "sentencepiece" / "checkpoints"
 SP_MERGED_MODEL_PREFIX = "sp_merged"
