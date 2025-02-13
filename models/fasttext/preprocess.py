@@ -88,7 +88,7 @@ class FasttextModelFrequenizer:
     def get_token_freq(self, word: str) -> int:
         return self.token_doc_freq_dict.get(word, None)
 
-    def get_tokens_freqs(self, words: list[str]) -> dict[str, int]:
+    def get_tokens_freqs(self, words: list[str]) -> list[int]:
         return [self.get_token_freq(word) for word in words]
 
     def calc_ratio_of_freq(self, freq: int) -> float:

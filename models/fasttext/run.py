@@ -2,7 +2,6 @@ import argparse
 import importlib
 import numpy as np
 import Pyro5.api
-import Pyro5.core
 import Pyro5.server
 import sys
 
@@ -406,14 +405,24 @@ class FasttextModelRunner:
 @Pyro5.server.behavior(instance_mode="single")
 class FasttextDocVecModelRunner(FasttextModelRunner):
     dim = FASTTEXT_MERGED_MODEL_DIMENSION
-    dim_scale = 6
-    downsample_nume_deno = (3, 3)
-    docvec_dim = calc_padded_downsampled_cols(dim, downsample_nume_deno) * dim_scale
-    max_char_len = 3
-    token_wr, split_wr = 1.0, 0.4
 
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        *args,
+        dim_scale: int = 6,
+        downsample_nume_deno: tuple[int, int] = (3, 3),
+        max_char_len: int = 3,
+        token_split_wr: tuple[float, float] = (1.0, 0.8),
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
+        self.dim_scale = dim_scale
+        self.downsample_nume_deno = downsample_nume_deno
+        self.docvec_dim = (
+            calc_padded_downsampled_cols(self.dim, downsample_nume_deno) * dim_scale
+        )
+        self.max_char_len = max_char_len
+        self.token_wr, self.split_wr = token_split_wr
         self.downsample = partial(
             downsample, nume_deno=self.downsample_nume_deno, method="window"
         )
