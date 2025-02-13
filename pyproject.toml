@@ -1,0 +1,24 @@
+[project]
+name = "bili_search_algo"
+version = "1.0"
+authors = [
+    { name="Hansimov" },
+]
+description = "Algorithms and models for Bilibili Search Engine (blbl.top)."
+readme = "README.md"
+requires-python = ">=3.6"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [ "tclogger" ]
+
+[project.urls]
+Homepage = "https://github.com/Hansimov/bili-search-algo"
+
+[tool.setuptools]
+packages = [ "bili_search_algo" ]
+
+[tool.setuptools.package-dir]
+bili_search_algo = "."
