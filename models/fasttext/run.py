@@ -23,10 +23,9 @@ from models.fasttext.preprocess import TokenScoreFuncType, FreqScoreFuncType
 from models.vectors.calcs import dot_sim
 from models.vectors.forms import trunc, stretch_copy, stretch_shift_add, downsample
 from models.vectors.forms import calc_padded_downsampled_cols
-from models.vectors.serialize import ndarray_to_dict, dict_to_ndarray
+from workers.pyros.register import register_pyro_apis
 
-Pyro5.api.register_class_to_dict(np.ndarray, ndarray_to_dict)
-Pyro5.api.register_dict_to_class("numpy.ndarray", dict_to_ndarray)
+register_pyro_apis()
 
 
 @Pyro5.server.behavior(instance_mode="single")
