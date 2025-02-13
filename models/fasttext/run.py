@@ -22,6 +22,7 @@ from models.fasttext.preprocess import TokenScoreFuncType, FreqScoreFuncType
 from models.vectors.calcs import dot_sim
 from models.vectors.forms import trunc, stretch_copy, stretch_shift_add, downsample
 from models.vectors.forms import calc_padded_downsampled_cols
+from models.vectors.structs import replace_items_with_sub_list_and_idxs
 from workers.pyros.register import register_pyro_apis
 
 register_pyro_apis()
@@ -103,6 +104,14 @@ class FasttextModelRunner:
         return getattr(self.model.wv, func)(*args, **kwargs)
 
     @Pyro5.server.expose
+    def preprocessor_func(self, func: str, *args, **kwargs):
+        return getattr(self.preprocessor, func)(*args, **kwargs)
+
+    @Pyro5.server.expose
+    def frequenizer_func(self, func: str, *args, **kwargs):
+        return getattr(self.frequenizer, func)(*args, **kwargs)
+
+    @Pyro5.server.expose
     def calc_weight_of_token(
         self,
         word: str,
@@ -139,6 +148,114 @@ class FasttextModelRunner:
             )
             for word in pwords
         ]
+
+    @Pyro5.server.expose
+    def calc_tokens_and_weights_of_sentence(
+        self,
+        sentence: str,
+        max_char_len: int = None,
+        score_func: TokenScoreFuncType = "pos",
+        base: Union[int, float] = None,
+        min_weight: float = None,
+        max_weight: float = None,
+    ) -> dict:
+        res = {}
+        tokens = self.preprocess(sentence)
+
+        weight_params = {
+            "score_func": score_func,
+            "base": base,
+            "min_weight": min_weight,
+            "max_weight": max_weight,
+        }
+        tokens_weights = self.frequenizer.calc_weights_of_tokens(
+            tokens, **weight_params
+        )
+        tokens_freqs = self.frequenizer.get_tokens_freqs(tokens)
+
+        use_pos = score_func == "pos" and self.frequenizer.token_pos_dict
+
+        if use_pos:
+            tokens_pos = [
+                self.frequenizer.token_pos_dict.get(token, None) for token in tokens
+            ]
+        else:
+            tokens_pos = None
+
+        if max_char_len:
+            tokens_splits, splits_idxs = self.preprocessor.get_tokens_splits_and_idxs(
+                tokens, max_char_len=max_char_len
+            )
+
+            tokens_maxlen = replace_items_with_sub_list_and_idxs(
+                tokens, tokens_splits, splits_idxs
+            )
+
+            tokens_splits_weights = [
+                self.frequenizer.calc_weights_of_tokens(token_splits, **weight_params)
+                for token_splits in tokens_splits
+            ]
+            tokens_splits_freqs = [
+                self.frequenizer.get_tokens_freqs(token_splits)
+                for token_splits in tokens_splits
+            ]
+        else:
+            tokens_splits = None
+            splits_idxs = None
+            tokens_splits_weights = None
+            tokens_splits_freqs = None
+            tokens_maxlen = None
+
+        if max_char_len and use_pos:
+            tokens_splits_pos = [
+                [
+                    self.frequenizer.token_pos_dict.get(token_split, None)
+                    for token_split in token_splits
+                ]
+                for token_splits in tokens_splits
+            ]
+            tokens_maxlen_pos = replace_items_with_sub_list_and_idxs(
+                tokens,
+                tokens_splits_pos,
+                splits_idxs,
+                func=lambda x: self.frequenizer.token_pos_dict.get(x, None),
+            )
+            tokens_maxlen_freqs = replace_items_with_sub_list_and_idxs(
+                tokens_freqs,
+                tokens_splits_freqs,
+                splits_idxs,
+            )
+            tokens_maxlen_weights = replace_items_with_sub_list_and_idxs(
+                tokens_weights,
+                tokens_splits_weights,
+                splits_idxs,
+            )
+        else:
+            tokens_splits_pos = None
+            tokens_maxlen_pos = None
+            tokens_maxlen_freqs = None
+            tokens_maxlen_weights = None
+
+        res = {
+            "sentence": sentence,
+            "max_char_len": max_char_len,
+            "weight_params": weight_params,
+            "tokens": tokens,
+            "tokens_pos": tokens_pos,
+            "tokens_freqs": tokens_freqs,
+            "tokens_weights": tokens_weights,
+            "splits_idxs": splits_idxs,
+            "tokens_splits": tokens_splits,
+            "tokens_splits_pos": tokens_splits_pos,
+            "tokens_splits_freqs": tokens_splits_freqs,
+            "tokens_splits_weights": tokens_splits_weights,
+            "tokens_maxlen": tokens_maxlen,
+            "tokens_maxlen_pos": tokens_maxlen_pos,
+            "tokens_maxlen_freqs": tokens_maxlen_freqs,
+            "tokens_maxlen_weights": tokens_maxlen_weights,
+        }
+
+        return res
 
     @Pyro5.server.expose
     def max_pool_vectors(self, vectors: list[np.ndarray]) -> np.ndarray:
