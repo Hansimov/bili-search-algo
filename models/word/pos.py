@@ -1,5 +1,3 @@
-import pandas as pd
-
 from collections import defaultdict
 from tclogger import logger, logstr, dict_to_str, TCLogbar, chars_slice, decolored
 

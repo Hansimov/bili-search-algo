@@ -1,5 +1,4 @@
 import math
-import pandas as pd
 
 from itertools import chain
 from tclogger import logger, logstr, brk, dict_to_str, Runtimer
@@ -8,11 +7,11 @@ from typing import Union, Literal
 from configs.envs import SENTENCEPIECE_CKPT_ROOT, TOKEN_FREQS_ROOT
 from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
 from datasets.videos.freq import read_token_freq_csv
-from models.fasttext.pos import INCLUDE_POS_NAMES, MID_POS_NAMES, EXCLUDE_POS_NAMES
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.tokenizer import PT_DIGITS_ZH_WITH_UNIT, PT_DIGITS_ZH
 from models.sentencepiece.tokenizer import calc_cjk_char_len
-from models.sentencepiece.prefix import PrefixMatcher
+from models.word.pos import INCLUDE_POS_NAMES, MID_POS_NAMES, EXCLUDE_POS_NAMES
+from models.word.prefix import PrefixMatcher
 
 TokenScoreFuncType = Literal["one", "ratio", "quantile", "log", "power", "pos"]
 FreqScoreFuncType = Literal["ratio", "quantile", "log", "power"]
