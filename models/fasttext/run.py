@@ -17,7 +17,6 @@ from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
 from configs.envs import FASTTEXT_MERGED_MODEL_PREFIX
 from configs.envs import FASTTEXT_MERGED_MODEL_DIMENSION
 from models.fasttext.preprocess import FasttextModelPreprocessor
-from models.fasttext.preprocess import FasttextModelFrequenizer
 from models.fasttext.preprocess import TokenScoreFuncType, FreqScoreFuncType
 from models.vectors.calcs import dot_sim
 from models.vectors.forms import trunc, stretch_copy, stretch_shift_add, downsample
@@ -33,7 +32,6 @@ class FasttextModelRunner:
     def __init__(
         self,
         model_prefix: Union[str, Path] = FASTTEXT_MERGED_MODEL_PREFIX,
-        frequenizer: FasttextModelFrequenizer = None,
         preprocessor: FasttextModelPreprocessor = None,
         run_mode: Literal["local", "remote"] = "local",
         restrict_vocab: int = 150000,
@@ -41,8 +39,8 @@ class FasttextModelRunner:
         verbose: bool = False,
     ):
         self.model_prefix = model_prefix
-        self.frequenizer = frequenizer
         self.preprocessor = preprocessor or FasttextModelPreprocessor()
+        self.frequenizer = self.preprocessor.frequenizer
         self.run_mode = run_mode
         self.restrict_vocab = restrict_vocab
         self.vector_weighted = vector_weighted
@@ -725,22 +723,15 @@ class FasttextModelRunnerArgParser(argparse.ArgumentParser):
 
 
 def main(args: argparse.Namespace):
+    timer = Runtimer()
     if not args.test_client:
-        if args.vector_weighted:
-            frequenizer = FasttextModelFrequenizer(
-                token_freq_prefix=args.token_freq_prefix,
-                min_weight=args.min_weight,
-                max_weight=args.max_weight,
-                verbose=True,
-            )
-        else:
-            frequenizer = None
         if not args.list_models:
-            preprocessor = FasttextModelPreprocessor(
-                tokenizer_prefix=args.tokenizer_prefix,
-                token_freq_prefix=args.token_freq_prefix,
-                verbose=True,
-            )
+            with timer:
+                preprocessor = FasttextModelPreprocessor(
+                    tokenizer_prefix=args.tokenizer_prefix,
+                    token_freq_prefix=args.token_freq_prefix,
+                    verbose=True,
+                )
         else:
             preprocessor = None
         if args.model_class == "word":
@@ -751,10 +742,9 @@ def main(args: argparse.Namespace):
             raise ValueError("× Invalid model class!")
         runner = runner_class(
             model_prefix=args.model_prefix,
-            frequenizer=frequenizer,
             preprocessor=preprocessor,
             restrict_vocab=args.restrict_vocab,
-            vector_weighted=args.vector_weighted,
+            vector_weighted=True,
             verbose=True,
         )
 
@@ -768,7 +758,7 @@ def main(args: argparse.Namespace):
         }
 
         if not args.test_client:
-            with Runtimer() as timer:
+            with timer:
                 runner.load_model()
 
         if args.test:

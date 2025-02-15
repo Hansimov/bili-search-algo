@@ -77,14 +77,14 @@ class FasttextModelFrequenizer:
         if self.verbose:
             logger.mesg(f"  * tf_df_min_freq: {self.tf_df_min_freq}")
             logger.mesg(f"  * tf_df_max_freq: {self.tf_df_max_freq}")
-            logger.mesg(f"  * tf_df_qmin_freq: {self.tf_df_qmin_freq}")
-            logger.mesg(f"  * tf_df_qmax_freq: {self.tf_df_qmax_freq}")
+            # logger.mesg(f"  * tf_df_qmin_freq: {self.tf_df_qmin_freq}")
+            # logger.mesg(f"  * tf_df_qmax_freq: {self.tf_df_qmax_freq}")
             # logger.mesg(f"  * tf_df_quantiles:")
             # logger.file(self.tf_df_quantiles, indent=4)
-            logger.mesg(f"  * tf_df_min_log_freq: {self.tf_df_min_log_freq}")
-            logger.mesg(f"  * tf_df_max_log_freq: {self.tf_df_max_log_freq}")
-            logger.mesg(f"  * tf_df_min_power_freq: {self.tf_df_min_power_freq}")
-            logger.mesg(f"  * tf_df_max_power_freq: {self.tf_df_max_power_freq}")
+            # logger.mesg(f"  * tf_df_min_log_freq: {self.tf_df_min_log_freq}")
+            # logger.mesg(f"  * tf_df_max_log_freq: {self.tf_df_max_log_freq}")
+            # logger.mesg(f"  * tf_df_min_power_freq: {self.tf_df_min_power_freq}")
+            # logger.mesg(f"  * tf_df_max_power_freq: {self.tf_df_max_power_freq}")
 
     def get_token_freq(self, word: str) -> int:
         return self.token_doc_freq_dict.get(word, None)
@@ -250,16 +250,8 @@ class FasttextModelPreprocessor:
         self.token_freq_prefix = token_freq_prefix
         self.verbose = verbose
         self.load_tokenizer()
-        self.load_prefix_matcher()
-
-    def load_prefix_matcher(self):
-        self.token_freq_path = TOKEN_FREQS_ROOT / f"{self.token_freq_prefix}.csv"
-        self.tf_df = read_token_freq_csv(self.token_freq_path)
-        tokens = self.tf_df["token"].tolist()
-        scores = dict(zip(self.tf_df["token"], self.tf_df["doc_freq"]))
-        self.prefix_matcher = PrefixMatcher(
-            tokens, scores=scores, df=self.tf_df, verbose=True
-        )
+        self.load_prefixer()
+        self.load_frquenizer()
 
     def load_tokenizer(self):
         self.tokenizer_path = SENTENCEPIECE_CKPT_ROOT / f"{self.tokenizer_prefix}.model"
@@ -271,6 +263,25 @@ class FasttextModelPreprocessor:
         )
         self.model_tokenizer = self.tokenizer.model_tokenizer
 
+    def load_prefixer(self):
+        self.token_freq_path = TOKEN_FREQS_ROOT / f"{self.token_freq_prefix}.csv"
+        self.tf_df = read_token_freq_csv(self.token_freq_path)
+        tokens = self.tf_df["token"].tolist()
+        scores = dict(zip(self.tf_df["token"], self.tf_df["doc_freq"]))
+        self.prefixer = PrefixMatcher(
+            tokens, scores=scores, df=self.tf_df, verbose=True
+        )
+
+    def load_frquenizer(self):
+        self.frequenizer = FasttextModelFrequenizer(
+            token_freq_prefix=self.token_freq_prefix,
+            tf_max_rows=600000,
+            tf_min_freq=100,
+            min_weight=0.001,
+            max_weight=1.0,
+            verbose=True,
+        )
+
     def tokenize(self, word: str) -> list[str]:
         return self.tokenizer.tokenize(word)
 
@@ -281,7 +292,7 @@ class FasttextModelPreprocessor:
         use_pinyin: bool = False,
         use_short: bool = False,
     ) -> list[str]:
-        return self.prefix_matcher.get_words_with_prefix(
+        return self.prefixer.get_words_with_prefix(
             prefix, top_k=top_k, use_pinyin=use_pinyin, use_short=use_short
         )
 
