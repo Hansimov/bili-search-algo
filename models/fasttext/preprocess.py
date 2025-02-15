@@ -11,9 +11,18 @@ from models.fasttext.pos import INCLUDE_POS_NAMES, MID_POS_NAMES, EXCLUDE_POS_NA
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.tokenizer import PT_DIGITS_ZH_WITH_UNIT, PT_DIGITS_ZH
 from models.sentencepiece.tokenizer import calc_cjk_char_len
+from models.sentencepiece.prefix import PrefixMatcher
 
 TokenScoreFuncType = Literal["one", "ratio", "quantile", "log", "power", "pos"]
 FreqScoreFuncType = Literal["ratio", "quantile", "log", "power"]
+
+
+def read_token_freq_csv(path: str) -> pd.DataFrame:
+    return pd.read_csv(
+        path,
+        na_filter=False,
+        dtype={"token": str, "doc_freq": int, "term_freq": int, "pos": str},
+    )
 
 
 class FasttextModelFrequenizer:
@@ -44,7 +53,7 @@ class FasttextModelFrequenizer:
             logger.mesg(f"  * tf_min_freq: {self.tf_min_freq}")
             logger.mesg(f"  * min_weight: {self.min_weight}")
             logger.mesg(f"  * max_weight: {self.max_weight}")
-        self.tf_df = pd.read_csv(self.token_freq_path)
+        self.tf_df = read_token_freq_csv(self.token_freq_path)
 
     def init_tf_vars(self):
         if self.tf_max_rows:
@@ -240,11 +249,26 @@ class FasttextModelFrequenizer:
 
 class FasttextModelPreprocessor:
     def __init__(
-        self, tokenizer_prefix: str = SP_MERGED_MODEL_PREFIX, verbose: bool = False
+        self,
+        tokenizer_prefix: str = SP_MERGED_MODEL_PREFIX,
+        token_freq_prefix: str = TOKEN_FREQ_PREFIX,
+        verbose: bool = False,
     ):
         self.tokenizer_prefix = tokenizer_prefix
+        self.token_freq_prefix = token_freq_prefix
         self.verbose = verbose
         self.load_tokenizer()
+        self.load_prefix_matcher()
+
+    def load_prefix_matcher(self):
+        self.token_freq_path = TOKEN_FREQS_ROOT / f"{self.token_freq_prefix}.csv"
+        self.tf_df = read_token_freq_csv(self.token_freq_path)
+        self.prefix_matcher = PrefixMatcher(
+            self.tf_df["token"].tolist(),
+            dict(zip(self.tf_df["token"], self.tf_df["doc_freq"])),
+            use_pinyin=True,
+            verbose=True,
+        )
 
     def load_tokenizer(self):
         self.tokenizer_path = SENTENCEPIECE_CKPT_ROOT / f"{self.tokenizer_prefix}.model"
@@ -258,6 +282,17 @@ class FasttextModelPreprocessor:
 
     def tokenize(self, word: str) -> list[str]:
         return self.tokenizer.tokenize(word)
+
+    def get_words_with_prefix(
+        self,
+        prefix: str,
+        top_k: int = None,
+        use_pinyin: bool = False,
+        use_short: bool = False,
+    ) -> list[str]:
+        return self.prefix_matcher.get_words_with_prefix(
+            prefix, top_k=top_k, use_pinyin=use_pinyin, use_short=use_short
+        )
 
     def get_sep_indexes(self, words: list[str]) -> set[tuple[int, int]]:
         """This function is to get indexes of separated chars in original sentence,
@@ -431,6 +466,28 @@ def test_max_len(test_sentences: list[str]):
         logger.mesg(f"* {tokens}")
 
 
+def test_prefix():
+    preprocessor = FasttextModelPreprocessor(
+        tokenizer_prefix=SP_MERGED_MODEL_PREFIX,
+        token_freq_prefix=TOKEN_FREQ_PREFIX,
+        verbose=True,
+    )
+    prefixes = [
+        *["大语言", "欣小", "咬人", "红警", "尤里"],
+        *["小米", "影视", "游戏", "cs", "小鸟", "上海", "hbk"],
+    ]
+    pinyins = ["ysjf", "yingshi", "hongj", "anye"]
+    for prefix in prefixes + pinyins:
+        logger.note(f"> {prefix}")
+        if prefix in pinyins:
+            pinyin_params = {"use_pinyin": True, "use_short": True}
+        else:
+            pinyin_params = {}
+        words = preprocessor.get_words_with_prefix(prefix, top_k=10, **pinyin_params)
+        for word in words:
+            logger.mesg(f"  * {word}")
+
+
 if __name__ == "__main__":
     from models.hanlp.pos import HanlpPosTagger
     from models.fasttext.test import TEST_KEYWORDS, TEST_PAIRS
@@ -444,7 +501,8 @@ if __name__ == "__main__":
     with Runtimer():
         # test_frequenizer(TEST_SENTS)
         # test_pos_tagger(TEST_SENTS)
-        test_split_tokens(TEST_SENTS)
+        # test_split_tokens(TEST_SENTS)
         # test_max_len(TEST_SENTS)
+        test_prefix()
 
     # python -m models.fasttext.preprocess

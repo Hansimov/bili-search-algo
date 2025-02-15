@@ -737,7 +737,9 @@ def main(args: argparse.Namespace):
             frequenizer = None
         if not args.list_models:
             preprocessor = FasttextModelPreprocessor(
-                tokenizer_prefix=args.tokenizer_prefix, verbose=True
+                tokenizer_prefix=args.tokenizer_prefix,
+                token_freq_prefix=args.token_freq_prefix,
+                verbose=True,
             )
         else:
             preprocessor = None
