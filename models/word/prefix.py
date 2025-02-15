@@ -1,6 +1,8 @@
 import marisa_trie
 import pandas as pd
+import pickle
 
+from pathlib import Path
 from tclogger import logger
 
 from models.word.pinyin import ChinesePinyinizer
@@ -12,12 +14,14 @@ class PrefixMatcher:
         words: list[str],
         scores: dict[str, float] = None,
         df: pd.DataFrame = None,
+        token_freq_path: Path = None,
         verbose: bool = False,
     ):
         self.words = words
         self.scores = scores
         self.verbose = verbose
         self.df = df
+        self.token_freq_path = token_freq_path
         self.pinyinizer = ChinesePinyinizer()
         self.build_words_trie()
         self.build_pinyin_trie()
@@ -27,6 +31,18 @@ class PrefixMatcher:
         self.words_trie = marisa_trie.Trie(self.words)
 
     def construct_pinyin_word_dict(self):
+        if self.token_freq_path:
+            self.word_dict_path = self.token_freq_path.with_suffix(".word_dict.pkl")
+            if self.word_dict_path.exists():
+                if self.verbose:
+                    logger.note(f"> Loading pinyin word dict from:")
+                    logger.file(f"  * {self.word_dict_path}")
+                with open(self.word_dict_path, "rb") as rf:
+                    data = pickle.load(rf)
+                    self.pinyin_word_dict = data["pinyin_word_dict"]
+                    self.short_word_dict = data["short_word_dict"]
+                return
+
         logger.note(
             f"> Building pinyin word dict: {len(self.df)}", verbose=self.verbose
         )
@@ -42,6 +58,16 @@ class PrefixMatcher:
             )
         else:
             self.short_word_dict = None
+
+        if self.token_freq_path:
+            logger.note(f"> Saving pinyin word dict to:")
+            logger.file(f"* {self.word_dict_path}")
+            with open(self.word_dict_path, "wb") as wf:
+                data = {
+                    "pinyin_word_dict": self.pinyin_word_dict,
+                    "short_word_dict": self.short_word_dict,
+                }
+                pickle.dump(data, wf)
 
     def build_pinyin_trie(self):
         self.pinyins_trie = None

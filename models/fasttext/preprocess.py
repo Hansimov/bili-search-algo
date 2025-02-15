@@ -1,6 +1,5 @@
 import math
 
-from itertools import chain
 from tclogger import logger, logstr, brk, dict_to_str, Runtimer
 from typing import Union, Literal
 
@@ -250,8 +249,8 @@ class FasttextModelPreprocessor:
         self.token_freq_prefix = token_freq_prefix
         self.verbose = verbose
         self.load_tokenizer()
-        self.load_prefixer()
         self.load_frquenizer()
+        self.load_prefixer()
 
     def load_tokenizer(self):
         self.tokenizer_path = SENTENCEPIECE_CKPT_ROOT / f"{self.tokenizer_prefix}.model"
@@ -269,7 +268,11 @@ class FasttextModelPreprocessor:
         tokens = self.tf_df["token"].tolist()
         scores = dict(zip(self.tf_df["token"], self.tf_df["doc_freq"]))
         self.prefixer = PrefixMatcher(
-            tokens, scores=scores, df=self.tf_df, verbose=True
+            tokens,
+            scores=scores,
+            df=self.tf_df,
+            token_freq_path=self.token_freq_path,
+            verbose=True,
         )
 
     def load_frquenizer(self):
@@ -491,6 +494,7 @@ def test_prefix():
 
 
 if __name__ == "__main__":
+    from itertools import chain
     from models.hanlp.pos import HanlpPosTagger
     from models.fasttext.test import TEST_KEYWORDS, TEST_PAIRS
     from models.sentencepiece.test import TEST_WORDS, TEST_SENTENCES
