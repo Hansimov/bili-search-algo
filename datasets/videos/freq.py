@@ -22,7 +22,14 @@ def read_token_freq_csv(path: str) -> pd.DataFrame:
     return pd.read_csv(
         path,
         na_filter=False,
-        dtype={"token": str, "doc_freq": int, "term_freq": int, "pos": str},
+        dtype={
+            "token": str,
+            "doc_freq": int,
+            "term_freq": int,
+            "pos": str,
+            "pinyin": str,
+            "short": str,
+        },
     )
 
 

@@ -256,11 +256,10 @@ class FasttextModelPreprocessor:
     def load_prefix_matcher(self):
         self.token_freq_path = TOKEN_FREQS_ROOT / f"{self.token_freq_prefix}.csv"
         self.tf_df = read_token_freq_csv(self.token_freq_path)
+        tokens = self.tf_df["token"].tolist()
+        scores = dict(zip(self.tf_df["token"], self.tf_df["doc_freq"]))
         self.prefix_matcher = PrefixMatcher(
-            self.tf_df["token"].tolist(),
-            dict(zip(self.tf_df["token"], self.tf_df["doc_freq"])),
-            use_pinyin=True,
-            verbose=True,
+            tokens, scores=scores, df=self.tf_df, verbose=True
         )
 
     def load_tokenizer(self):
