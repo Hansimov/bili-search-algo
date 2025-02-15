@@ -6,8 +6,7 @@ from typing import Literal
 
 from configs.envs import FASTTEXT_MERGED_MODEL_PREFIX
 from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
-from models.fasttext.run import FasttextModelFrequenizer, FasttextDocVecModelRunner
-from models.fasttext.run import FasttextModelRunnerClient
+from models.fasttext.run import FasttextDocVecModelRunner, FasttextModelRunnerClient
 from models.fasttext.preprocess import FasttextModelPreprocessor
 from workers.milvus_videos.schema import DOCVEC_DIM, KEEP_COLUMNS
 
@@ -27,15 +26,12 @@ class MongoDocToMilvusDocConverter:
     def init_docvec_runner(self):
         if self.runner_mode == "local":
             with Runtimer():
-                frequenizer = FasttextModelFrequenizer(
-                    token_freq_prefix=TOKEN_FREQ_PREFIX
-                )
                 preprocessor = FasttextModelPreprocessor(
-                    tokenizer_prefix=SP_MERGED_MODEL_PREFIX
+                    tokenizer_prefix=SP_MERGED_MODEL_PREFIX,
+                    token_freq_prefix=TOKEN_FREQ_PREFIX,
                 )
                 self.docvec_runner = FasttextDocVecModelRunner(
                     model_prefix=FASTTEXT_MERGED_MODEL_PREFIX,
-                    frequenizer=frequenizer,
                     preprocessor=preprocessor,
                     restrict_vocab=15000,
                     vector_weighted=True,
