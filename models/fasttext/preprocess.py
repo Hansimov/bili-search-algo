@@ -7,6 +7,7 @@ from typing import Union, Literal
 
 from configs.envs import SENTENCEPIECE_CKPT_ROOT, TOKEN_FREQS_ROOT
 from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
+from datasets.videos.freq import read_token_freq_csv
 from models.fasttext.pos import INCLUDE_POS_NAMES, MID_POS_NAMES, EXCLUDE_POS_NAMES
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.tokenizer import PT_DIGITS_ZH_WITH_UNIT, PT_DIGITS_ZH
@@ -15,14 +16,6 @@ from models.sentencepiece.prefix import PrefixMatcher
 
 TokenScoreFuncType = Literal["one", "ratio", "quantile", "log", "power", "pos"]
 FreqScoreFuncType = Literal["ratio", "quantile", "log", "power"]
-
-
-def read_token_freq_csv(path: str) -> pd.DataFrame:
-    return pd.read_csv(
-        path,
-        na_filter=False,
-        dtype={"token": str, "doc_freq": int, "term_freq": int, "pos": str},
-    )
 
 
 class FasttextModelFrequenizer:

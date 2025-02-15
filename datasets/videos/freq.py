@@ -18,6 +18,14 @@ from datasets.args import DATA_LOADER_ARG_PARSER
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
 
 
+def read_token_freq_csv(path: str) -> pd.DataFrame:
+    return pd.read_csv(
+        path,
+        na_filter=False,
+        dtype={"token": str, "doc_freq": int, "term_freq": int, "pos": str},
+    )
+
+
 class VideoTextsTokenFreqCounter:
     def __init__(
         self,
