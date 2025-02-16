@@ -87,33 +87,59 @@ class MilvusVideoDocsGenerator:
             sort_order=sort_order,
         )
 
+    def init_progress_bar(self):
+        self.sample_bar = TCLogbar(desc=logstr.note("  * Sample:"))
+        self.sample_bar.set_total(self.total_count)
+        self.sample_bar.update(flush=True)
+
+    def create_mongo_agg_cursor(
+        self,
+        bvids: list[Union[str, int]],
+        local_filter_dict: dict = None,
+        foreign_filter_dict: dict = None,
+    ):
+        if not bvids:
+            return []
+        pipeline_params = {
+            "local_collection": MILVUS_VIDEOS_COLLECTION,
+            "foreign_collection": MONGO_VIDEOS_TAGS_COLLECTION,
+            "local_id_field": MONGO_VIDEOS_COLLECTION_ID,
+            "foreign_id_field": MONGO_VIDEOS_TAGS_COLLECTION_ID,
+            "local_fields": MONGO_VIDEOS_FIELDS,
+            "foreign_fields": MONGO_VIDEOS_TAGS_FIELDS,
+            "must_in_local_ids": bvids,
+            "must_in_foreign_ids": None,
+            "must_have_local_fields": None,
+            "must_have_foreign_fields": ["tags"],
+            "local_filter_dict": local_filter_dict,
+            "foreign_filter_dict": foreign_filter_dict,
+            "as_name": MONGO_VIDEOS_TAGS_AGG_AS_NAME,
+        }
+        pipeline = to_mongo_pipeline(**pipeline_params)
+        # logger.hint(dict_to_str(pipeline), indent=2)
+        agg_cursor = self.mongo.get_agg_cursor(MILVUS_VIDEOS_COLLECTION, pipeline)
+        return agg_cursor
+
     def get_bvids(self, docs: list[dict]) -> list[str]:
         return [doc["bvid"] for doc in docs]
 
-    def fetch_bvids_to_update(
-        self,
-        bvids: list[str],
-        check_fields: list[Literal["title_status", "tags_status"]] = None,
-    ) -> list[str]:
-        expr_of_any_field_false = self.milvus.get_expr_of_any_field_false(
-            fields=check_fields
+    def filter_bvids(self, bvids: list[str]) -> tuple[list[str], list[str]]:
+        vectorized_docs = self.milvus_bridger.filter_ids(
+            collection_name=MILVUS_VIDEOS_COLLECTION,
+            ids=bvids,
+            id_field=MILVUS_VIDEOS_COLLECTION_ID,
+            expr="vectorized_status == 1",
+            output_fields=[MILVUS_VIDEOS_COLLECTION_ID],
         )
-        expr_of_bvids = self.milvus.get_expr_of_list_contain("bvid", bvids)
-        expr_of_bvids_to_update = f"({expr_of_bvids}) AND ({expr_of_any_field_false})"
-
-        bvids_to_update = self.milvus.client.query(
-            collection_name=self.milvus_collection,
-            filter=expr_of_bvids_to_update,
-            output_fields=["bvid"],
-        )
-        return bvids_to_update
+        vectorized_bvids = self.get_bvids(vectorized_docs)
+        non_vectorized_bvids = list(set(bvids) - set(vectorized_bvids))
+        return vectorized_bvids, non_vectorized_bvids
 
     def batch_generator(self) -> Generator[list[dict], None, None]:
         batch = []
         for idx, doc in enumerate(self.cursor):
             if self.max_count and idx >= self.max_count:
                 break
-            self.sample_bar.update(increment=1)
             batch.append(doc)
             if len(batch) >= self.batch_size:
                 yield batch
