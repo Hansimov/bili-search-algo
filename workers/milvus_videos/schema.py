@@ -20,11 +20,8 @@ TIME_COLUMNS = ["pubdate", "insert_at", "duration"]
 KEEP_COLUMNS = [*TEXT_COLUMNS, *TID_COLUMNS, *OID_COLUMNS, *TIME_COLUMNS]
 
 ARRAY_COLUMNS = ["stats"]
-STATUS_COLUMNS = ["title", "tags"]
-DOCVEC_COLUMNS = [
-    *["title"],
-    *["title_tags_owner", "title_tags_owner_desc"],
-]
+STATUS_COLUMNS = ["vectorized"]
+DOCVEC_COLUMNS = ["title_tags_owner", "title_tags_owner_desc"]
 
 DOCVEC_DIM = FasttextDocVecModelRunner.docvec_dim
 DEFAULT_DOCVEC_SCHEMA_PARAMS = {
