@@ -39,44 +39,48 @@ class MilvusVideoIndexer:
         generator: MilvusVideoDocsGenerator,
         op_type: Literal["insert", "upsert"] = "upsert",
         dry_run: bool = False,
-        quick_break: bool = False,
     ):
         logger.note(f"> Indexing docs:")
         if dry_run:
             logger.success(f"✓ Dry run done at: [{get_now_str()}]")
             return
 
-        end_ts = get_now_ts()
-
-        for batch_idx, docs_batch in enumerate(generator.batch_generator()):
+        for batch_idx, doc_batch in enumerate(generator.agg_batch_generator()):
             if self.stop_event.is_set():
                 logger.warn(f"\n× Break indexer by stop event")
                 break
-            # if quick_break and doc["insert_at"] > end_ts:
-            #     logger.warn(f"\n× Break indexer at start time: [{ts_to_str(end_ts)}]")
-            #     break
-
-            milvus_docs = self.converter.convert_batch(docs_batch)
+            milvus_docs = self.converter.convert_batch(doc_batch)
             self.submitter.submit(
                 milvus_docs, collection=self.collection, op_type=op_type
             )
 
         if not self.stop_event.is_set():
-            logger.success(f"\n> Index completed at: [{get_now_str()}]")
+            logger.success(f"> Index completed at: [{get_now_str()}]")
             self.complete_event.set()
 
 
 class MilvusVideoIndexerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument("-mg", "--mongo-collection", type=str, default="videos")
-        self.add_argument("-ml", "--milvus-collection", type=str, default="videos")
+        self.add_argument(
+            "-mg", "--mongo-collection", type=str, default=MONGO_VIDEOS_COLLECTION
+        )
+        self.add_argument(
+            "-ml", "--milvus-collection", type=str, default=MILVUS_VIDEOS_COLLECTION
+        )
         self.add_argument(
             "-f",
             "--filter-index",
             type=str,
             choices=["pubdate", "insert_at"],
             default="insert_at",
+        )
+        self.add_argument(
+            "-r",
+            "--runner-mode",
+            type=str,
+            choices=["local", "remote"],
+            default="local",
         )
         self.add_argument("-s", "--start-date", type=str, default=None)
         self.add_argument("-e", "--end-date", type=str, default=None)
