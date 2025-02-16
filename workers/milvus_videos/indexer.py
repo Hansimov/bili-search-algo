@@ -93,22 +93,16 @@ class MilvusVideoIndexerArgParser(argparse.ArgumentParser):
 
 
 def main(args: argparse.Namespace):
-    indexer = MilvusVideoIndexer(args.milvus_collection)
+    indexer = MilvusVideoIndexer(args.milvus_collection, runner_mode=args.runner_mode)
     generator = MilvusVideoDocsGenerator(max_count=args.max_count)
-    generator.init_cursor(
-        milvus_collection=args.milvus_collection,
-        mongo_collection=args.mongo_collection,
+    generator.init_mongo_cursor(
+        collection=args.mongo_collection,
         filter_index=args.filter_index,
         filter_op="range",
-        filter_range=[args.start_date, args.end_date],
+        filter_range=[args.start_date, args.end_date or get_now_str()],
         estimate_count=False,
     )
-    indexer.index_milvus_docs(
-        generator,
-        op_type="upsert",
-        dry_run=args.dry_run,
-        quick_break=True,
-    )
+    indexer.index_milvus_docs(generator, op_type="upsert", dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
@@ -116,4 +110,6 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
     main(args)
 
-    # python -m workers.milvus_videos.indexer -f pubdate -s "2025-02-10" -e "2025-02-12" -c 50000
+    # python -m workers.milvus_videos.indexer -f pubdate -r remote -s "2025-02-16" -e "2025-02-16 01:00:00" -c 5000
+    # python -m cProfile -o milvus_videos_indexer.prof -m workers.milvus_videos.indexer -f pubdate -s "2025-02-10" -e "2025-02-12" -c 5000
+    # snakeviz milvus_videos_indexer.prof -H 0.0.0.0 -p 10888
