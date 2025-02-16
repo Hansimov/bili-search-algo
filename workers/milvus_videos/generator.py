@@ -1,25 +1,38 @@
-import concurrent.futures
-import threading
-
-from sedb import MongoOperator, MilvusOperator, to_mongo_filter
-from tclogger import TCLogbar, FileLogger, logger, logstr, dict_to_str, brk
-from tclogger import get_now_str, get_now_ts, ts_to_str
+from sedb import MongoOperator, MilvusOperator
+from sedb import to_mongo_pipeline
+from sedb import MilvusBridger
+from tclogger import logger, logstr, brk, dict_get, TCLogbar
 from typing import Literal, Union
 from collections.abc import Generator
 
 from configs.envs import MONGO_ENVS, MILVUS_ENVS
+from workers.milvus_videos.constants import (
+    MONGO_VIDEOS_COLLECTION,
+    MILVUS_VIDEOS_COLLECTION,
+    MONGO_VIDEOS_TAGS_COLLECTION,
+    MONGO_VIDEOS_TAGS_AGG_AS_NAME,
+    MONGO_VIDEOS_COLLECTION_ID,
+    MONGO_VIDEOS_TAGS_COLLECTION_ID,
+    MILVUS_VIDEOS_COLLECTION_ID,
+    MONGO_VIDEOS_FIELDS,
+    MONGO_VIDEOS_TAGS_FIELDS,
+)
 
 
 class MilvusVideoDocsGenerator:
     def __init__(
-        self, max_count: int = None, batch_size: int = 1000, verbose: bool = False
+        self,
+        max_count: int = None,
+        batch_size: int = 10000,
+        agg_batch_size: int = 1000,
+        verbose: bool = False,
     ):
         self.max_count = max_count
         self.batch_size = batch_size
+        self.agg_batch_size = agg_batch_size
         self.verbose = verbose
         self.init_mongo()
         self.init_milvus()
-        self.init_progress_bar()
 
     def init_mongo(self):
         self.mongo = MongoOperator(
@@ -32,25 +45,23 @@ class MilvusVideoDocsGenerator:
             configs=MILVUS_ENVS,
             connect_msg=f"{logstr.mesg(self.__class__.__name__)} -> {logstr.mesg(brk('milvus'))}",
         )
+        self.milvus_bridger = MilvusBridger(self.milvus)
 
-    def init_progress_bar(self):
-        self.sample_bar = TCLogbar(head=logstr.note("* Sample:"))
-
-    def init_cursor(
+    def init_mongo_cursor(
         self,
-        milvus_collection: str = "videos",
-        mongo_collection: str = "videos",
+        collection: str = MONGO_VIDEOS_COLLECTION,
         filter_index: Literal["insert_at", "pubdate"] = "insert_at",
         filter_op: Literal["gt", "lt", "gte", "lte", "range"] = "gte",
         filter_range: Union[int, str, tuple, list] = None,
+        include_fields: list[str] = MONGO_VIDEOS_FIELDS,
+        exclude_fields: list[str] = None,
         sort_index: Literal["insert_at", "pubdate"] = "insert_at",
         sort_order: Literal["asc", "desc"] = "asc",
         estimate_count: bool = False,
     ):
-        """This must be called before `batch_generator`."""
-        self.milvus_collection = milvus_collection
+        """This must be called before using `batch_generator`."""
         self.total_count = self.mongo.get_total_count(
-            collection=mongo_collection,
+            collection=collection,
             filter_index=filter_index,
             filter_op=filter_op,
             filter_range=filter_range,
@@ -62,14 +73,16 @@ class MilvusVideoDocsGenerator:
             self.cursor = None
             return
 
-        self.total_count = self.max_count or self.total_count
-        self.sample_bar.set_total(self.total_count)
+        if self.max_count:
+            self.total_count = min(self.total_count, self.max_count)
 
         self.cursor = self.mongo.get_cursor(
-            collection=mongo_collection,
+            collection=collection,
             filter_index=filter_index,
             filter_op=filter_op,
             filter_range=filter_range,
+            include_fields=include_fields,
+            exclude_fields=exclude_fields,
             sort_index=sort_index,
             sort_order=sort_order,
         )
