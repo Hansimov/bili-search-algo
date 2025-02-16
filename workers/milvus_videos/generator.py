@@ -146,3 +146,56 @@ class MilvusVideoDocsGenerator:
                 batch = []
         if batch:
             yield batch
+
+    def remove_as_name_from_agg_doc(self, doc: dict) -> dict:
+        try:
+            for field in MONGO_VIDEOS_TAGS_FIELDS:
+                doc[field] = dict_get(
+                    doc[MONGO_VIDEOS_TAGS_AGG_AS_NAME], field, default=None
+                )
+        except Exception as e:
+            logger.warn(doc.keys())
+            raise e
+        return doc
+
+    def update_filter_progress(
+        self, vectorized_bvids: list[str], non_vectorized_bvids: list[str]
+    ):
+        non_vectorized_str = logstr.file(f"{len(non_vectorized_bvids)}")
+        vectorized_str = logstr.success(f"{len(vectorized_bvids)}")
+        total_str = logstr.mesg(f"{len(vectorized_bvids)+len(non_vectorized_bvids)}")
+
+        self.sample_bar.update(
+            increment=len(vectorized_bvids),
+            desc=(
+                f"  * {logstr.file('Todo')}/{logstr.success('Existed')}/{logstr.mesg('Batch')}: "
+                f"{non_vectorized_str}/{vectorized_str}/{total_str}"
+            ),
+        )
+
+    def update_agg_progress(self, non_vectorized_bvids: list[str], agg_batch_len: int):
+        self.sample_bar.update(increment=agg_batch_len)
+        self.skip_no_tags_count += len(non_vectorized_bvids) - agg_batch_len
+
+    def agg_batch_generator(self) -> Generator[list[dict], None, None]:
+        self.init_progress_bar()
+        agg_batch = []
+        self.skip_no_tags_count = 0
+        for batch_idx, doc_batch in enumerate(self.batch_generator()):
+            bvids = self.get_bvids(doc_batch)
+            vectorized_bvids, non_vectorized_bvids = self.filter_bvids(bvids)
+            self.update_filter_progress(vectorized_bvids, non_vectorized_bvids)
+            agg_cursor = self.create_mongo_agg_cursor(non_vectorized_bvids)
+            for doc_idx, agg_doc in enumerate(agg_cursor):
+                doc = self.remove_as_name_from_agg_doc(agg_doc)
+                agg_batch.append(doc)
+                if len(agg_batch) >= self.agg_batch_size:
+                    yield agg_batch
+                    self.update_agg_progress(non_vectorized_bvids, len(agg_batch))
+                    agg_batch = []
+        if agg_batch:
+            yield agg_batch
+            self.update_agg_progress(non_vectorized_bvids, len(agg_batch))
+
+        print()
+        logger.file(f"  * Skip videos without tags: {self.skip_no_tags_count}")
