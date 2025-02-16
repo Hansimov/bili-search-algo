@@ -1,54 +1,27 @@
 import argparse
-import concurrent.futures
 import sys
 import threading
 
-from sedb import MilvusOperator
-from tclogger import TCLogbar, FileLogger, logger, logstr, dict_to_str, brk
-from tclogger import get_now_str, get_now_ts, ts_to_str
+from tclogger import logger
+from tclogger import get_now_str
 from typing import Literal, Union
+
+from workers.milvus_videos.constants import MONGO_VIDEOS_COLLECTION
+from workers.milvus_videos.constants import MILVUS_VIDEOS_COLLECTION
 from workers.milvus_videos.converter import MongoDocToMilvusDocConverter
 from workers.milvus_videos.generator import MilvusVideoDocsGenerator
-
-from configs.envs import MILVUS_ENVS
-
-
-class MilvusVideoSubmitter:
-    def __init__(self, collection: str = None, verbose: bool = False):
-        self.collection = collection
-        self.verbose = verbose
-        self.init_milvus()
-
-    def init_milvus(self):
-        self.milvus = MilvusOperator(
-            configs=MILVUS_ENVS,
-            connect_msg=f"{logstr.mesg(self.__class__.__name__)} -> {logstr.mesg(brk('milvus'))}",
-        )
-
-    def submit(
-        self,
-        docs: Union[dict, list[dict]],
-        collection: str = None,
-        op_type: Literal["insert", "upsert"] = "upsert",
-    ):
-        collection = collection or self.collection
-        if not collection:
-            logger.err(f"× Empty collection!")
-            return
-        try:
-            if op_type == "insert":
-                self.milvus.client.insert(collection_name=collection, data=docs)
-            elif op_type == "upsert":
-                self.milvus.client.upsert(collection_name=collection, data=docs)
-            else:
-                logger.err(f"× Invalid op_type: [{op_type}]")
-        except Exception as e:
-            logger.err(f"× Submit error: {e}")
+from workers.milvus_videos.submitter import MilvusVideoSubmitter
 
 
 class MilvusVideoIndexer:
-    def __init__(self, collection: str, verbose: bool = False):
+    def __init__(
+        self,
+        collection: str,
+        runner_mode: Literal["local", "remote"] = "local",
+        verbose: bool = False,
+    ):
         self.collection = collection
+        self.runner_mode = runner_mode
         self.verbose = verbose
         self.init_event()
         self.init_converter_submitter()
@@ -58,7 +31,7 @@ class MilvusVideoIndexer:
         self.complete_event = threading.Event()
 
     def init_converter_submitter(self):
-        self.converter = MongoDocToMilvusDocConverter()
+        self.converter = MongoDocToMilvusDocConverter(runner_mode=self.runner_mode)
         self.submitter = MilvusVideoSubmitter(verbose=self.verbose)
 
     def index_milvus_docs(
