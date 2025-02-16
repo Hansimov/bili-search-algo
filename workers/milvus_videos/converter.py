@@ -1,21 +1,19 @@
-import concurrent.futures
 import numpy as np
 
-from tclogger import logger, dict_get, Runtimer
+from tclogger import logger, dict_get, Runtimer, dict_get
 from typing import Literal
 
 from configs.envs import FASTTEXT_MERGED_MODEL_PREFIX
 from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
 from models.fasttext.run import FasttextDocVecModelRunner, FasttextModelRunnerClient
 from models.fasttext.preprocess import FasttextModelPreprocessor
+from workers.milvus_videos.constants import FIELD_VECTOR_WEIGHTS, STAT_KEYS
 from workers.milvus_videos.schema import DOCVEC_DIM, KEEP_COLUMNS
 
 ZEROS_DOCVEC = np.zeros(DOCVEC_DIM).astype(np.float16)
 
 
 class MongoDocToMilvusDocConverter:
-    STAT_KEYS = ["view", "danmaku", "reply", "favorite", "coin", "share", "like"]
-
     def __init__(
         self, runner_mode: Literal["local", "remote"] = "local", max_workers: int = 32
     ):
@@ -26,6 +24,7 @@ class MongoDocToMilvusDocConverter:
     def init_docvec_runner(self):
         if self.runner_mode == "local":
             with Runtimer():
+                logger.note(f"> Init local docvec runner:")
                 preprocessor = FasttextModelPreprocessor(
                     tokenizer_prefix=SP_MERGED_MODEL_PREFIX,
                     token_freq_prefix=TOKEN_FREQ_PREFIX,
@@ -39,10 +38,11 @@ class MongoDocToMilvusDocConverter:
                 )
                 self.docvec_runner.load_model()
         else:
+            logger.note(f"> Use remote docvec runner")
             self.docvec_runner = FasttextModelRunnerClient(model_class="doc").runner
 
     def stats_to_list(self, stats: dict) -> list[int]:
-        return [int(stats.get(key, 0)) for key in self.STAT_KEYS]
+        return [int(stats.get(key, 0)) for key in STAT_KEYS]
 
     def text_to_vec(
         self, text: str, text_type: Literal["query", "sample"] = "sample"
@@ -63,15 +63,25 @@ class MongoDocToMilvusDocConverter:
         return {col.replace(".", "_"): dict_get(doc, col) for col in KEEP_COLUMNS}
 
     def convert(self, doc: dict) -> dict:
+        vectors_by_field = {
+            field: self.text_to_vec(dict_get(doc, field), text_type="sample")
+            for field in FIELD_VECTOR_WEIGHTS.keys()
+        }
+        title_tags_owner_vec = sum(
+            FIELD_VECTOR_WEIGHTS[field] * vectors_by_field[field]
+            for field in ["title", "tags", "owner.name"]
+        )
+        title_tags_owner_desc_vec = sum(
+            FIELD_VECTOR_WEIGHTS[field] * vectors_by_field[field]
+            for field in ["title", "tags", "owner.name", "desc"]
+        )
         milvus_doc = {
             "bvid": doc["bvid"],
             **self.get_kept_dict(doc),
             "stats_arr": self.stats_to_list(doc["stat"]),
-            "title_vec": self.text_to_vec(doc["title"]),
-            "title_status": 1,
-            "title_tags_owner_vec": ZEROS_DOCVEC,
-            "title_tags_owner_desc_vec": ZEROS_DOCVEC,
-            "tags_status": 0,
+            "title_tags_owner_vec": title_tags_owner_vec,
+            "title_tags_owner_desc_vec": title_tags_owner_desc_vec,
+            "vectorized_status": 1,
         }
         return milvus_doc
 
