@@ -51,6 +51,11 @@ class FastEmbedder:
         else:
             return embeddings_generator
 
+    def encode(
+        self, sentences: list[str], batch_size: int = 32, **kwargs
+    ) -> list[np.ndarray]:
+        return self.embed(sentences, result_format="list")
+
 
 if __name__ == "__main__":
     from models.embedders.tests import test_embedder

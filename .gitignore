@@ -5,6 +5,7 @@ build
 data/
 logs/
 checkpoints/
+cmteb_results/
 secrets.json
 *.npy
 *.model
