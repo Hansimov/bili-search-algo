@@ -6,11 +6,8 @@ import sys
 sys.path = [p for p in sys.path if p != os.getcwd()]
 
 from milvus_model.hybrid import BGEM3EmbeddingFunction
-from tclogger import logger, logstr, dict_to_str, brk, brp
-from typing import Literal, Union, Generator
-
-from models.vectors.similarity import dot_sim
-from models.fasttext.test import TEST_PAIRS
+from tclogger import logger, logstr, dict_to_str, brk
+from typing import Literal, Union
 
 
 class MilvusEmbedder:
@@ -45,7 +42,7 @@ class MilvusEmbedder:
         else:
             raise ValueError(f"Invalid model: [{(self.model_name)}]")
 
-    def embed(
+    def embed_list(
         self, sentences: list[str], dense_type: Literal["dense", "sparse"] = "dense"
     ) -> list[np.ndarray]:
         embed_dict = self.model.encode_documents(sentences)
@@ -57,33 +54,23 @@ class MilvusEmbedder:
             raise ValueError(f"Invalid dense_type: [{dense_type}]")
         return embeddings
 
-    def test(self):
-        for pair in TEST_PAIRS:
-            query = pair[0]
-            samples = pair[1]
-            if isinstance(query, list):
-                query = " ".join(query)
-            query_vector = self.embed([query])[0]
-            sample_vectors = []
-            scores = []
-            for sample in samples:
-                if isinstance(sample, list):
-                    sample = " ".join(sample)
-                sample_vector = self.embed([sample])[0]
-                sample_vectors.append(sample_vector)
-                score = dot_sim(query_vector, sample_vector, 4)
-                scores.append(score)
-            sample_scores = list(zip(samples, scores))
-            sample_scores.sort(key=lambda x: x[-1], reverse=True)
-
-            logger.note(f"  * [{logstr.file(query)}]: ")
-            for sample, score in sample_scores:
-                logger.success(f"    * {score:>.4f}: {logstr.file(sample)}")
+    def embed(
+        self,
+        sentences: Union[str, list[str]],
+        dense_type: Literal["dense", "sparse"] = "dense",
+    ) -> np.ndarray:
+        if dense_type == "sparse":
+            raise NotImplementedError("Sparse embedding would be supported later")
+        if isinstance(sentences, str):
+            sentences = [sentences]
+        return self.embed_list(sentences, dense_type=dense_type)[0]
 
 
 if __name__ == "__main__":
+    from models.tests import test_embedder
+
     embedder = MilvusEmbedder(verbose=True)
     embedder.load_model()
-    embedder.test()
+    test_embedder(embedder)
 
     # python -m models.milvus.embed
