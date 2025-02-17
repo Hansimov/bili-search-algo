@@ -11,10 +11,10 @@ from tclogger import logger, logstr, dict_to_str, brk
 from typing import Union, Literal
 
 from configs.envs import SP_MERGED_MODEL_PATH, TOKEN_FREQS_ROOT
-from datasets.videos.data import SentencesDataloader
-from datasets.videos.data import ParquetRowsDataLoader
-from datasets.videos.parquet import VideoTextsParquetReader
-from datasets.args import DATA_LOADER_ARG_PARSER
+from data_utils.videos.data import SentencesDataloader
+from data_utils.videos.data import ParquetRowsDataLoader
+from data_utils.videos.parquet import VideoTextsParquetReader
+from data_utils.args import DATA_LOADER_ARG_PARSER
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
 
 
@@ -384,5 +384,5 @@ if __name__ == "__main__":
     logger.note("> Dumping ...")
     counter.dump(args.output_prefix, no_threshold=args.no_threshold)
 
-    # python -m datasets.videos.freq -dr "parquets" -o video_texts_freq_all
-    # python -m datasets.videos.freq -dr "parquets" -dn "video_texts_other_game" -o video_texts_other_game_nt -nt
+    # python -m data_utils.videos.freq -dr "parquets" -o video_texts_freq_all
+    # python -m data_utils.videos.freq -dr "parquets" -dn "video_texts_other_game" -o video_texts_other_game_nt -nt

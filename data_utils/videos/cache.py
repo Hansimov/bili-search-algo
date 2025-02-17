@@ -4,9 +4,9 @@ import sys
 from tclogger import Runtimer, logger, logstr, dict_to_str, brk
 
 from configs.envs import SP_MERGED_MODEL_PATH
-from datasets.args import DATA_LOADER_ARG_PARSER
-from datasets.videos.data import SentencesDataloader
-from datasets.videos.parquet import VideoTextsParquetWriter
+from data_utils.args import DATA_LOADER_ARG_PARSER
+from data_utils.videos.data import SentencesDataloader
+from data_utils.videos.parquet import VideoTextsParquetWriter
 from models.sentencepiece.filter import REGION_MONGO_FILTERS
 from models.sentencepiece.filter import construct_mongo_filter_from_args
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
@@ -165,13 +165,13 @@ if __name__ == "__main__":
     else:
         raise ValueError("× Must provide output dataset_name")
 
-    # python -m datasets.videos.cache -ec -mcb 22 -bw 5 -fw 10
-    # python -m datasets.videos.cache -dn video_texts_tid_17
-    # python -m datasets.videos.cache -dn video_texts_tid_201
+    # python -m data_utils.videos.cache -ec -mcb 22 -bw 5 -fw 10
+    # python -m data_utils.videos.cache -dn video_texts_tid_17
+    # python -m data_utils.videos.cache -dn video_texts_tid_201
 
-    # python -m datasets.videos.cache -dn video_texts_tid_all -ec -fw 200 -bw 100 -bs 10000
+    # python -m data_utils.videos.cache -dn video_texts_tid_all -ec -fw 200 -bw 100 -bs 10000
 
     # WARNING: Run multiple region-tasks could make mongodb out-of-memory
 
-    # python -m datasets.videos.cache -fd -fl
-    # python -m datasets.videos.cache -fd -fg douga_anime
+    # python -m data_utils.videos.cache -fd -fl
+    # python -m data_utils.videos.cache -fd -fg douga_anime

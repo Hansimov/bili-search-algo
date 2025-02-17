@@ -5,7 +5,7 @@ from typing import Union, Literal
 
 from configs.envs import SENTENCEPIECE_CKPT_ROOT, TOKEN_FREQS_ROOT
 from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
-from datasets.videos.freq import read_token_freq_csv
+from data_utils.videos.freq import read_token_freq_csv
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.tokenizer import PT_DIGITS_ZH_WITH_UNIT, PT_DIGITS_ZH
 from models.sentencepiece.tokenizer import calc_cjk_char_len

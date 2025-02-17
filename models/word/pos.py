@@ -2,7 +2,7 @@ from collections import defaultdict
 from tclogger import logger, logstr, dict_to_str, TCLogbar, chars_slice, decolored
 
 from configs.envs import TOKEN_FREQS_ROOT, TOKEN_FREQ_PREFIX
-from datasets.videos.freq import read_token_freq_csv
+from data_utils.videos.freq import read_token_freq_csv
 from models.hanlp.pos import HanlpPosTagger
 
 INCLUDE_POS_NAMES = ["名词", "动词", "人名"]

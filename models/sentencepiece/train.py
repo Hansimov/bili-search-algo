@@ -9,8 +9,8 @@ from tclogger import logger, logstr, Runtimer, dict_to_str
 from typing import Literal
 
 from configs.envs import REPO_ROOT, SENTENCEPIECE_CKPT_ROOT
-from datasets.args import DATA_LOADER_ARG_PARSER
-from datasets.videos.data import SentencesDataloader
+from data_utils.args import DATA_LOADER_ARG_PARSER
+from data_utils.videos.data import SentencesDataloader
 from models.sentencepiece.filter import construct_mongo_filter_from_args
 from models.sentencepiece.edit import SentencePieceModelVocabEditor
 from models.sentencepiece.tokenizer import SentenceFullTokenizer

@@ -1,10 +1,10 @@
 import argparse
 import sys
 
-from datasets.videos.data import CommonDataLoaderArgParser
-from datasets.videos.data import SentencesDataLoaderArgParser
-from datasets.videos.data import ParquetRowsDataLoaderArgParser
-from datasets.videos.parquet import ParquetOperatorArgParser, ParquetWriterArgParser
+from data_utils.videos.data import CommonDataLoaderArgParser
+from data_utils.videos.data import SentencesDataLoaderArgParser
+from data_utils.videos.data import ParquetRowsDataLoaderArgParser
+from data_utils.videos.parquet import ParquetOperatorArgParser, ParquetWriterArgParser
 
 
 class MergedArgParser:

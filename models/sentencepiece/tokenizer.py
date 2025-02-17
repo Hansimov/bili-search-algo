@@ -6,7 +6,7 @@ from tclogger import logger, logstr
 from typing import Union
 
 from configs.envs import SP_MERGED_MODEL_PATH
-from datasets.videos.convert import CH_CJK, CH_AB, CH_DIGIT_PREFIX, RE_UNITS_ALL
+from data_utils.videos.convert import CH_CJK, CH_AB, CH_DIGIT_PREFIX, RE_UNITS_ALL
 from models.sentencepiece.test import TEST_TOKENS, TEST_WORDS, TEST_SENTENCES
 
 """Naming conventions by typings:

@@ -16,11 +16,11 @@ else
 fi
 
 for region in "${regions[@]}"; do
-    cmd="python -m datasets.videos.cache -fd -fg ${region}"
+    cmd="python -m data_utils.videos.freq -dr \"parquets\" -dn \"video_texts_${region}\" -o \"video_texts_${region}_nt\" -nt"
     echo "$cmd"
     eval "$cmd"
 done
 
-# chmod +x datasets/videos/cache.sh
-# ./datasets/videos/cache.sh 1
-# ./datasets/videos/cache.sh 2
+# chmod +x data_utils/videos/freq.sh
+# ./data_utils/videos/freq.sh 1
+# ./data_utils/videos/freq.sh 2

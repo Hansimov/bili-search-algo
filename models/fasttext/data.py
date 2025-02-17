@@ -3,7 +3,7 @@ import json
 from gensim.models.doc2vec import TaggedDocument
 from tclogger import logger, dict_to_str
 
-from datasets.videos.data import SentencesDataloader, ParquetRowsDataLoader
+from data_utils.videos.data import SentencesDataloader, ParquetRowsDataLoader
 
 
 class FasttextDataLoader(SentencesDataloader):

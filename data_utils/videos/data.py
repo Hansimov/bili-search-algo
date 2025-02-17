@@ -6,8 +6,8 @@ from tclogger import logger, logstr, TCLogbar, TCLogbarGroup, dict_to_str
 from typing import Literal, Generator, Union
 
 from configs.envs import MONGO_ENVS
-from datasets.videos.convert import DocSentenceConverter
-from datasets.videos.parquet import VideoTextsParquetReader
+from data_utils.videos.convert import DocSentenceConverter
+from data_utils.videos.parquet import VideoTextsParquetReader
 
 
 class VideosTagsAggregator:
@@ -443,5 +443,5 @@ if __name__ == "__main__":
     for doc in loader:
         continue
 
-    # python -m datasets.videos.data -db zhwiki -cn pages -bs 1000
-    # python -m datasets.videos.data -cn videos_texts -bs 10000 -mb 200 -ec
+    # python -m data_utils.videos.data -db zhwiki -cn pages -bs 1000
+    # python -m data_utils.videos.data -cn videos_texts -bs 10000 -mb 200 -ec

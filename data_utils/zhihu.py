@@ -34,4 +34,4 @@ if __name__ == "__main__":
     downloader.download()
     downloader.move()
 
-    # python -m datasets.zhihu
+    # python -m data_utils.zhihu

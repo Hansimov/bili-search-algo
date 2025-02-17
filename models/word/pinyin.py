@@ -6,7 +6,7 @@ from collections import defaultdict
 from tclogger import logger, TCLogbar, chars_slice, decolored
 
 from configs.envs import TOKEN_FREQS_ROOT, TOKEN_FREQ_PREFIX
-from datasets.videos.freq import read_token_freq_csv
+from data_utils.videos.freq import read_token_freq_csv
 
 RE_ALPHA_DIGITS = re.compile(r"^[a-zA-Z0-9]+$")
 

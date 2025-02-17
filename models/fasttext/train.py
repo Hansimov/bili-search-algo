@@ -12,8 +12,8 @@ from tclogger import Runtimer, logger, logstr, dict_to_str, brk, attrs_to_dict
 from typing import Union, Literal
 
 from configs.envs import FASTTEXT_CKPT_ROOT, SP_MERGED_MODEL_PATH, TOKEN_FREQS_ROOT
-from datasets.videos.parquet import VideoTextsParquetReader
-from datasets.args import DATA_LOADER_ARG_PARSER
+from data_utils.videos.parquet import VideoTextsParquetReader
+from data_utils.args import DATA_LOADER_ARG_PARSER
 from models.fasttext.data import FasttextDataLoader, FasttextParquetDataLoader
 from models.fasttext.vocab import FasttextVocabLoader
 from models.fasttext.test import TEST_KEYWORDS, TEST_PAIRS
