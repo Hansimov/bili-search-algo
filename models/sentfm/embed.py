@@ -24,7 +24,7 @@ class SentfmEmbedder:
 
 
 if __name__ == "__main__":
-    from models.tests import test_embedder
+    from models.embedders.tests import test_embedder
 
     embedder = SentfmEmbedder("BAAI/bge-base-zh-v1.5", verbose=True)
     embedder.load_model()
