@@ -25,7 +25,7 @@ def step_shift_bits(rows: int, scale: int) -> np.ndarray:
     return np.floor((np.arange(rows) * scale) / rows).astype(int)
 
 
-def stretch_shift_add(arr2d: np.ndarray, scale: int = 5) -> np.ndarray:
+def stretch_shift_add(arr2d: np.ndarray, scale: int = 5, offset: int = 0) -> np.ndarray:
     rows, cols = arr2d.shape
     res_cols = cols * scale
 
@@ -36,7 +36,9 @@ def stretch_shift_add(arr2d: np.ndarray, scale: int = 5) -> np.ndarray:
     # shift with step cols
     arr2d_shifted = np.zeros((rows, res_cols))
     # shift_bits = random_shift_bits(arr2d, scale, digit_pos=100, digit_multi=1000)
-    shift_bits = step_shift_bits(rows, scale)
+    shift_bits = step_shift_bits(rows=rows, scale=scale)
+    if offset is not None and offset > 0:
+        shift_bits += offset
     for i in range(rows):
         arr2d_shifted[i] = np.roll(arr2d_stretched[i], shift_bits[i])
 
@@ -123,9 +125,16 @@ def sample_to_dim(arr: np.ndarray, dim: int, n_window: int) -> np.ndarray:
 
 
 if __name__ == "__main__":
+    from tclogger import logger
+
+    logger.note("arr1d:")
     arr1d = np.array([1.1, 2.2, 3.3])
     print(list(arr1d))
+
+    logger.note("stretch_copy:")
     print(list(stretch_copy(arr1d, scale=5)))
+
+    logger.note("arr2d:")
     arr2d = np.array(
         [
             [1.1, 2.2, 3.3, 4.4],
@@ -134,10 +143,26 @@ if __name__ == "__main__":
         ]
     )
     print(list(arr2d))
+
+    logger.note("step_shift_bits:")
+    print(step_shift_bits(rows=3, scale=5))
+    logger.note("step_shift_bits with offset:")
+    print(step_shift_bits(rows=3, scale=5) + 1)
+
+    logger.note("stretch_shift_add:")
     print(list(stretch_shift_add(arr2d, scale=5)))
+
+    logger.note("arr1d2:")
     arr1d2 = np.array([1.1, 2.2, 3.3, 4.4, 5.5, 6.6])
+    print(list(arr1d2))
+
+    logger.note("downsample arr1d2:")
     print(list(downsample(arr1d2, nume_deno=(2, 3), method="window")))
+
+    logger.note("downsample arr2d:")
     print(downsample(arr2d, nume_deno=(1, 1), method="window"))
+
+    logger.note("calc_padded_downsampled_cols:")
     print(calc_padded_downsampled_cols(320, (3, 3)))
 
     # python -m models.vectors.forms
