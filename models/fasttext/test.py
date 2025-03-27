@@ -74,4 +74,33 @@ TEST_PAIRS = [
             "影视飓风：影视飓风开车去罗马",
         ],
     ],
+    [
+        "deepseek 教程",
+        [
+            "cracer渗透教程 学习, 教学视频, 视频教程, 教程, 编程, 经验分享",
+            "JavaScript入门教程】JavaScript精讲快速入门教程  教学视频, 程序员, JavaScript入门教程, JavaScript开发, JS, JavaScript, JavaScript教程, WEB前端, JS教程, JavaScript入门",
+            "【Am教程】更适合草履虫体质的动画教程！动画, 教程, alight motion, am教程, alight motion教程, meme教程, oc动画教程, 动画教程",
+            "哈工大(威海)秋季大物实验数据处理教程 知识分享官, 大学, 视频教程, 哈工大, 教学视频, 学习, 教程, 野生技术协会, 经验分享, 学生党, 哈尔滨工业大学, 学习心得",
+            "重磅消息！微信官方正式接入DeepSeek，史上最多用户的AI产品即将诞生，正在灰度内测，2025年将迎来AI应用的爆发 AI, 人工智能, 腾讯, Deepseek, 微信, AI应用",
+            "如何快如手写一个精简版的TensorFlow或PyTorch，我推荐斋藤康毅的《深度学习入门》,学习, AI, 人工智能, tensowflow, 机器学习, 深度学习, python, 卷积神经网络, pytorch, 打卡挑战",
+        ],
+    ],
+    ["deepsek", ["deepseek", "deepsek", "ddepsek", "javascript", "pytorch", "desk"]],
+    ["bge large zh", ["bge 模型微调", "whisper large", "zh", "bge base"]],
+    ["我的祖国", ["我爱我的祖国", "祖国的我", "我的中国", "我爱祖国"]],
+]
+
+
+TEST_SENTENCES = [
+    "重磅消息！微信官方正式接入DeepSeek",
+    "影视飓风：动态视频｜高速摄影机下的巴黎，是什么样的",
+    "【雷军】分享几个我在冬天开小米SU7的小Tips",
+    "雷军：关于Are You OK，我的看法是这样的。",
+    "如何快速手写一个精简版的TensorFlow或PyTorch",
+    "哈工大(威海)秋季大物实验数据处理教程",
+    "【4K中字】T-ara - Day by Day（无魔收藏画质）超帅舞台！",
+    "少女时代《The Boys》蓝光重制稀有LIVE - MCD 111027",
+    "英伟达的第二护城河与“超级碗”阳谋【深度解析GTC 2025】",
+    "飞越上海交大闵行校区一镜到底4639亩16公里·上海交通大学·航拍校园",
+    "《高等数学》全程教学视频 2.0版",
 ]
