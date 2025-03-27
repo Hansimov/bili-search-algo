@@ -379,10 +379,10 @@ class FasttextModelPreprocessor:
     def preprocess(
         self,
         words: Union[str, list[str]],
-        tokenize: bool = True,
-        concat_singles: bool = True,
+        concat_singles: bool = False,
         max_char_len: int = None,
     ) -> list[str]:
+        """Preprocess words to tokens: lower, tokenize (with max_char_len), and concat."""
         if words is None:
             return None
         if not isinstance(words, list):
@@ -391,16 +391,16 @@ class FasttextModelPreprocessor:
         else:
             sep_indexes = self.get_sep_indexes(words)
 
-        words = [word.lower() for word in words]
-        if tokenize:
-            if max_char_len:
-                with self.tokenizer.temp_max_char_len(max_char_len):
-                    words = [token for word in words for token in self.tokenize(word)]
-            else:
-                words = [token for word in words for token in self.tokenize(word)]
-                if concat_singles:
-                    words = self.concat_singles(words, sep_indexes=sep_indexes)
-        return words
+        swords = [word.lower() for word in words]
+        if max_char_len:
+            with self.tokenizer.temp_max_char_len(max_char_len):
+                tokens = [token for sword in swords for token in self.tokenize(sword)]
+        else:
+            tokens = [token for sword in swords for token in self.tokenize(sword)]
+            if concat_singles:
+                tokens = self.concat_singles(tokens, sep_indexes=sep_indexes)
+        return tokens
+
 
 
 def test_frequenizer(test_sentences: list[str]):

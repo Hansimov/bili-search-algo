@@ -88,8 +88,10 @@ class FasttextModelRunner:
         return word in self.model.wv.key_to_index
 
     @Pyro5.server.expose
-    def preprocess(self, words: Union[str, list[str]]) -> list[str]:
-        return self.preprocessor.preprocess(words)
+    def preprocess(
+        self, words: Union[str, list[str]], max_char_len: int = None
+    ) -> list[str]:
+        return self.preprocessor.preprocess(words, max_char_len=max_char_len)
 
     @Pyro5.server.expose
     def attr(self, attr: str):
@@ -477,8 +479,16 @@ class FasttextDocVecModelRunner(FasttextModelRunner):
         return vectors
 
     @Pyro5.server.expose
-    def calc_sample_token_vectors(self, doc: Union[str, list[str]]) -> np.ndarray:
-        tokens = self.preprocess(doc)
+    def calc_sample_token_vectors(
+        self, doc: Union[str, list[str]], tokenize: bool = True
+    ) -> np.ndarray:
+        if tokenize:
+            tokens = self.preprocess(doc)
+        else:
+            if isinstance(doc, str):
+                tokens = [doc]
+            else:
+                tokens = doc
         if not tokens:
             return np.zeros((1, self.dim))
         vectors = [self.get_vector(token) for token in tokens]
@@ -504,18 +514,24 @@ class FasttextDocVecModelRunner(FasttextModelRunner):
     #     return stretched_vector
 
     @Pyro5.server.expose
-    def calc_stretch_query_vector(self, doc: Union[str, list[str]]) -> np.ndarray:
-        token_vectors = self.calc_sample_token_vectors(doc)
+    def calc_stretch_query_vector(
+        self, doc: Union[str, list[str]], tokenize: bool = True
+    ) -> np.ndarray:
+        token_vectors = self.calc_sample_token_vectors(doc, tokenize=tokenize)
         query_vector = np.sum(token_vectors, axis=0)
         downsampled_vector = self.downsample(query_vector)
         stretched_vector = stretch_copy(downsampled_vector, scale=self.dim_scale)
         return stretched_vector
 
     @Pyro5.server.expose
-    def calc_stretch_sample_vector(self, doc: Union[str, list[str]]) -> np.ndarray:
-        token_vectors = self.calc_sample_token_vectors(doc)
+    def calc_stretch_sample_vector(
+        self, doc: Union[str, list[str]], tokenize: bool = True, shift_offset: int = 0
+    ) -> np.ndarray:
+        token_vectors = self.calc_sample_token_vectors(doc, tokenize=tokenize)
         downsampled_vector = self.downsample(token_vectors)
-        stretched_vector = stretch_shift_add(downsampled_vector, scale=self.dim_scale)
+        stretched_vector = stretch_shift_add(
+            downsampled_vector, scale=self.dim_scale, offset=shift_offset
+        )
         return stretched_vector
 
 
