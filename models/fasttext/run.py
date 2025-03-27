@@ -1,5 +1,4 @@
 import argparse
-import importlib
 import numpy as np
 import Pyro5.api
 import Pyro5.server
@@ -8,10 +7,9 @@ import sys
 from functools import partial
 from gensim.models import FastText, KeyedVectors
 from pathlib import Path
-from tclogger import logger, logstr, dict_to_str, brk, brp, Runtimer
+from tclogger import logger, logstr, dict_to_str, Runtimer
 from typing import Union, Literal
 
-import models.fasttext.test
 from configs.envs import PYRO_ENVS, FASTTEXT_CKPT_ROOT
 from configs.envs import SP_MERGED_MODEL_PREFIX, TOKEN_FREQ_PREFIX
 from configs.envs import FASTTEXT_MERGED_MODEL_PREFIX
@@ -22,7 +20,7 @@ from models.vectors.calcs import dot_sim
 from models.vectors.forms import trunc, stretch_copy, stretch_shift_add, downsample
 from models.vectors.forms import calc_padded_downsampled_cols
 from models.vectors.structs import replace_items_with_sub_list_and_idxs
-from workers.pyros.register import register_pyro_apis
+from workers.pyros.serialize import register_pyro_apis
 
 register_pyro_apis()
 
@@ -92,6 +90,10 @@ class FasttextModelRunner:
     @Pyro5.server.expose
     def preprocess(self, words: Union[str, list[str]]) -> list[str]:
         return self.preprocessor.preprocess(words)
+
+    @Pyro5.server.expose
+    def attr(self, attr: str):
+        return getattr(self, attr)
 
     @Pyro5.server.expose
     def wv_func(self, func: str, *args, **kwargs):
@@ -411,111 +413,6 @@ class FasttextModelRunner:
         )
         return results
 
-    @Pyro5.server.expose
-    def test(self):
-        importlib.reload(models.fasttext.test)
-        from models.fasttext.test import TEST_KEYWORDS
-
-        logger.note(f"> Testing:")
-        for word in TEST_KEYWORDS:
-            word = self.preprocess(word)
-            logger.mesg(f"  * [{logstr.file(word)}]:")
-            results = self.most_similar_vocab(positive=word, topn=10)[:6]
-            for result in results:
-                res_word, res_score = result
-                logger.success(f"    * {res_score:>.4f}: {res_word}")
-        logger.file(f"* {self.model_prefix}")
-
-    @Pyro5.server.expose
-    def test_pair_similarities(self):
-        importlib.reload(models.fasttext.test)
-        from models.fasttext.test import TEST_PAIRS
-
-        def score2str(num: float, round_digits: int = 2, br: bool = True) -> str:
-            num_str = f"{num:.{round_digits}f}"
-            if br:
-                num_str = brp(num_str)
-            if num < 0.25:
-                str_func = logstr.warn
-            elif num < 0.5:
-                str_func = logstr.mesg
-            else:
-                str_func = logstr.hint
-            return str_func(num_str)
-
-        def weight2str(num: float, round_digits: int = 2, br: bool = True) -> str:
-            num_str = f"{num:.{round_digits}f}"
-            if br:
-                num_str = brk(num_str)
-            return logstr.file(num_str)
-
-        def token2str(token: str, score: float, weight: float) -> str:
-            if score < 0.25 or weight < 0.25:
-                str_func = logstr.warn
-            elif score < 0.5 or weight < 0.5:
-                str_func = logstr.mesg
-            else:
-                str_func = logstr.success
-            return str_func(token)
-
-        def scoreweight2str(
-            score: float, weight: float, round_digits: int = 1, br: bool = True
-        ) -> str:
-            score_str = score2str(score, round_digits, br=False)
-            weight_str = weight2str(weight, round_digits, br=False)
-            num_str = f"{score_str}*{weight_str}"
-            if br:
-                num_str = brp(num_str)
-            return logstr.line(num_str)
-
-        logger.note(f"> Testing (similarity):")
-        for query, samples in TEST_PAIRS:
-            query_tokens = self.preprocess(query)
-            if self.frequenizer:
-                query_token_weights = self.frequenizer.calc_weights_of_tokens(
-                    query_tokens
-                )
-            else:
-                query_token_weights = [1.0] * len(query_tokens)
-            query_tokens_str_list = [
-                f"{token}{weight2str(weight)}"
-                for token, weight in zip(query_tokens, query_token_weights)
-            ]
-            query_tokens_str = " ".join(query_tokens_str_list)
-            logger.note(f"  * [{query_tokens_str}]:")
-            sample_tokens_list = [self.preprocess(sample) for sample in samples]
-            results = self.calc_pairs_scores(
-                query_tokens, sample_tokens_list, level="word"
-            )
-            for result in results:
-                sample_tokens, sample_score, token_scores, token_weights = result
-                tokens_str_list = []
-                for token, token_weight, token_score in zip(
-                    sample_tokens, token_weights, token_scores
-                ):
-                    token_str = token2str(token, score=token_score, weight=token_weight)
-                    score_weight_str = scoreweight2str(
-                        score=token_score, weight=token_weight
-                    )
-                    token_score_str = f"{token_str}{score_weight_str}"
-                    tokens_str_list.append(token_score_str)
-                tokens_str = " ".join(tokens_str_list)
-                logger.line(f"    * {sample_score:>.4f}: [{tokens_str}]")
-
-    def test_func(self):
-        importlib.reload(models.fasttext.test)
-        from models.fasttext.test import TEST_KEYWORDS
-
-        logger.note(f"> Testing (func):")
-        for word in TEST_KEYWORDS:
-            word = self.preprocess(word)
-            logger.mesg(f"  * [{logstr.file(word)}]:")
-            results = self.wv_func("most_similar", positive=word, topn=10)[:6]
-            for result in results:
-                res_word, res_score = result
-                logger.success(f"    * {res_score:>.4f}: {res_word}")
-        logger.file(f"* {self.model_prefix}")
-
 
 @Pyro5.server.behavior(instance_mode="single")
 class FasttextDocVecModelRunner(FasttextModelRunner):
@@ -621,36 +518,12 @@ class FasttextDocVecModelRunner(FasttextModelRunner):
         stretched_vector = stretch_shift_add(downsampled_vector, scale=self.dim_scale)
         return stretched_vector
 
-    @Pyro5.server.expose
-    def test_doc_sims(self):
-        importlib.reload(models.fasttext.test)
-        from models.fasttext.test import TEST_PAIRS
-
-        query_vec_func = self.calc_stretch_query_vector
-        sample_vec_func = self.calc_stretch_sample_vector
-        logger.note(f"> Testing doc-level similarity:")
-        for query, samples in TEST_PAIRS:
-            query_vec = query_vec_func(query).astype(np.float16)
-            sample_vecs = [
-                sample_vec_func(sample).astype(np.float16) for sample in samples
-            ]
-            sims = [dot_sim(query_vec, sample_vec) for sample_vec in sample_vecs]
-            sample_sims = list(zip(samples, sims))
-            sample_sims.sort(key=lambda x: x[1], reverse=True)
-            logger.note(f"> [{query}]")
-            for sample, sim in sample_sims:
-                sim_str = logstr.mesg(f"{sim:.4f}")
-                logger.mesg(f"  * {sim_str}: {sample}")
-        logger.mesg(
-            f"* docvec_dim: {logstr.success(self.docvec_dim)}\n"
-            f"* vector_dim: {logstr.success(query_vec.shape)}"
-        )
-
 
 PYRO_NS = {
     "word": "fasttext_model_runner_word",
     "doc": "fasttext_model_runner_doc",
 }
+RUNNER_TYPE = Union[FasttextModelRunner, FasttextDocVecModelRunner]
 
 
 class FasttextModelRunnerServer:
@@ -667,7 +540,7 @@ class FasttextModelRunnerServer:
         self.port = port
         self.verbose = verbose
 
-    def serve(self, runner: Union[FasttextModelRunner, FasttextDocVecModelRunner]):
+    def serve(self, runner: RUNNER_TYPE):
         if self.verbose:
             logger.note(f"> Running as remote server:")
             logger.mesg(f"  * {self.host}:{self.port}")
@@ -694,6 +567,12 @@ class FasttextModelRunnerClient:
         self.verbose = verbose
 
 
+class FasttextModelRunnerRemote(FasttextDocVecModelRunner):
+    """This is just used as a type hint for the remote runner."""
+
+    pass
+
+
 class FasttextModelRunnerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -718,12 +597,8 @@ class FasttextModelRunnerArgParser(argparse.ArgumentParser):
         self.add_argument("-minw", "--min-weight", type=float, default=0.001)
         self.add_argument("-maxw", "--max-weight", type=float, default=1.0)
         self.add_argument("-l", "--list-models", action="store_true")
-        self.add_argument("-n", "--nameserver", type=str, default=PYRO_NS)
         self.add_argument("-s", "--host", type=str, default=PYRO_ENVS["host"])
         self.add_argument("-p", "--port", type=int, default=PYRO_ENVS["port"])
-        self.add_argument("-r", "--remote", action="store_true")
-        self.add_argument("-t", "--test", action="store_true")
-        self.add_argument("-tc", "--test-client", action="store_true")
 
     def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
@@ -732,63 +607,44 @@ class FasttextModelRunnerArgParser(argparse.ArgumentParser):
 
 def main(args: argparse.Namespace):
     timer = Runtimer()
-    if not args.test_client:
-        if not args.list_models:
-            with timer:
-                preprocessor = FasttextModelPreprocessor(
-                    tokenizer_prefix=args.tokenizer_prefix,
-                    token_freq_prefix=args.token_freq_prefix,
-                    verbose=True,
-                )
-        else:
-            preprocessor = None
-        if args.model_class == "word":
-            runner_class = FasttextModelRunner
-        elif args.model_class == "doc":
-            runner_class = FasttextDocVecModelRunner
-        else:
-            raise ValueError("× Invalid model class!")
-        runner = runner_class(
-            model_prefix=args.model_prefix,
-            preprocessor=preprocessor,
-            restrict_vocab=args.restrict_vocab,
-            vector_weighted=True,
-            verbose=True,
-        )
+    if args.list_models:
+        preprocessor = None
+    else:
+        with timer:
+            preprocessor = FasttextModelPreprocessor(
+                tokenizer_prefix=args.tokenizer_prefix,
+                token_freq_prefix=args.token_freq_prefix,
+                verbose=True,
+            )
+    RUNNER_CLASSES = {
+        "word": FasttextModelRunner,
+        "doc": FasttextDocVecModelRunner,
+    }
+    runner_class = RUNNER_CLASSES.get(args.model_class, FasttextModelRunner)
+
+    runner_params = {
+        "model_prefix": args.model_prefix,
+        "preprocessor": preprocessor,
+        "restrict_vocab": args.restrict_vocab,
+        "vector_weighted": True,
+        "verbose": True,
+    }
+    runner = runner_class(**runner_params)
 
     if args.list_models:
         runner.list_models()
-    else:
-        remote_args = {
-            "model_class": args.model_class,
-            "host": args.host,
-            "port": args.port,
-        }
+        return
+    with timer:
+        runner.load_model()
 
-        if not args.test_client:
-            with timer:
-                runner.load_model()
-
-        if args.test:
-            # runner.test()
-            runner.test_func()
-        elif args.test_client:
-            client = FasttextModelRunnerClient(**remote_args)
-            # client.runner.test()
-            if args.model_class == "word":
-                client.runner.test_pair_similarities()
-            elif args.model_class == "doc":
-                client.runner.test_doc_sims()
-            else:
-                raise ValueError("× Invalid model class!")
-            # res = client.runner.list_models()
-            # logger.success(dict_to_str(res))
-        elif args.remote:
-            runner.verbose = False
-            server = FasttextModelRunnerServer(**remote_args, verbose=True)
-            server.serve(runner)
-        else:
-            raise ValueError("× Invalid running mode!")
+    server_params = {
+        "model_class": args.model_class,
+        "host": args.host,
+        "port": args.port,
+    }
+    server = FasttextModelRunnerServer(**server_params, verbose=True)
+    runner.verbose = False
+    server.serve(runner)
 
 
 if __name__ == "__main__":
@@ -796,18 +652,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(args)
 
-    # List models:
+    # Case1: List models:
     # python -m models.fasttext.run -l
 
-    # Test models:
-    # python -m models.fasttext.run -t -m fasttext_tid_all_mv_60w -v 150000
-    # python -m models.fasttext.run -t -m fasttext_tid_all_mv_30w -v 150000
-
-    # Run remote server:
-    # python -m models.fasttext.run -r -m fasttext_tid_all_mv_30w -v 150000
-    # python -m models.fasttext.run -r -m fasttext_merged -v 150000 -w
-    # python -m models.fasttext.run -r -ms doc -m fasttext_merged -v 150000 -w
-
-    # Test remote client:
-    # python -m models.fasttext.run -tc
-    # python -m models.fasttext.run -tc -ms doc
+    # Case2: Run remote server:
+    # python -m models.fasttext.run -m fasttext_merged -v 150000
+    # python -m models.fasttext.run -m fasttext_merged -v 150000 -w
+    # python -m models.fasttext.run -ms doc -m fasttext_merged -v 150000 -w
