@@ -6,11 +6,12 @@ from data_utils.videos.freq import read_token_freq_csv
 from models.hanlp.pos import HanlpPosTagger
 
 INCLUDE_POS_NAMES = ["名词", "动词", "人名"]
-MID_POS_NAMES = ["动词", "数词", "方位词", "形容词", "量词"]
+MID_POS_NAMES = ["数词", "方位词", "形容词", "量词"]
 EXCLUDE_POS_NAMES = [
     *["连词", "副语素", "副词", "叹词", "后接成分"],
     *["拟声词", "介词", "代语素", "代词"],
-    *["助词", "标点符号", "非语素字", "语气语素", "语气词"],
+    *["助词", "非语素字", "语气语素", "语气词"],
+    # *["标点符号"] # do not add this, otherwise would remove some meaningful non-chinese chars
 ]
 
 
