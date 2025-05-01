@@ -184,9 +184,12 @@ def get_most_unimportant_token(
     drop_token_diffs = []
     # only_token_corrs = []
     for i, token_vec in enumerate(token_vecs):
-        drop_vec = np.subtract(doc_vec, token_vec)
-        drop_sim = dot_sim(doc_vec, drop_vec)
-        drop_diff = 1 - drop_sim
+        # drop_vec = np.subtract(doc_vec, token_vec)
+        # drop_sim = dot_sim(doc_vec, drop_vec)
+        drop_vecs = token_vecs[:i] + token_vecs[i + 1 :]
+        drop_sims = [dot_sim(token_vec, drop_vec) for drop_vec in drop_vecs]
+        sum_sim = sum(drop_sims)
+        drop_diff = len(drop_vecs) - sum_sim
         # only_corr = dot_sim(token_vec, doc_vec)
         drop_token_diffs.append(drop_diff)
         # only_token_corrs.append(only_corr)
@@ -212,12 +215,13 @@ def test_drop_token_by_importance(rc: FasttextModelRunnerRemote):
     for sentence in TEST_SENTENCES:
         tokens = rc.preprocess(sentence, max_char_len=None)
         # logger.mesg(f"  * [{' '.join(tokens)}]")
-        # token_vecs = [rc.get_vector(token) for token in tokens]
-        token_vecs = [
-            rc.calc_stretch_sample_vector(token, tokenize=False, shift_offset=idx)
-            for idx, token in enumerate(tokens)
-        ]
-        doc_vec = rc.calc_stretch_sample_vector(tokens, tokenize=False)
+        # token_vecs = [
+        #     rc.calc_stretch_sample_vector(token, tokenize=False, shift_offset=idx)
+        #     for idx, token in enumerate(tokens)
+        # ]
+        # doc_vec = rc.calc_stretch_sample_vector(tokens, tokenize=False)
+        token_vecs = [rc.get_vector(token) for token in tokens]
+        doc_vec = np.sum(token_vecs, axis=0)
         get_most_unimportant_token(tokens, token_vecs, doc_vec)
 
 

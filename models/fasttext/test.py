@@ -83,6 +83,7 @@ TEST_PAIRS = [
             "哈工大(威海)秋季大物实验数据处理教程 知识分享官, 大学, 视频教程, 哈工大, 教学视频, 学习, 教程, 野生技术协会, 经验分享, 学生党, 哈尔滨工业大学, 学习心得",
             "重磅消息！微信官方正式接入DeepSeek，史上最多用户的AI产品即将诞生，正在灰度内测，2025年将迎来AI应用的爆发 AI, 人工智能, 腾讯, Deepseek, 微信, AI应用",
             "如何快如手写一个精简版的TensorFlow或PyTorch，我推荐斋藤康毅的《深度学习入门》,学习, AI, 人工智能, tensowflow, 机器学习, 深度学习, python, 卷积神经网络, pytorch, 打卡挑战",
+            "DeepSeek使用技巧，本地部署实战，R1&V3一套统统搞定 小白都会，2分钟搞定！Mac Mini 也能部署？！过程非常简单，只需要有一些提问技巧就可以让ai为我们生成定制的脚本代码",
         ],
     ],
     ["deepsek", ["deepseek", "deepsek", "ddepsek", "javascript", "pytorch", "desk"]],

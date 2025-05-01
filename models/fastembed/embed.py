@@ -9,7 +9,9 @@ class FastEmbedder:
     def __init__(
         self,
         model_name: Literal[
-            "BAAI/bge-small-zh-v1.5", "jinaai/jina-embeddings-v2-base-zh"
+            "BAAI/bge-small-zh-v1.5",
+            "jinaai/jina-embeddings-v2-base-zh",
+            "intfloat/multilingual-e5-large",
         ] = "BAAI/bge-small-zh-v1.5",
         verbose: bool = False,
     ):
@@ -60,7 +62,7 @@ class FastEmbedder:
 if __name__ == "__main__":
     from models.embedders.tests import test_embedder
 
-    embedder = FastEmbedder("BAAI/bge-small-zh-v1.5", verbose=True)
+    embedder = FastEmbedder("intfloat/multilingual-e5-large", verbose=True)
     # embedder.list_models()
     embedder.load_model()
     test_embedder(embedder)
