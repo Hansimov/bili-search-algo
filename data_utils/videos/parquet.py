@@ -170,6 +170,7 @@ class VideoTextsParquetReader:
         dataset_root: str = None,
         dataset_name: str = None,
         parquet_prefix: str = "",
+        to_pylist: bool = False,
         verbose: bool = False,
     ):
         if dataset_root:
@@ -178,6 +179,7 @@ class VideoTextsParquetReader:
             self.data_root = DATA_ROOT
         self.dataset_name = dataset_name
         self.parquet_prefix = parquet_prefix
+        self.to_pylist = to_pylist
         self.verbose = verbose
         self.init_paths()
         self.init_total()
@@ -215,13 +217,17 @@ class VideoTextsParquetReader:
 
     def batch_generator(
         self, column: str = None, batch_size: int = 10000
-    ) -> Generator[Union[list[dict], list, pa.Table], None, None]:
+    ) -> Generator[Union[list, pa.Table], None, None]:
         for table in self.table_generator():
             for i in range(0, table.num_rows, batch_size):
                 if not column:
                     yield table.slice(i, batch_size).to_pylist()
                 else:
-                    yield table.column(column).slice(i, batch_size)
+                    batch = table.column(column).slice(i, batch_size)
+                    if self.to_pylist:
+                        yield batch.to_pylist()
+                    else:
+                        yield batch
             del table
             gc.collect()
 
