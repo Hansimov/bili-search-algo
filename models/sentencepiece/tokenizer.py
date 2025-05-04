@@ -6,7 +6,9 @@ from tclogger import logger, logstr
 from typing import Union
 
 from configs.envs import SP_MERGED_MODEL_PATH
-from data_utils.videos.convert import CH_CJK, CH_AB, CH_DIGIT_PREFIX, RE_UNITS_ALL
+from data_utils.videos.convert import CH_CJK, CH_AB, CH_DIGIT_PREFIX
+from data_utils.videos.convert import CH_MASK, PT_ATOZ_WS
+from data_utils.videos.convert import RE_UNITS_ALL
 from models.sentencepiece.test import TEST_TOKENS, TEST_WORDS, TEST_SENTENCES
 
 """Naming conventions by typings:
@@ -40,7 +42,9 @@ RE_DIGITS_ALL = rf"(?:{RE_DIGITS_NUMBER_WITH_PREFIX_AND_UNIT}|{RE_DIGITS_WITH_DO
 RE_NOT_DIGIT_DOT = r"\.(?!\d)"
 RE_NOT_ALPHA_DASH = f"\-(?![a-zA-Z0-9])"
 # RE_NON_WORD = rf"[^{CH_CJK}〇{CH_AB}\-\.%‰{CH_LB}{CH_RB}]+|{RE_NOT_DIGIT_DOT}"
-RE_NON_WORD = rf"[^{CH_CJK}〇{CH_AB}\-\.%‰]+|{RE_NOT_DIGIT_DOT}|{RE_NOT_ALPHA_DASH}"
+RE_NON_WORD = (
+    rf"[^{CH_CJK}〇{CH_AB}\-\.%‰{CH_MASK}]+|{RE_NOT_DIGIT_DOT}|{RE_NOT_ALPHA_DASH}"
+)
 RE_CH_CJK = rf"[{CH_CJK}]"
 
 RE_DIGITS_ZH = (
@@ -84,6 +88,9 @@ class SentencePreTokenizer:
             res.append((sentence[start:], "str"))
         return res
 
+    def mask_ws_between_atoz(self, sentence: str) -> str:
+        return PT_ATOZ_WS.sub(CH_MASK, sentence)
+
     def tokenize(self, sentence: str) -> list[tuple[str, str]]:
         """Split sentence by multiple parts, non-word, digits and non-digits
         Output: list of tuple (part:str, type:str)
@@ -97,6 +104,7 @@ class SentencePreTokenizer:
             "digits_zh_with_unit",
             "non_word",
         ]
+        sentence = self.mask_ws_between_atoz(sentence)
         for match in PT_DIGITS_UNITS_AND_NON_WORDS.finditer(sentence):
             for name in group_names:
                 if match.group(name):
@@ -341,11 +349,15 @@ class SentenceFullTokenizer:
     def remove_whitespaces(self, tokens: list[str]):
         return [token for token in tokens if token.strip()]
 
+    def replace_mask_to_ws(self, tokens: list[str]):
+        return [token.replace(CH_MASK, " ") for token in tokens]
+
     def clean_tokens(self, tokens: list[str]):
         if self.drop_non_word:
             tokens = self.remove_non_words(tokens)
         if self.drop_whitespace:
             tokens = self.remove_whitespaces(tokens)
+        tokens = self.replace_mask_to_ws(tokens)
         return tokens
 
     def tokenize(self, sentence: str) -> list[str]:
