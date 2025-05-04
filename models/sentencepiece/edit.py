@@ -7,14 +7,15 @@ from typing import Union
 
 from models.sentencepiece.proto import SentencePieceModelProtor
 
+RE_DIGITS_PURE = r"^\d+$"
+RE_DIGITS_CJK = r"^\d+[^\da-z]+$"
+CH_MASK = r"▂"
+
+PT_DIGIT_PURE = re.compile(RE_DIGITS_PURE)
+PT_DIGIT_CJK = re.compile(RE_DIGITS_CJK)
+
 
 class SentencePieceModelVocabEditor:
-    RE_DIGITS_PURE = r"^\d+$"
-    RE_DIGITS_CJK = r"^\d+[^\da-z]+$"
-
-    PT_DIGIT_PURE = re.compile(RE_DIGITS_PURE)
-    PT_DIGIT_CJK = re.compile(RE_DIGITS_CJK)
-
     def __init__(self, model_path: Union[str, Path], verbose: bool = False):
         self.model_path = model_path
         self.protor = SentencePieceModelProtor(model_path)
@@ -26,15 +27,25 @@ class SentencePieceModelVocabEditor:
     def save_model(self):
         self.protor.save_model(model=self.model)
 
-    def remove_digits(self) -> spm_pb2.ModelProto:
-        logger.note("> Remove digit tokens from vocab:", verbose=self.verbose)
+    def should_keep_concated_piece(self, piece) -> bool:
+        piece_str = piece.piece
+        if piece_str.startswith(CH_MASK) or piece_str.endswith(CH_MASK):
+            return False
+        if piece_str.startswith("-") or piece_str.endswith("-"):
+            return False
+        return True
+
+    def remove_bad_pieces(self) -> spm_pb2.ModelProto:
+        logger.note("> Remove bad pieces:", verbose=self.verbose)
         old_vocab_size = len(self.model.pieces)
-        new_pieces = [
-            piece
-            for piece in self.model.pieces
-            if not self.PT_DIGIT_PURE.match(piece.piece)
-            and not self.PT_DIGIT_CJK.match(piece.piece)
-        ]
+        new_pieces = []
+        for piece in self.model.pieces:
+            if (
+                not PT_DIGIT_PURE.match(piece.piece)
+                and not PT_DIGIT_CJK.match(piece.piece)
+                and self.should_keep_concated_piece(piece)
+            ):
+                new_pieces.append(piece)
         self.model.ClearField("pieces")
         self.model.pieces.extend(new_pieces)
         new_vocab_size = len(self.model.pieces)
@@ -46,7 +57,7 @@ class SentencePieceModelVocabEditor:
 
     def edit(self):
         self.load_model()
-        self.remove_digits()
+        self.remove_bad_pieces()
         self.save_model()
 
 
@@ -54,7 +65,7 @@ if __name__ == "__main__":
     model_path = Path(__file__).parents[2] / "sp_100m_100k_no.model"
     editor = SentencePieceModelVocabEditor(model_path, verbose=True)
     editor.load_model()
-    editor.remove_digits()
+    editor.remove_bad_pieces()
     editor.save_model()
 
     # python -m models.sentencepiece.edit
