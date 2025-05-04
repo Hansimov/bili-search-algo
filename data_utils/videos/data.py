@@ -132,8 +132,8 @@ class SentencesDataloader:
             subbar_indent = 2
         else:
             subbar_indent = 0
-        batch_bar_head_str = " " * subbar_indent + "* Batch:"
-        sample_bar_head_str = " " * subbar_indent + "* Sample:"
+        batch_bar_head_str = " " * subbar_indent + "* Batch "
+        sample_bar_head_str = " " * subbar_indent + "* Sample"
         self.batch_bar = TCLogbar(head=logstr.note(batch_bar_head_str))
         self.sample_bar = TCLogbar(head=logstr.note(sample_bar_head_str))
         if self.show_epoch_bar:
@@ -149,6 +149,7 @@ class SentencesDataloader:
     def init_doc_converter(self):
         if self.task_type in ["fasttext", "freq"]:
             converter_params = {
+                "is_mask_atoz_ws": False,
                 "is_replace_non_word": True,
                 "is_replace_digits": False,
                 "is_simplify_chinese": False,
@@ -156,6 +157,7 @@ class SentencesDataloader:
             }
         elif self.task_type == "sentencepiece":
             converter_params = {
+                "is_mask_atoz_ws": True,
                 "is_replace_non_word": True,
                 "is_replace_digits": True,
                 "is_simplify_chinese": False,

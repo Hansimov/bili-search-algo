@@ -25,12 +25,14 @@ CH_AB = r"0-9a-zA-Zα-ωΑ-Ω"
 CH_DASH = r"\-\_\."
 CH_LB = r"\(\[\{"
 CH_RB = r"\)\]\}"
+CH_MASK = r"▂"
 
 RE_SPACE_IN_CJK = rf"(?<=[{CH_CJK}])\s+(?=[{CH_CJK}])"
 RE_NOT_DIGIT_DOT = r"\.(?!\d)"
 # RE_NON_WORD = rf"[^{CH_CJK}{CH_AB}]+"
-RE_NON_WORD = rf"[^{CH_CJK}〇{CH_AB}\-\.%‰]+|{RE_NOT_DIGIT_DOT}"
+RE_NON_WORD = rf"[^{CH_CJK}〇{CH_AB}\-\.%‰{CH_MASK}]+|{RE_NOT_DIGIT_DOT}"
 RE_WHITESPACES = r"\s{2,}"
+RE_ATOZ_WS = r"(?<=[a-zA-Z])\s+(?=[a-zA-Z0-9])"
 
 CH_DIGIT_PREFIX = r"第前这那每"
 CH_UNIT_NUM = r"毫厘分个十百千万兆亿"
@@ -51,6 +53,7 @@ PT_SPACE_IN_CJK = re.compile(RE_SPACE_IN_CJK)
 PT_NON_WORD = re.compile(RE_NON_WORD)
 PT_WHITESPACES = re.compile(RE_WHITESPACES)
 PT_DIGITS_ALL = re.compile(RE_DIGITS_ALL)
+PT_ATOZ_WS = re.compile(RE_ATOZ_WS)
 
 
 class DocSentenceConverter:
@@ -58,6 +61,7 @@ class DocSentenceConverter:
         self,
         collect_name: Literal["videos_texts", "users", "pages"] = "videos_texts",
         fields: Union[str, list[str]] = None,
+        is_mask_atoz_ws: bool = False,
         is_replace_non_word: bool = False,
         is_replace_digits: bool = False,
         is_simplify_chinese: bool = False,
@@ -68,6 +72,7 @@ class DocSentenceConverter:
             self.fields = fields
         else:
             self.fields = None
+        self.is_mask_atoz_ws = is_mask_atoz_ws
         self.is_replace_non_word = is_replace_non_word
         self.is_replace_digits = is_replace_digits
         self.is_simplify_chinese = is_simplify_chinese
@@ -106,6 +111,9 @@ class DocSentenceConverter:
     def remove_whitespaces_among_cjk(self, sentence: str) -> str:
         return PT_SPACE_IN_CJK.sub("", sentence)
 
+    def mask_whitespaces_between_atoz(self, sentence: str) -> str:
+        return PT_ATOZ_WS.sub(CH_MASK, sentence)
+
     def replace_non_word_with_whitespaces(self, sentence: str) -> str:
         return PT_NON_WORD.sub(" ", sentence)
 
@@ -136,6 +144,8 @@ class DocSentenceConverter:
     def convert_sentence(self, sentence: str) -> str:
         sentence = sentence.lower()
         # sentence = self.remove_whitespaces_among_cjk(sentence)
+        if self.is_mask_atoz_ws:
+            sentence = self.mask_whitespaces_between_atoz(sentence)
         if self.is_replace_non_word:
             sentence = self.replace_non_word_with_whitespaces(sentence)
         if self.is_replace_digits:
@@ -169,7 +179,9 @@ if __name__ == "__main__":
     import timeit
 
     args = ArgParser().parse_args()
-    converter = DocSentenceConverter(is_simplify_chinese=True, is_replace_non_word=True)
+    converter = DocSentenceConverter(
+        is_mask_atoz_ws=True, is_simplify_chinese=True, is_replace_non_word=True
+    )
 
     if args.test:
         logger.note("> Testing ...")
@@ -192,4 +204,4 @@ if __name__ == "__main__":
             sum_time += res
         logger.success(f"{sum_time/epochs:.6f}")
 
-    # python -m data_utils.videos.convert
+    # python -m data_utils.videos.convert -t
