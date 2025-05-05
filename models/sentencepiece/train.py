@@ -19,8 +19,8 @@ from models.hanlp.tokenize import HanlpTokenizer
 
 
 def calc_vocab_size_by_samples_count(count: int):
-    """500m ~ 1000k -> 1m ~ 2k"""
-    return int(count * 2000 // 1000000)
+    """500m samples ~ 1250k vocabs, then 1m samples ~ 2.5k vocabs"""
+    return int(count * 2500 // 1000000)
 
 
 class SentencePieceModelTrainer:
@@ -42,7 +42,7 @@ class SentencePieceModelTrainer:
         split_by_number: bool = False,
         shrinking_factor: float = 0.9,
         treat_whitespace_as_suffix: bool = False,
-        user_defined_symbols="▁",
+        user_defined_symbols="▁",  # would use ▂ as whitespace between a-z chars
         vocab_size: int = 32000,
         overwrite: bool = True,
         force_delete: bool = False,
@@ -186,6 +186,8 @@ if __name__ == "__main__":
             "max_batch": args.max_batch,
             "batch_size": args.batch_size,
             "estimate_count": args.estimate_count,
+            "iter_val": "sentence",
+            "task_type": "sentencepiece",
             "max_sentence_length": 2000,
         }
         data_loader = SentencesDataloader(
@@ -233,21 +235,12 @@ if __name__ == "__main__":
 
     # python -m models.sentencepiece.train -m sp_480m_400k_0.9995_0.9 -t
 
-    # python -m models.sentencepiece.train -m sp_users_1kw_10k -cn users -mb 1000 -vs 10000 -cc 1.0 -e
-    # python -m models.sentencepiece.train -m sp_wiki_1w_400k -db zhwiki -cn pages -bs 1000 -ec -mb 10 -vs 10000 -e
-    # python -m models.sentencepiece.train -m sp_wiki_all_400k_0.9995 -db zhwiki -cn pages -bs 1000 -vs 400000 -cc 0.9995 -e
-    # python -m models.sentencepiece.train -m sp_wiki_all_400k_0.9999 -t
+    # Train on zh-wiki corpus
+    # python -m models.sentencepiece.train -m sp_wiki_8m_400k -db zhwiki -cn pages -bs 1000 -vs 400000 -cc 0.9995 -e
 
-    # By region groups
-    # python -m models.sentencepiece.train -m sp_507m_douga_anime -fg douga_anime -av -e
-    # python -m models.sentencepiece.train -m sp_507m_music_dance -fg music_dance -av -e
-    # python -m models.sentencepiece.train -m sp_507m_mobile_game -fg mobile_game -av -e
-    # python -m models.sentencepiece.train -m sp_507m_other_game -fg other_game -av -e
-    # python -m models.sentencepiece.train -m sp_507m_tech_sports -fg tech_sports -av -e
-    # python -m models.sentencepiece.train -m sp_507m_daily_life -fg daily_life -av -e
-    # python -m models.sentencepiece.train -m sp_507m_other_life -fg other_life -av -e
-    # python -m models.sentencepiece.train -m sp_507m_cine_movie -fg cine_movie -av -e
-    # python -m models.sentencepiece.train -m sp_507m_fashion_ent -fg fashion_ent -av -e
-    # python -m models.sentencepiece.train -m sp_507m_know_info -fg know_info -av -e
+    # Train by region groups
+    # (See: `models.sentencepiece.train` with `train.sh` in `README.md`)
 
+    # Test
     # python -m models.sentencepiece.train -m sp_merged -t
+    # python -m models.sentencepiece.train -m sp_wiki_8m_400k -t

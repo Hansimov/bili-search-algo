@@ -1,5 +1,6 @@
 #!/bin/bash
 
+prefix="sp_575m"
 regions1=("cine_movie" "daily_life" "douga_anime" "fashion_ent" "know_info")
 regions2=("mobile_game" "music_dance" "other_game" "other_life" "tech_sports")
 
@@ -16,7 +17,7 @@ else
 fi
 
 for region in "${regions[@]}"; do
-    cmd="python -m models.sentencepiece.train -m \"sp_518m_${region}\" -fg \"${region}\" -av -e"
+    cmd="python -m models.sentencepiece.train -m \"${prefix}_${region}\" -fg \"${region}\" -av -e"
     echo "$cmd"
     eval "$cmd"
 done
