@@ -29,8 +29,7 @@ RE_START_WITH_YU = rf"^与"
 RE_START_WITH_JI = rf"^及"
 RE_START_WITH_BING = rf"^并"
 
-REGION_SINGLES = ["游", "影", "学"]
-REGION_SINGLE_SCORE = -8.0
+SPECIAL_CHAR_SCORES = {"游": -8.0, "影": -8.0, "学": -8.0, "▂": 0}
 
 
 class SentencePieceModelMerger:
@@ -98,10 +97,15 @@ class SentencePieceModelMerger:
         logger.warn(f"  - duplicated vocab count: {duplicated_count_str}")
         logger.success(f"  + merged vocab size: {merged_vocab_size_str}")
 
-        # smooth score for region singles
-        for region_single in REGION_SINGLES:
-            if region_single in merged_pieces:
-                merged_pieces[region_single].score = REGION_SINGLE_SCORE
+        # smooth score for special chars
+        for key, score in SPECIAL_CHAR_SCORES.items():
+            if key in merged_pieces:
+                merged_pieces[key].score = score
+            else:
+                piece = spm_pb2.ModelProto.SentencePiece()
+                piece.piece = key
+                piece.score = score
+                merged_pieces[key] = piece
 
         # sort pieces by score in desc order
         logger.note("> Sort merged pieces by score ...", verbose=self.verbose)
@@ -164,7 +168,7 @@ if __name__ == "__main__":
     #     "sp_wiki_all_400k_0.9995",
     #     "sp_480m_400k_0.9995_0.9.model",
     # ]
-    input_model_prefixes = ["sp_wiki_all_400k_0.9995"]
+    input_model_prefixes = ["sp_wiki_8m_400k"]
     input_model_prefixes.extend(
         [f"{args.input_prefix}{suffix}" for suffix in REGION_MONGO_FILTERS.keys()]
     )
@@ -183,8 +187,14 @@ if __name__ == "__main__":
     )
     merger.merge()
 
-    # python -m models.sentencepiece.merge
-    # python -m models.sentencepiece.merge -vs 1000000
+    # Backup old model
+    # cd ~/repos/bili-search-algo/models/sentencepiece/checkpoints
+    # cp sp_merged.model sp_merged_518m.model && cp sp_merged.vocab sp_merged_518m.vocab
+
+    # Merge with prefix
     # python -m models.sentencepiece.merge -vs 1000000 -i sp_518m_ -o sp_merged
-    # python -m models.sentencepiece.train -m sp_400k_merged_old -t
+    # python -m models.sentencepiece.merge -vs 1000000 -i sp_575m_ -o sp_merged
+
+    # Test
+    # python -m models.sentencepiece.train -m sp_merged_518m -t
     # python -m models.sentencepiece.train -m sp_merged -t
