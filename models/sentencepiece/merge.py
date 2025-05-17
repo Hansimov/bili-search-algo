@@ -2,16 +2,16 @@ import argparse
 import re
 import sys
 
+import models.sentencepiece.sentencepiece_model_pb2 as spm_pb2
+
 from pathlib import Path
 from tclogger import logger, logstr, brk, chars_len
 from typing import Union
 
-
-import models.sentencepiece.sentencepiece_model_pb2 as spm_pb2
+from data_utils.videos.convert import CH_CJK
 from models.sentencepiece.proto import SentencePieceModelProtor
 from configs.envs import SENTENCEPIECE_CKPT_ROOT
 from models.sentencepiece.filter import REGION_MONGO_FILTERS
-
 
 RE_START_WITH_DE = rf"^的"
 CH_VALID_DE = r"确士卢"
@@ -31,6 +31,13 @@ RE_START_WITH_BING = rf"^并"
 
 SPECIAL_CHAR_SCORES = {"游": -8.0, "影": -8.0, "学": -8.0, "▂": 0}
 
+RE_CH_CJK = rf"[{CH_CJK}]"
+PT_CH_CJK = re.compile(RE_CH_CJK)
+
+
+def calc_cjk_char_len(token: str) -> int:
+    return sum(1 for char in token if PT_CH_CJK.match(char))
+
 
 class SentencePieceModelMerger:
     def __init__(
@@ -38,11 +45,13 @@ class SentencePieceModelMerger:
         model_paths: list[Union[str, Path]],
         output_path: Union[str, Path],
         max_vocab_size: int = None,
+        max_cjk_char_len: int = 8,
         verbose: bool = False,
     ):
         self.model_paths = model_paths
         self.output_path = output_path
         self.max_vocab_size = max_vocab_size
+        self.max_cjk_char_len = max_cjk_char_len
         self.protors: list[SentencePieceModelProtor] = []
         self.verbose = verbose
 
@@ -60,6 +69,8 @@ class SentencePieceModelMerger:
             return not re.fullmatch(RE_VALID_DE, token)
         if re.match(RE_START_WITH_LE, token):
             return not re.fullmatch(RE_VALID_LE, token)
+        if calc_cjk_char_len(token) > self.max_cjk_char_len:
+            return True
 
     def merge_vocabs(self):
         logger.note("> Merge sentencepiece models:", verbose=self.verbose)
@@ -194,6 +205,7 @@ if __name__ == "__main__":
     # Merge with prefix
     # python -m models.sentencepiece.merge -vs 1000000 -i sp_518m_ -o sp_merged
     # python -m models.sentencepiece.merge -vs 1000000 -i sp_575m_ -o sp_merged
+    # cp ~/repos/bili-search-algo/models/sentencepiece/checkpoints/sp_merged.model ~/repos/btok/src/btok/sp.model
 
     # Test
     # python -m models.sentencepiece.train -m sp_merged_518m -t

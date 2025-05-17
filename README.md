@@ -22,6 +22,8 @@ Test:
 python -m models.sentencepiece.train -m sp_507m_400k_0.9995_0.9 -t
 ```
 
+See more example usages in comments of [train.py](models/sentencepiece/train.py).
+
 ## models.sentencepiece.merge
 
 Merge sentencepiece models which are trained on different data_utils.
@@ -35,6 +37,8 @@ or with more params:
 ```bash
 python -m models.sentencepiece.merge -vs 1000000 -i sp_518m_ -o sp_merged
 ```
+
+See detailed usage in [merge.py](models/sentencepiece/merge.py).
 
 ## data_utils.videos.cache
 
