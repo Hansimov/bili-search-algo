@@ -18,6 +18,7 @@ ELASTIC_ENVS = SECRETS["elastic"]
 MILVUS_ENVS = SECRETS["milvus"]
 QDRANT_ENVS = SECRETS["qdrant"]
 PYRO_ENVS = SECRETS["pyro"]
+LLM_ENVS = SECRETS["llm"]
 
 SENTENCEPIECE_CKPT_ROOT = REPO_ROOT / "models" / "sentencepiece" / "checkpoints"
 SP_MERGED_MODEL_PREFIX = "sp_merged"
