@@ -268,7 +268,11 @@ class SentencesDataloader:
             for doc in batch:
                 self.sample_bar.update(increment=1)
                 if self.iter_val == "sentence" or self.iter_val == "tokens":
-                    sentence = self.doc_converter.convert(doc)
+                    try:
+                        sentence = self.doc_converter.convert(doc)
+                    except:
+                        logger.warn(f"× Cannot convert doc: {doc}")
+                        continue
                     if (
                         self.max_sentence_length
                         and len(sentence) > self.max_sentence_length
