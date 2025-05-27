@@ -1,27 +1,40 @@
 #!/bin/bash
 
-prefix="sp_575m"
-regions1=("cine_movie" "daily_life" "douga_anime" "fashion_ent" "know_info")
-regions2=("mobile_game" "music_dance" "other_game" "other_life" "tech_sports")
+prefix="sp_646m"
 
-if [ "$1" = "1" ]; then
-    regions=("${regions1[@]}")
-    echo "Regions: ${regions[@]}"
-elif [ "$1" = "2" ]; then
-    regions=("${regions2[@]}")
-    echo "Regions: ${regions[@]}"
-else
-    echo "× Invalid arg : $1"
-    echo "  * valid args: 1 | 2"
-    exit 1
+declare -A groups=(
+[1]="cine_movie douga_anime fashion_ent know_info"
+[2]="music_dance other_game other_life tech_sports"
+[3]="daily_life"
+[4]="mobile_game"
+)
+
+if [[ -z "$1" ]]; then
+echo "> Usage: $0 "
+echo "* Valid groups: ${!groups[@]}"
+exit 1
 fi
 
+group="$1"
+regions_str="${groups[$group]}"
+
+if [[ -z "$regions_str" ]]; then
+echo "× Unknown group: $group"
+echo "* Valid groups: ${!groups[@]}"
+exit 1
+fi
+
+echo "Training regions for group [$group]: $regions_str"
+
+read -r -a regions <<< "$regions_str"
 for region in "${regions[@]}"; do
-    cmd="python -m models.sentencepiece.train -m \"${prefix}_${region}\" -fg \"${region}\" -av -e"
-    echo "$cmd"
-    eval "$cmd"
+cmd=(python -m models.sentencepiece.train -m "${prefix}_${region}" -fg "$region" -av -e)
+echo "${cmd[@]}"
+"${cmd[@]}"
 done
 
 # chmod +x models/sentencepiece/train.sh
 # ./models/sentencepiece/train.sh 1
 # ./models/sentencepiece/train.sh 2
+# ./models/sentencepiece/train.sh 3
+# ./models/sentencepiece/train.sh 4
