@@ -70,9 +70,7 @@ class SentencesDataloader:
     def __init__(
         self,
         dbname: str = None,
-        collect_name: Literal[
-            "videos", "videos_tags", "videos_texts", "users", "pages"
-        ] = "videos_texts",
+        collect_name: Literal["videos", "videos_tags", "users", "pages"] = "videos",
         data_fields: list[str] = None,
         mongo_filter: dict = {},
         batch_size: int = 10000,
@@ -152,7 +150,7 @@ class SentencesDataloader:
                 "is_mask_atoz_ws": False,
                 "is_replace_non_word": True,
                 "is_replace_digits": False,
-                "is_simplify_chinese": False,
+                "is_simplify_chinese": True,
                 "is_multiply_sentence": False,
             }
         elif self.task_type == "sentencepiece":
@@ -160,7 +158,7 @@ class SentencesDataloader:
                 "is_mask_atoz_ws": True,
                 "is_replace_non_word": True,
                 "is_replace_digits": True,
-                "is_simplify_chinese": False,
+                "is_simplify_chinese": True,
                 "is_multiply_sentence": True,
             }
         else:
@@ -397,8 +395,8 @@ class SentencesDataLoaderArgParser(argparse.ArgumentParser):
             "-cn",
             "--collect-name",
             type=str,
-            choices=["videos_texts", "users", "pages"],
-            default="videos_texts",
+            choices=["videos", "users", "pages"],
+            default="videos",
         )
         self.add_argument("-td", "--tid", type=self.to_int, default=None)
         self.add_argument("-pd", "--ptid", type=self.to_int, default=None)
@@ -450,4 +448,4 @@ if __name__ == "__main__":
         continue
 
     # python -m data_utils.videos.data -db zhwiki -cn pages -bs 1000
-    # python -m data_utils.videos.data -cn videos_texts -bs 10000 -mb 200 -ec
+    # python -m data_utils.videos.data -cn videos -bs 10000 -mb 200 -ec

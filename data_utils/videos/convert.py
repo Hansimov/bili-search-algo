@@ -7,6 +7,7 @@ import zhconv
 from functools import partial
 from tclogger import dict_get
 from typing import Literal, Union
+from btok import ChineseSimplifier
 
 """
 GB2312 编码表:
@@ -59,7 +60,7 @@ PT_ATOZ_WS = re.compile(RE_ATOZ_WS)
 class DocSentenceConverter:
     def __init__(
         self,
-        collect_name: Literal["videos_texts", "users", "pages"] = "videos_texts",
+        collect_name: Literal["videos", "users", "pages"] = "videos",
         fields: Union[str, list[str]] = None,
         is_mask_atoz_ws: bool = False,
         is_replace_non_word: bool = False,
@@ -77,13 +78,14 @@ class DocSentenceConverter:
         self.is_replace_digits = is_replace_digits
         self.is_simplify_chinese = is_simplify_chinese
         self.is_multiply_sentence = is_multiply_sentence
+        self.simplifier = ChineseSimplifier()
         self.init_doc_to_sentence()
 
     def init_doc_to_sentence(self):
         if self.collect_name == "users":
             self.doc_to_sentence = partial(self.get_doc_field, field="name")
             self.multiply_sentence = self.multiply_sentence_by_videos_count
-        elif self.collect_name == "videos_texts":
+        elif self.collect_name == "videos":
             if self.fields:
                 self.doc_to_sentence = partial(self.get_doc_fields, fields=self.fields)
             else:
@@ -151,7 +153,7 @@ class DocSentenceConverter:
         if self.is_replace_digits:
             sentence = self.replace_digits(sentence)
         if self.is_simplify_chinese:
-            sentence = zhconv.convert(sentence, "zh-cn")
+            sentence = self.simplifier.simplify(sentence)
         # sentence = self.merge_whitespaces(sentence)
         return sentence
 
