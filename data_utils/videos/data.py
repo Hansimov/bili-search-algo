@@ -126,23 +126,24 @@ class SentencesDataloader:
         self.cursor = self.samples_collect.find(self.mongo_filter)
 
     def init_progress_bars(self):
+        if self.iter_epochs is None or self.iter_epochs <= 1:
+            self.show_epoch_bar = False
         if self.show_epoch_bar:
             subbar_indent = 2
         else:
             subbar_indent = 0
-        batch_bar_head_str = " " * subbar_indent + "* Batch "
         sample_bar_head_str = " " * subbar_indent + "* Sample"
-        self.batch_bar = TCLogbar(head=logstr.note(batch_bar_head_str))
         self.sample_bar = TCLogbar(head=logstr.note(sample_bar_head_str))
         if self.show_epoch_bar:
-            self.epoch_bar = TCLogbar(head=logstr.note("> Epoch:"))
-            self.logbars = [self.epoch_bar, self.batch_bar, self.sample_bar]
+            self.epoch_bar = TCLogbar(head=logstr.note("> Epoch"))
+            self.logbars = [self.epoch_bar, self.sample_bar]
         else:
             self.epoch_bar = None
-            self.logbars = [self.batch_bar, self.sample_bar]
-        TCLogbarGroup(
-            self.logbars, show_at_init=self.show_at_init, verbose=self.verbose
-        )
+            self.logbars = [self.sample_bar]
+        if len(self.logbars) > 1:
+            TCLogbarGroup(
+                self.logbars, show_at_init=self.show_at_init, verbose=self.verbose
+            )
 
     def init_doc_converter(self):
         if self.task_type in ["fasttext", "freq"]:
@@ -182,10 +183,7 @@ class SentencesDataloader:
                 logger.file(dict_to_str(self.mongo_filter), indent=2)
         if self.epoch_bar:
             self.epoch_bar.total = self.iter_epochs or 1
-        if self.max_batch:
-            self.batch_bar.total = self.max_batch
-        else:
-            self.batch_bar.total = self.samples_count // self.batch_size + 1
+        self.sample_bar.total = self.samples_count
 
     def __epoch_start__(self):
         # self.init_total()
@@ -201,7 +199,6 @@ class SentencesDataloader:
             and self.epoch_bar
             and self.epoch_bar.count < self.iter_epochs
         ):
-            self.batch_bar.reset()
             self.sample_bar.reset()
             self.init_cursor()
         else:
@@ -249,11 +246,9 @@ class SentencesDataloader:
         for idx, doc in enumerate(self.cursor):
             batch.append(doc)
             if (idx + 1) % self.batch_size == 0:
-                self.batch_bar.update(increment=1)
                 yield self.format_docs(batch, doc_type=doc_type)
                 batch = []
         if batch:
-            self.batch_bar.update(increment=1)
             yield self.format_docs(batch, doc_type=doc_type)
             batch = []
 
@@ -262,7 +257,6 @@ class SentencesDataloader:
         for batch_idx, batch in enumerate(self.doc_batch_generator()):
             if self.max_batch is not None and batch_idx >= self.max_batch:
                 break
-            self.sample_bar.total = len(batch)
             for doc in batch:
                 self.sample_bar.update(increment=1)
                 if self.iter_val == "sentence" or self.iter_val == "tokens":
@@ -289,7 +283,6 @@ class SentencesDataloader:
                         )
                 else:
                     yield doc
-            self.sample_bar.reset()
         self.__epoch_end__()
 
 
