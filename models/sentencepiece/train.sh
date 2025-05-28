@@ -2,11 +2,12 @@
 
 prefix="sp_646m"
 
+# LINK: models/sentencepiece/filter.py
 declare -A groups=(
-[1]="cine_movie douga_anime fashion_ent know_info"
-[2]="music_dance other_game other_life tech_sports"
-[3]="daily_life"
-[4]="mobile_game"
+[1]="cine_movie douga_anime tech_sports"
+[2]="music_dance fashion_ent know_info"
+[3]="daily_life other_life"
+[4]="mobile_game other_game"
 )
 
 if [[ -z "$1" ]]; then

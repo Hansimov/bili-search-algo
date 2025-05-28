@@ -244,3 +244,6 @@ if __name__ == "__main__":
     # Test
     # python -m models.sentencepiece.train -m sp_merged -t
     # python -m models.sentencepiece.train -m sp_wiki_8m_400k -t
+    # NOTE: DEPRECATED, use `btok` test instead
+    # cd ~/repos/btok
+    # python tests.py

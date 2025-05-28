@@ -2,14 +2,22 @@ import argparse
 
 from typing import Literal, Union
 
+# LINK: /home/asimov/repos/bili-search/converters/field/region_infos.py
 REGION_MONGO_FILTERS = {
     "douga_anime": {"ptid": {"$in": [1, 13, 167]}},
     "music_dance": {"ptid": {"$in": [3, 129]}},
     "mobile_game": {"tid": 172},
-    "other_game": {"ptid": 4, "tid": {"$ne": 172}},
+    # "other_game": {"ptid": 4, "tid": {"$ne": 172}},
+    "other_game": {"tid": {"$in": [17, 171, 65, 173, 121, 136, 19]}},
     "tech_sports": {"ptid": {"$in": [188, 234, 223]}},
     "daily_life": {"tid": 21},
-    "other_life": {"ptid": {"$in": [160, 211, 217]}, "tid": {"$ne": 21}},
+    # "other_life": {"ptid": {"$in": [160, 211, 217]}, "tid": {"$ne": 21}},
+    "other_life": {
+        "$or": [
+            {"ptid": {"$in": [211, 217]}},
+            {"tid": {"$in": [138, 250, 251, 239, 161, 162, 254]}},
+        ]
+    },
     "cine_movie": {"ptid": {"$in": [181, 177, 23, 11, 165]}},
     "fashion_ent": {"ptid": {"$in": [155, 5]}},
     "know_info": {"ptid": {"$in": [36, 202]}},
