@@ -35,6 +35,7 @@ class SentencePieceModelTrainer:
         add_dummy_prefix: bool = False,
         character_coverage: float = 0.999,
         input_sentence_size: int = 500000,
+        max_sentencepiece_length: int = 16,
         minloglevel: int = 2,
         model_type: Literal["unigram", "bpe", "char", "word"] = "unigram",
         num_threads: int = 16,
@@ -42,7 +43,7 @@ class SentencePieceModelTrainer:
         split_by_number: bool = False,
         shrinking_factor: float = 0.9,
         treat_whitespace_as_suffix: bool = False,
-        user_defined_symbols="▁",  # would use ▂ as whitespace between a-z chars
+        user_defined_symbols="▁",  # disable default mask ws to ▁, but mask ws between a-z word to ▂ instead
         vocab_size: int = 32000,
         overwrite: bool = True,
         force_delete: bool = False,
@@ -52,6 +53,7 @@ class SentencePieceModelTrainer:
             "add_dummy_prefix": add_dummy_prefix,
             "character_coverage": character_coverage,
             "input_sentence_size": input_sentence_size,
+            "max_sentencepiece_length": max_sentencepiece_length,
             "minloglevel": minloglevel,
             "model_type": model_type,
             "num_threads": num_threads,
@@ -155,6 +157,7 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-m", "--model-prefix", type=str, default="sentencepiece")
         self.add_argument("-cc", "--character-coverage", type=float, default=0.9995)
         self.add_argument("-is", "--input-sentence-size", type=int, default=500000)
+        self.add_argument("-ml", "--max-sentencepiece-length", type=int, default=16)
         self.add_argument("-mt", "--model-type", type=str, default="unigram")
         self.add_argument("-sf", "--shrinking-factor", type=float, default=0.75)
         self.add_argument("-vs", "--vocab-size", type=int, default=32000)
@@ -207,6 +210,7 @@ if __name__ == "__main__":
         "model_prefix": args.model_prefix,
         "character_coverage": args.character_coverage,
         "input_sentence_size": args.input_sentence_size,
+        "max_sentencepiece_length": args.max_sentencepiece_length,
         "model_type": args.model_type,
         "shrinking_factor": args.shrinking_factor,
         "vocab_size": vocab_size,
