@@ -178,22 +178,19 @@ class MergerArgParser(argparse.ArgumentParser):
         return self.args
 
 
-if __name__ == "__main__":
-    arg_parser = MergerArgParser()
-    args = arg_parser.parse_args()
-    # input_model_prefixes = [
-    #     "sp_wiki_all_400k_0.9995",
-    #     "sp_480m_400k_0.9995_0.9.model",
-    # ]
+def main(args: argparse.Namespace):
     input_model_prefixes = ["sp_wiki_8m_400k"]
     input_model_prefixes.extend(
-        [f"{args.input_prefix}{suffix}" for suffix in REGION_MONGO_FILTERS.keys()]
+        [
+            f"{args.input_prefix}{suffix}"
+            for suffix in REGION_MONGO_FILTERS.keys()
+            if not suffix.endswith("_test")
+        ]
     )
     input_model_paths = [
         SENTENCEPIECE_CKPT_ROOT / f"{prefix}.model" for prefix in input_model_prefixes
     ]
     input_model_paths = [path for path in input_model_paths if path.exists()]
-
     output_model_path = SENTENCEPIECE_CKPT_ROOT / f"{args.output_prefix}.model"
 
     merger = SentencePieceModelMerger(
@@ -203,6 +200,12 @@ if __name__ == "__main__":
         verbose=True,
     )
     merger.merge()
+
+
+if __name__ == "__main__":
+    arg_parser = MergerArgParser()
+    args = arg_parser.parse_args()
+    main(args)
 
     # Backup old model
     # cd ~/repos/bili-search-algo/models/sentencepiece/checkpoints
