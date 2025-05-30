@@ -5,14 +5,18 @@ from pathlib import Path
 from tclogger import logger, logstr, brk
 from typing import Union
 
+from configs.envs import SENTENCEPIECE_CKPT_ROOT
 from models.sentencepiece.proto import SentencePieceModelProtor
 
 RE_DIGITS_PURE = r"^\d+$"
 RE_DIGITS_CJK = r"^\d+[^\da-z]+$"
+RE_EXCLUDE_STRS = r"%|[\.\-]{2,}"
 CH_MASK = r"▂"
+STRIPED_STRS = [".", CH_MASK, "-"]
 
 PT_DIGIT_PURE = re.compile(RE_DIGITS_PURE)
 PT_DIGIT_CJK = re.compile(RE_DIGITS_CJK)
+PT_EXCLUDE_STR = re.compile(RE_EXCLUDE_STRS)
 
 
 class SentencePieceModelVocabEditor:
@@ -26,12 +30,16 @@ class SentencePieceModelVocabEditor:
 
     def save_model(self):
         self.protor.save_model(model=self.model)
+        self.protor.save_vocab(
+            model=self.model, vocab_path=self.model_path.with_suffix(".vocabx")
+        )
 
     def should_keep_concated_piece(self, piece) -> bool:
         piece_str = piece.piece
-        if piece_str.startswith(CH_MASK) or piece_str.endswith(CH_MASK):
-            return False
-        if piece_str.startswith("-") or piece_str.endswith("-"):
+        for s in STRIPED_STRS:
+            if piece_str.startswith(s) or piece_str.endswith(s):
+                return False
+        if PT_EXCLUDE_STR.search(piece_str):
             return False
         return True
 
@@ -52,8 +60,8 @@ class SentencePieceModelVocabEditor:
         if self.verbose:
             removed_count = old_vocab_size - new_vocab_size
             logger.mesg(f"  * Old vocab size: {logstr.warn(brk(old_vocab_size))}")
-            logger.mesg(f"  * New vocab size: {logstr.success(brk(new_vocab_size))}")
             logger.mesg(f"  - Tokens removed: {logstr.file(brk(removed_count))}")
+            logger.mesg(f"  * New vocab size: {logstr.okay(brk(new_vocab_size))}")
 
     def edit(self):
         self.load_model()
@@ -62,10 +70,8 @@ class SentencePieceModelVocabEditor:
 
 
 if __name__ == "__main__":
-    model_path = Path(__file__).parents[2] / "sp_100m_100k_no.model"
+    model_path = SENTENCEPIECE_CKPT_ROOT / "sp_wiki_8m_400k.model"
     editor = SentencePieceModelVocabEditor(model_path, verbose=True)
-    editor.load_model()
-    editor.remove_bad_pieces()
-    editor.save_model()
+    editor.edit()
 
     # python -m models.sentencepiece.edit
