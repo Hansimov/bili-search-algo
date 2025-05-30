@@ -1,6 +1,7 @@
 import argparse
 
 from typing import Literal, Union
+from tclogger import get_now_ts
 
 # LINK: /home/asimov/repos/bili-search/converters/field/region_infos.py
 REGION_MONGO_FILTERS = {
@@ -21,6 +22,12 @@ REGION_MONGO_FILTERS = {
     "cine_movie": {"ptid": {"$in": [181, 177, 23, 11, 165]}},
     "fashion_ent": {"ptid": {"$in": [155, 5]}},
     "know_info": {"ptid": {"$in": [36, 202]}},
+    "latest": {
+        "pubdate": {"$gte": get_now_ts() - 90 * 86400},
+    },
+    "test": {
+        "pubdate": {"$gte": get_now_ts() - 10 * 86400},
+    },
 }
 
 

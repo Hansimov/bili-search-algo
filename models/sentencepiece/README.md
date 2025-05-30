@@ -89,3 +89,6 @@ cd ../python
 rm -rf build/ dist/
 python setup.py build && pip install -e .
 ```
+
+Dump to `rebuid.sh` for quick run.
+See: [sentencepiece/python/rebuild.sh](https://github.com/Hansimov/sentencepiece/blob/master/python/rebuild.sh)

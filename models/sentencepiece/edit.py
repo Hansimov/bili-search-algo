@@ -36,6 +36,8 @@ class SentencePieceModelVocabEditor:
 
     def should_keep_concated_piece(self, piece) -> bool:
         piece_str = piece.piece
+        if len(piece_str) < 2:
+            return True
         for s in STRIPED_STRS:
             if piece_str.startswith(s) or piece_str.endswith(s):
                 return False

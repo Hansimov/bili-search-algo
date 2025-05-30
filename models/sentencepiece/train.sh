@@ -1,6 +1,6 @@
 #!/bin/bash
 
-prefix="sp_646m"
+prefix="sp_667m"
 
 # LINK: models/sentencepiece/filter.py
 declare -A groups=(
@@ -8,6 +8,8 @@ declare -A groups=(
 [2]="music_dance fashion_ent know_info"
 [3]="daily_life other_life"
 [4]="mobile_game other_game"
+[5]="latest"
+[x]="test"
 )
 
 if [[ -z "$1" ]]; then
