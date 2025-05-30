@@ -4,6 +4,7 @@ import sys
 
 import models.sentencepiece.sentencepiece_model_pb2 as spm_pb2
 
+from collections import defaultdict
 from pathlib import Path
 from tclogger import logger, logstr, brk, chars_len
 from typing import Union
@@ -75,6 +76,7 @@ class SentencePieceModelMerger:
     def merge_vocabs(self):
         logger.note("> Merge sentencepiece models:", verbose=self.verbose)
         merged_pieces = {}
+        accum_counts = defaultdict(int)
         vocab_count_total = 0
         pruned_count = 0
         duplicated_count = 0
@@ -82,6 +84,7 @@ class SentencePieceModelMerger:
         # merge vocab pieces from all models
         for protor in self.protors:
             model = protor.model
+            vocab_size = len(model.pieces)
             vocab_size_str = logstr.mesg(brk(len(model.pieces)))
             vocab_count_total += len(model.pieces)
             logger.file(f"  * {protor.model_path}", verbose=self.verbose)
@@ -95,9 +98,12 @@ class SentencePieceModelMerger:
                     merged_pieces[piece_str] = piece
                 else:
                     duplicated_count += 1
-                    merged_pieces[piece_str].score = max(
-                        merged_pieces[piece_str].score, piece.score
-                    )
+                    # weighted average score for duplicated pieces
+                    merged_pieces[piece_str].score = (
+                        merged_pieces[piece_str].score * accum_counts[piece_str]
+                        + piece.score * vocab_size
+                    ) / (accum_counts[piece_str] + vocab_size)
+                accum_counts[piece_str] += vocab_size
 
         # log merged vocab size and duplicated vocab count
         self.merged_vocab_size = len(merged_pieces)
@@ -203,9 +209,14 @@ if __name__ == "__main__":
     # cp sp_merged.model sp_merged_518m.model && cp sp_merged.vocab sp_merged_518m.vocab
 
     # Merge with prefix
+    # cd ~/repos/bili-search-algo
     # python -m models.sentencepiece.merge -vs 1000000 -i sp_518m_ -o sp_merged
     # python -m models.sentencepiece.merge -vs 1000000 -i sp_575m_ -o sp_merged
+    # python -m models.sentencepiece.merge -vs 1000000 -i sp_646m_ -o sp_merged
+
+    # Copy to btok
     # cp ~/repos/bili-search-algo/models/sentencepiece/checkpoints/sp_merged.model ~/repos/btok/src/btok/sp.model
+    # cp ~/repos/bili-search-algo/models/sentencepiece/checkpoints/sp_merged.vocab ~/repos/btok/src/btok/sp.vocab
 
     # Test
     # python -m models.sentencepiece.train -m sp_merged_518m -t
