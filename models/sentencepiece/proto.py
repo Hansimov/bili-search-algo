@@ -28,3 +28,16 @@ class SentencePieceModelProtor:
         with open(model_path, "wb") as f:
             f.write(model.SerializeToString())
         logger.file(f"  * {model_path}", verbose=self.verbose)
+
+    def save_vocab(
+        self, model: spm_pb2.ModelProto = None, vocab_path: Union[str, Path] = None
+    ):
+        logger.note(f"> Save sentencepiece vocab to:", verbose=self.verbose)
+        model = model or self.model
+        vocab_path = vocab_path or Path(self.model_path).with_suffix(".vocab")
+        vocab_str = ""
+        for piece in model.pieces:
+            vocab_str += f"{piece.piece}\t{piece.score}\n"
+        with open(vocab_path, "w", encoding="utf-8") as wf:
+            wf.write(vocab_str)
+        logger.file(f"  * {vocab_path}", verbose=self.verbose)
