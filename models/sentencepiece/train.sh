@@ -1,6 +1,8 @@
 #!/bin/bash
 
-prefix="sp_667m"
+prefix="sp_670m"
+zhwiki_prefix="sp_wiki_8m_400k"
+zhwiki_vocab_size=400000
 
 # LINK: models/sentencepiece/filter.py
 declare -A groups=(
@@ -8,7 +10,8 @@ declare -A groups=(
 [2]="music_dance fashion_ent know_info"
 [3]="daily_life other_life"
 [4]="mobile_game other_game"
-[5]="latest"
+[l]="latest"
+[w]="zhwiki"
 [x]="test"
 )
 
@@ -28,6 +31,13 @@ exit 1
 fi
 
 echo "Training regions for group [$group]: $regions_str"
+
+if [[ "$group" == "w" ]]; then
+    cmd=(python -m models.sentencepiece.train -m "${zhwiki_prefix}" -db zhwiki -cn pages -bs 1000 -vs ${zhwiki_vocab_size} -e)
+    echo "${cmd[@]}"
+    "${cmd[@]}"
+    exit 0
+fi
 
 read -r -a regions <<< "$regions_str"
 for region in "${regions[@]}"; do
