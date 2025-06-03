@@ -11,7 +11,7 @@ from typing import Literal
 from configs.envs import REPO_ROOT, SENTENCEPIECE_CKPT_ROOT
 from data_utils.args import DATA_LOADER_ARG_PARSER
 from data_utils.videos.data import SentencesDataloader
-from models.sentencepiece.filter import construct_mongo_filter_from_args
+from data_utils.videos.filter import construct_mongo_filter_from_args
 from models.sentencepiece.edit import SentencePieceModelVocabEditor
 from models.sentencepiece.tokenizer import SentenceFullTokenizer
 from models.sentencepiece.test import TEST_SENTENCES

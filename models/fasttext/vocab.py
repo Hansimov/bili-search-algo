@@ -10,7 +10,7 @@ from tclogger import chars_slice, dict_to_str, brk
 from typing import Literal, Union
 
 from configs.envs import TOKEN_FREQS_ROOT
-from models.sentencepiece.filter import REGION_MONGO_FILTERS
+from data_utils.videos.filter import REGION_MONGO_FILTERS
 
 
 class FasttextVocabLoader:

@@ -12,7 +12,7 @@ from typing import Union
 from data_utils.videos.convert import CH_CJK
 from models.sentencepiece.proto import SentencePieceModelProtor
 from configs.envs import SENTENCEPIECE_CKPT_ROOT
-from models.sentencepiece.filter import REGION_MONGO_FILTERS
+from data_utils.videos.filter import REGION_MONGO_FILTERS
 
 RE_START_WITH_DE = rf"^的"
 CH_VALID_DE = r"确士卢"
@@ -213,9 +213,8 @@ if __name__ == "__main__":
 
     # Merge with prefix
     # cd ~/repos/bili-search-algo
-    # python -m models.sentencepiece.merge -vs 1000000 -i sp_518m_ -o sp_merged
     # python -m models.sentencepiece.merge -vs 1000000 -i sp_575m_ -o sp_merged
-    # python -m models.sentencepiece.merge -vs 1000000 -i sp_646m_ -o sp_merged
+    # python -m models.sentencepiece.merge -vs 1000000 -i sp_670m_ -o sp_merged
 
     # Copy to btok
     # cp ~/repos/bili-search-algo/models/sentencepiece/checkpoints/sp_merged.model ~/repos/btok/src/btok/sp.model

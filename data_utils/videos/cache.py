@@ -7,8 +7,8 @@ from configs.envs import SP_MERGED_MODEL_PATH
 from data_utils.args import DATA_LOADER_ARG_PARSER
 from data_utils.videos.data import SentencesDataloader
 from data_utils.videos.parquet import VideoTextsParquetWriter
-from models.sentencepiece.filter import REGION_MONGO_FILTERS
-from models.sentencepiece.filter import construct_mongo_filter_from_args
+from data_utils.videos.filter import REGION_MONGO_FILTERS
+from data_utils.videos.filter import construct_mongo_filter_from_args
 from models.sentencepiece.tokenizer_parallel import ParallelSentenceFullTokenizer
 
 
