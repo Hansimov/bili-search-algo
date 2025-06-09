@@ -217,8 +217,7 @@ if __name__ == "__main__":
     # python -m models.sentencepiece.merge -vs 1000000 -i sp_670m_ -o sp_merged
 
     # Copy to btok
-    # cp ~/repos/bili-search-algo/models/sentencepiece/checkpoints/sp_merged.model ~/repos/btok/src/btok/sp.model
-    # cp ~/repos/bili-search-algo/models/sentencepiece/checkpoints/sp_merged.vocab ~/repos/btok/src/btok/sp.vocab
+    # for f in ~/repos/bili-search-algo/models/sentencepiece/checkpoints/sp_merged.*; do cp "$f" ~/repos/btok/src/btok/sp.${f##*.}; done
 
     # Test
     # python -m models.sentencepiece.train -m sp_merged_518m -t
