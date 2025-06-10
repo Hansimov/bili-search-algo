@@ -1,6 +1,6 @@
 #!/bin/bash
 
-prefix="sp_670m"
+prefix="sp_703m"
 zhwiki_prefix="sp_wiki_8m_400k"
 zhwiki_vocab_size=400000
 
@@ -33,7 +33,7 @@ fi
 echo "Training regions for group [$group]: $regions_str"
 
 if [[ "$group" == "w" ]]; then
-    cmd=(python -m models.sentencepiece.train -m "${zhwiki_prefix}" -db zhwiki -cn pages -bs 1000 -vs ${zhwiki_vocab_size} -e)
+    cmd=(python -m models.sentencepiece.train -m "${zhwiki_prefix}" -db zhwiki -cn pages -bs 1000 -vs ${zhwiki_vocab_size} -fd -e)
     echo "${cmd[@]}"
     "${cmd[@]}"
     exit 0
@@ -51,3 +51,4 @@ done
 # ./models/sentencepiece/train.sh 2
 # ./models/sentencepiece/train.sh 3
 # ./models/sentencepiece/train.sh 4
+# ./models/sentencepiece/train.sh l
