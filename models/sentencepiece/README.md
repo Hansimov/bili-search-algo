@@ -14,6 +14,25 @@ Install dependencies:
 sudo apt-get install -y cmake build-essential pkg-config libgoogle-perftools-dev protobuf-compiler libprotobuf-dev
 ```
 
+(Optional) Update protobuf to 3.14.0 or later:
+
+```sh
+mkdir -p ~/repos/sentencepiece/bin
+cd ~/repos/sentencepiece/bin
+curl --proxy http://127.0.0.1:11111 -sLo protoc-3.14.0-linux-x86_64.zip https://github.com/protocolbuffers/protobuf/releases/download/v3.14.0/protoc-3.14.0-linux-x86_64.zip
+unzip -j protoc-3.14.0-linux-x86_64.zip 'bin/protoc'
+```
+
+Check `protoc` version:
+
+```sh
+cd ~/repos/sentencepiece
+./bin/protoc --version
+```
+
+* protobuf upgrade to 3.14.0 · Issue #595 · google/sentencepiece
+  * https://github.com/google/sentencepiece/issues/595
+
 ## Build Python bindings from C++ source
 
 * Build and install SentencePiece command line tools from C++ source
@@ -21,6 +40,13 @@ sudo apt-get install -y cmake build-essential pkg-config libgoogle-perftools-dev
 
 * SentencePiece Python Wrapper
   * https://github.com/google/sentencepiece/blob/master/python/README.md
+
+(Optional) Re-generate proto (`.pb.h`, `.pb.cc`) if `.proto` is modified
+
+```sh
+cd ~/repos/sentencepiece/src
+../bin/protoc --cpp_out=builtin_pb/ sentencepiece_model.proto
+```
 
 Cmake build and install:
 
