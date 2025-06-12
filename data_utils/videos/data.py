@@ -153,6 +153,7 @@ class SentencesDataloader:
                 "is_replace_digits": False,
                 "is_simplify_chinese": True,
                 "is_multiply_sentence": False,
+                "max_repeats": 4,
             }
         elif self.task_type == "sentencepiece":
             converter_params = {
@@ -161,6 +162,7 @@ class SentencesDataloader:
                 "is_replace_digits": True,
                 "is_simplify_chinese": True,
                 "is_multiply_sentence": True,
+                "max_repeats": 4,
             }
         else:
             converter_params = {}

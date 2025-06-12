@@ -32,7 +32,7 @@ CH_SP = r"・丨"
 RE_SPACE_IN_CJK = rf"(?<=[{CH_CJK}])\s+(?=[{CH_CJK}])"
 RE_NOT_DIGIT_DOT = r"\.+(?!\d)"
 # RE_NON_WORD = rf"[^{CH_CJK}{CH_AB}]+"
-RE_NON_WORD = rf"[^{CH_CJK}〇{CH_AB}\-\.{CH_MASK}]+|{RE_NOT_DIGIT_DOT}|[{CH_SP}]+"
+RE_NON_WORD = rf"[^{CH_CJK}〇{CH_AB}\-\.\_{CH_MASK}]+|{RE_NOT_DIGIT_DOT}|[{CH_SP}]+"
 RE_WHITESPACES = r"\s{2,}"
 RE_ATOZ_WS = r"(?<=[a-zA-Z])\s+(?=[a-zA-Z0-9])"
 
@@ -49,7 +49,6 @@ RE_UNITS_ALL = rf"({RE_UNIT_COMBO}|{RE_UNIT_EN}|[{CH_UNIT_NUM}{CH_UNIT_DATE}{CH_
 RE_DIGITS_WITH_PREFIX_AND_UNIT = rf"[{CH_DIGIT_PREFIX}]?\d+{RE_UNITS_ALL}"
 RE_DIGITS_WITH_BOUND = r"(^|\b)\d+(\b|$)"
 RE_DIGITS_ALL = rf"({RE_DIGITS_WITH_PREFIX_AND_UNIT}|{RE_DIGITS_WITH_BOUND})"
-
 
 PT_SPACE_IN_CJK = re.compile(RE_SPACE_IN_CJK)
 PT_NON_WORD = re.compile(RE_NON_WORD)
@@ -68,6 +67,7 @@ class DocSentenceConverter:
         is_replace_digits: bool = False,
         is_simplify_chinese: bool = False,
         is_multiply_sentence: bool = False,
+        max_repeats: int = -1,
     ):
         self.collect_name = collect_name
         if fields:
@@ -79,8 +79,18 @@ class DocSentenceConverter:
         self.is_replace_digits = is_replace_digits
         self.is_simplify_chinese = is_simplify_chinese
         self.is_multiply_sentence = is_multiply_sentence
+        self.max_repeats = max_repeats
         self.simplifier = ChineseSimplifier()
+        self.init_repeats_pattern()
         self.init_doc_to_sentence()
+
+    def init_repeats_pattern(self):
+        if self.max_repeats > 1:
+            self.PT_REPEATS = re.compile(
+                rf"([{CH_AB}{CH_CJK}{CH_DASH}])\1{{{self.max_repeats},}}"
+            )
+        else:
+            self.PT_REPEATS = None
 
     def init_doc_to_sentence(self):
         if self.collect_name == "users":
@@ -110,6 +120,12 @@ class DocSentenceConverter:
         return self.get_doc_fields(
             doc, ["owner.name", "title", "desc", "rtags", "tags"]
         )
+
+    def remove_repeats(self, sentence: str) -> str:
+        if self.PT_REPEATS:
+            return self.PT_REPEATS.sub(r"", sentence)
+        else:
+            return sentence
 
     def remove_whitespaces_among_cjk(self, sentence: str) -> str:
         return PT_SPACE_IN_CJK.sub("", sentence)
@@ -147,6 +163,8 @@ class DocSentenceConverter:
     def convert_sentence(self, sentence: str) -> str:
         sentence = sentence.lower()
         # sentence = self.remove_whitespaces_among_cjk(sentence)
+        if self.max_repeats > 1:
+            sentence = self.remove_repeats(sentence)
         if self.is_mask_atoz_ws:
             sentence = self.mask_whitespaces_between_atoz(sentence)
         if self.is_replace_non_word:
@@ -183,7 +201,10 @@ if __name__ == "__main__":
 
     args = ArgParser().parse_args()
     converter = DocSentenceConverter(
-        is_mask_atoz_ws=True, is_simplify_chinese=True, is_replace_non_word=True
+        is_mask_atoz_ws=True,
+        is_simplify_chinese=True,
+        is_replace_non_word=True,
+        max_repeats=4,
     )
 
     if args.test:
