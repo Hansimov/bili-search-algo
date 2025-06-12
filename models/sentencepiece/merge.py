@@ -213,13 +213,12 @@ if __name__ == "__main__":
 
     # Merge with prefix
     # cd ~/repos/bili-search-algo
-    # python -m models.sentencepiece.merge -vs 1000000 -i sp_575m_ -o sp_merged
     # python -m models.sentencepiece.merge -vs 1000000 -i sp_670m_ -o sp_merged
+    # python -m models.sentencepiece.merge -vs 1000000 -i sp_703m_ -o sp_merged
 
     # Copy to btok
     # for f in ~/repos/bili-search-algo/models/sentencepiece/checkpoints/sp_merged.*; do cp "$f" ~/repos/btok/src/btok/sp.${f##*.}; done
     # cp ~/repos/btok/src/btok/sp.txt ~/elasticsearch-docker/plugins/es01/es-tok/vocabs.txt
 
     # Test
-    # python -m models.sentencepiece.train -m sp_merged_518m -t
     # python -m models.sentencepiece.train -m sp_merged -t

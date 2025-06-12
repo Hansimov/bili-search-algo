@@ -45,11 +45,21 @@ class SentencePieceModelVocabEditor:
             return False
         return True
 
+    def trunc_pieces(self, pieces):
+        """drop tail pieces whose str size is 1, which are low-quality pieces initialized in training."""
+        trunc_idx = len(pieces)
+        for idx in range(len(pieces) - 1, 0, -1):
+            if len(pieces[idx].piece) > 1:
+                break
+            trunc_idx = idx
+        return pieces[:trunc_idx]
+
     def remove_bad_pieces(self) -> spm_pb2.ModelProto:
         logger.note("> Remove bad pieces:", verbose=self.verbose)
         old_vocab_size = len(self.model.pieces)
         new_pieces = []
-        for piece in self.model.pieces:
+        trunced_pieces = self.trunc_pieces(self.model.pieces)
+        for piece in trunced_pieces:
             if (
                 not PT_DIGIT_PURE.match(piece.piece)
                 and not PT_DIGIT_CJK.match(piece.piece)
@@ -61,8 +71,8 @@ class SentencePieceModelVocabEditor:
         new_vocab_size = len(self.model.pieces)
         if self.verbose:
             removed_count = old_vocab_size - new_vocab_size
-            logger.mesg(f"  * Old vocab size: {logstr.warn(brk(old_vocab_size))}")
-            logger.mesg(f"  - Tokens removed: {logstr.file(brk(removed_count))}")
+            logger.mesg(f"  * Old vocab size: {logstr.file(brk(old_vocab_size))}")
+            logger.mesg(f"  - Removed vocabs: {logstr.warn(brk(removed_count))}")
             logger.mesg(f"  * New vocab size: {logstr.okay(brk(new_vocab_size))}")
 
     def edit(self):
