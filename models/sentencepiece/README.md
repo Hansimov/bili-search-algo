@@ -46,6 +46,7 @@ cd ~/repos/sentencepiece
 ```sh
 cd ~/repos/sentencepiece/src
 ../bin/protoc --cpp_out=builtin_pb/ sentencepiece_model.proto
+../bin/protoc --python_out=../python/src/sentencepiece sentencepiece_model.proto
 ```
 
 Cmake build and install:

@@ -41,6 +41,7 @@ class SentencePieceModelTrainer:
         num_threads: int = 16,
         split_by_unicode_script: bool = False,
         split_by_number: bool = False,
+        split_alphanum: bool = True,
         shrinking_factor: float = 0.9,
         treat_whitespace_as_suffix: bool = False,
         user_defined_symbols="▁",  # disable default mask ws to ▁, but mask ws between a-z word to ▂ instead
@@ -59,6 +60,7 @@ class SentencePieceModelTrainer:
             "num_threads": num_threads,
             "split_by_unicode_script": split_by_unicode_script,
             "split_by_number": split_by_number,
+            "split_alphanum": split_alphanum,
             "shrinking_factor": shrinking_factor,
             "treat_whitespace_as_suffix": treat_whitespace_as_suffix,
             "user_defined_symbols": user_defined_symbols,
