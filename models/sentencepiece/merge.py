@@ -184,7 +184,7 @@ def main(args: argparse.Namespace):
         [
             f"{args.input_prefix}{suffix}"
             for suffix in REGION_MONGO_FILTERS.keys()
-            if not suffix.endswith("_test")
+            if suffix not in ["test"]
         ]
     )
     input_model_paths = [
@@ -218,7 +218,7 @@ if __name__ == "__main__":
 
     # Copy to btok
     # for f in ~/repos/bili-search-algo/models/sentencepiece/checkpoints/sp_merged.*; do cp "$f" ~/repos/btok/src/btok/sp.${f##*.}; done
-    # cp ~/repos/btok/src/btok/sp.txt ~/elasticsearch-docker/plugins/es01/es-tok/vocabs.txt
+    # cp ~/repos/btok/src/btok/sp.txt ~/elasticsearch-docker/plugins/es01/es_tok/vocabs.txt
 
     # Test
     # python -m models.sentencepiece.train -m sp_merged -t

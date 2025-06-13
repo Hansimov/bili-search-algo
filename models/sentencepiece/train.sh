@@ -41,7 +41,7 @@ fi
 
 read -r -a regions <<< "$regions_str"
 for region in "${regions[@]}"; do
-cmd=(python -m models.sentencepiece.train -m "${prefix}_${region}" -fg "$region" -av -e)
+cmd=(python -m models.sentencepiece.train -m "${prefix}_${region}" -fg "$region" -av -fd -e)
 echo "${cmd[@]}"
 "${cmd[@]}"
 done
