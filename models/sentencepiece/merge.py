@@ -46,12 +46,14 @@ class SentencePieceModelMerger:
         model_paths: list[Union[str, Path]],
         output_path: Union[str, Path],
         max_vocab_size: int = None,
+        trunc_ratio: float = 0.9,
         max_cjk_char_len: int = 8,
         verbose: bool = False,
     ):
         self.model_paths = model_paths
         self.output_path = output_path
         self.max_vocab_size = max_vocab_size
+        self.trunc_ratio = trunc_ratio
         self.max_cjk_char_len = max_cjk_char_len
         self.protors: list[SentencePieceModelProtor] = []
         self.verbose = verbose
@@ -89,7 +91,8 @@ class SentencePieceModelMerger:
             vocab_count_total += len(model.pieces)
             logger.file(f"  * {protor.model_path}", verbose=self.verbose)
             logger.file(f"    * vocab size: {vocab_size_str}", verbose=self.verbose)
-            for piece in model.pieces:
+            trunc_count = int(vocab_size * self.trunc_ratio)
+            for piece in model.pieces[:trunc_count]:
                 piece_str = piece.piece
                 if self.is_prune(piece_str):
                     pruned_count += 1
@@ -172,6 +175,7 @@ class MergerArgParser(argparse.ArgumentParser):
         self.add_argument("-i", "--input-prefix", type=str, default="sp_507m_")
         self.add_argument("-o", "--output-prefix", type=str, default="sp_merged")
         self.add_argument("-vs", "--vocab-size", type=int, default=None)
+        self.add_argument("-tr", "--trunc-ratio", type=float, default=0.9)
 
     def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
