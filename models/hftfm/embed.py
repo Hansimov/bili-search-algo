@@ -2,9 +2,9 @@ import numpy as np
 import os
 import torch
 
-from transformers import AutoTokenizer, AutoModel
 from tclogger import logger, logstr, PathType, StrsType
-from typing import Union, Literal
+from transformers import AutoTokenizer, AutoModel, BitsAndBytesConfig
+from typing import Literal
 
 # suppress warnings from TensorFlow
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -16,16 +16,49 @@ class HFTransformersEmbedder:
         model_name: str = None,
         model_path: PathType = None,
         device: Literal["cuda", "cpu"] = "cuda",
+        use_quantize: bool = True,
         model_kwargs: dict = None,
         verbose: bool = False,
     ):
         self.model_name = model_name
         self.model_path = model_path
         self.device = device
+        self.use_quantize = use_quantize
         self.model_kwargs = model_kwargs or None
         self.verbose = verbose
 
-    def load_model(self):
+    def set_quantize(self):
+        if self.use_quantize:
+            self.quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="fp4",
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_use_double_quant=True,
+            )
+            self.low_cpu_mem_usage = True
+        else:
+            self.quantization_config = None
+            self.low_cpu_mem_usage = False
+
+        self.quantize_kwargs = {
+            "quantization_config": self.quantization_config,
+            "low_cpu_mem_usage": self.low_cpu_mem_usage,
+        }
+
+    def set_device(self):
+        if self.device == "cuda":
+            device_map = "auto"
+            torch_dtype = torch.float16
+        else:
+            device_map = None
+            torch_dtype = torch.float16
+
+        self.device_kwargs = {
+            "device_map": device_map,
+            "torch_dtype": torch_dtype,
+        }
+
+    def log_model_loading(self):
         if self.verbose:
             logger.note(f"> Loading model:")
             if self.model_name:
@@ -33,35 +66,34 @@ class HFTransformersEmbedder:
             if self.model_path:
                 logger.mesg(f"  * model_path  : {logstr.file(self.model_path)}")
 
-        model_name_or_path = self.model_name or self.model_path
-
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name_or_path, use_fast=True
-        )
-
-        if self.device == "cuda":
-            device_map = "auto"
-            torch_dtype = torch.float16
-        else:
-            device_map = None
-            torch_dtype = torch.float32
-
-        model_kwargs = self.model_kwargs or {}
-
-        self.model = AutoModel.from_pretrained(
-            model_name_or_path,
-            device_map=device_map,
-            torch_dtype=torch_dtype,
-            **model_kwargs,
-        )
-
+    def log_model_loaded(self):
         if self.verbose:
             model_params_size = self.model.num_parameters()
             model_params_size_m = round(model_params_size / 1e6, 0)
             model_params_str = f"{model_params_size_m:.0f}M"
             logger.mesg(f"  * model_params: {logstr.file(model_params_str)}")
 
+    def load_model(self):
+        self.log_model_loading()
+
+        model_name_or_path = self.model_name or self.model_path
+        model_kwargs = self.model_kwargs or {}
+        self.set_device()
+        self.set_quantize()
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_name_or_path, use_fast=True
+        )
+
+        self.model = AutoModel.from_pretrained(
+            model_name_or_path,
+            **self.device_kwargs,
+            **self.quantize_kwargs,
+            **model_kwargs,
+        )
         self.model.eval()
+
+        self.log_model_loaded()
 
     def embed(self, sentences: StrsType) -> np.ndarray:
         encoded_input = self.tokenizer(
@@ -90,6 +122,7 @@ def test_hftfm_bge_zh():
         model_name=model_name,
         model_path=model_path,
         device="cpu",
+        use_quantize=True,
         model_kwargs=model_kwargs,
         verbose=True,
     )
