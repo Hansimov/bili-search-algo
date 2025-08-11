@@ -16,16 +16,33 @@ class HFTransformersEmbedder:
         model_name: str = None,
         model_path: PathType = None,
         device: Literal["cuda", "cpu"] = "cuda",
-        use_quantize: bool = True,
+        use_quantize: bool = False,
+        use_prune: bool = False,
+        prune_ratio: float = 0.75,
         model_kwargs: dict = None,
         verbose: bool = False,
     ):
         self.model_name = model_name
         self.model_path = model_path
         self.device = device
+        self.use_prune = use_prune
+        self.prune_ratio = prune_ratio
         self.use_quantize = use_quantize
         self.model_kwargs = model_kwargs or None
         self.verbose = verbose
+
+    def set_device(self):
+        if self.device == "cuda":
+            device_map = "auto"
+            torch_dtype = torch.float16
+        else:
+            device_map = None
+            torch_dtype = torch.float16
+
+        self.device_kwargs = {
+            "device_map": device_map,
+            "torch_dtype": torch_dtype,
+        }
 
     def set_quantize(self):
         if self.use_quantize:
@@ -45,18 +62,26 @@ class HFTransformersEmbedder:
             "low_cpu_mem_usage": self.low_cpu_mem_usage,
         }
 
-    def set_device(self):
-        if self.device == "cuda":
-            device_map = "auto"
-            torch_dtype = torch.float16
-        else:
-            device_map = None
-            torch_dtype = torch.float16
+    def set_prune(self):
+        if (
+            self.use_prune
+            and hasattr(self.model, "encoder")
+            and hasattr(self.model.encoder, "layer")
+        ):
+            old_layers = len(self.model.encoder.layer)
+            if self.prune_ratio:
+                new_layers = max(1, int(old_layers * self.prune_ratio))
+            else:
+                new_layers = old_layers
+            if new_layers < old_layers:
+                self.model.encoder.layer = self.model.encoder.layer[-new_layers:]
 
-        self.device_kwargs = {
-            "device_map": device_map,
-            "torch_dtype": torch_dtype,
-        }
+            if self.verbose:
+                if new_layers < old_layers:
+                    layers_str = f"{old_layers} -> {new_layers}"
+                else:
+                    layers_str = f"{new_layers}"
+                logger.mesg(f"  * layers : {logstr.file(layers_str)}")
 
     def log_model_loading(self):
         if self.verbose:
@@ -91,6 +116,7 @@ class HFTransformersEmbedder:
             **self.quantize_kwargs,
             **model_kwargs,
         )
+        self.set_prune()
         self.model.eval()
 
         self.log_model_loaded()
@@ -99,7 +125,7 @@ class HFTransformersEmbedder:
         encoded_input = self.tokenizer(
             sentences,
             padding=True,
-            truncation=True,
+            truncation=False,
             return_tensors="pt",
         )
         with torch.no_grad():
@@ -122,7 +148,9 @@ def test_hftfm_bge_zh():
         model_name=model_name,
         model_path=model_path,
         device="cpu",
-        use_quantize=True,
+        use_quantize=False,
+        use_prune=True,
+        prune_ratio=0.5,
         model_kwargs=model_kwargs,
         verbose=True,
     )
