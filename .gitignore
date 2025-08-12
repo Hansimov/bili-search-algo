@@ -19,3 +19,4 @@ secrets.json
 *.jsonv
 *.pickle
 *.out
+*.log
