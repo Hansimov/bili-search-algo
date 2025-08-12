@@ -69,7 +69,7 @@ def benchmark_single_vs_parallel():
     logger.okay(f"  ✓ Time: {timer.elapsed_seconds:.2f}s, Shape: {embeddings.shape}")
 
     # 2. 批处理优化版本
-    for batch_size in [8, 16, 32, 48]:
+    for batch_size in [16, 32, 48]:
         logger.hint(f"> Testing batch version: ({batch_size})")
         with Runtimer(False) as timer:
             batch_embedder = BatchHFTransformersEmbedder(
@@ -115,26 +115,6 @@ def benchmark_single_vs_parallel():
         logger.okay(
             f"  ✓ Time: {timer.elapsed_seconds:.2f}s, Shape: {embeddings.shape}"
         )
-
-    # # 4. 多进程版本
-    # logger.note("  * Testing multi-process version:")
-    # with Runtimer() as timer:
-    #     with ParallelHFTransformersEmbedder(
-    #         model_name="BAAI/bge-base-zh-v1.5",
-    #         device="cpu",
-    #         use_quantize=True,
-    #         num_workers=2,  # 少一些进程避免过度竞争
-    #         batch_size=16,
-    #         parallel_mode="process",
-    #         verbose=True,
-    #     ) as parallel_embedder:
-    #         embeddings = parallel_embedder.embed(test_sentences)
-
-    # results["multi_process"] = {
-    #     "time": timer.elapsed_seconds,
-    #     "shape": embeddings.shape,
-    # }
-    # logger.mesg(f"    * Time: {timer.elapsed_seconds:.2f}s, Shape: {embeddings.shape}")
 
     # 计算加速比
     logger.note("> Performance Summary:")
