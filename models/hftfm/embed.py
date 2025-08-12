@@ -48,12 +48,12 @@ class HFTransformersEmbedder:
         self,
         model_name: str = None,
         model_path: PathType = None,
-        device: Literal["cuda", "cpu"] = "cuda",
-        use_quantize: bool = False,
-        use_layer_prune: bool = False,
-        layer_prune_ratio: float = 0.75,
-        use_attention_prune: bool = False,
-        attention_prune_ratio: float = 0.75,
+        device: Literal["cuda", "cpu"] = "cpu",
+        use_quantize: bool = True,
+        use_layer_prune: bool = True,
+        layer_prune_ratio: float = 0.5,
+        use_attention_prune: bool = True,
+        attention_prune_ratio: float = 0.5,
         model_kwargs: dict = None,
         verbose: bool = False,
     ):
@@ -83,7 +83,8 @@ class HFTransformersEmbedder:
 
     def set_gpu_quantize(self):
         if self.use_quantize and self.device == "cuda":
-            logger.mesg(f"  * set gpu quantize ...")
+            if self.verbose:
+                logger.mesg(f"  * set gpu quantize ...")
             self.quantization_config = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",
@@ -102,7 +103,8 @@ class HFTransformersEmbedder:
 
     def set_cpu_quantize(self):
         if self.use_quantize and self.device == "cpu":
-            logger.mesg(f"  * set cpu quantize ...")
+            if self.verbose:
+                logger.mesg(f"  * set cpu quantize ...")
             self.model = self.model.to(torch.float32)
             self.model = quantize_dynamic(
                 self.model, {torch.nn.Linear}, dtype=torch.qint8, inplace=False
@@ -181,9 +183,10 @@ class HFTransformersEmbedder:
                     new_out_features=old_hidden_size,
                 )
 
-                if self.verbose:
-                    heads_str = f"{old_heads} -> {new_heads}"
-                    logger.mesg(f"    * attention heads: {logstr.file(heads_str)}")
+        if self.verbose:
+            # only output the last layer's attention heads
+            heads_str = f"{old_heads} -> {new_heads}"
+            logger.mesg(f"  * attention heads: {logstr.file(heads_str)}")
 
     def log_model_loading(self):
         if self.verbose:
