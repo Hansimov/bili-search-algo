@@ -13,8 +13,8 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 def resize_linear_layer(
     linear_layer: torch.nn.Linear,
-    new_out_features: int = None,
     new_in_features: int = None,
+    new_out_features: int = None,
 ):
     old_weight = linear_layer.weight.data
     old_bias = linear_layer.bias.data if linear_layer.bias is not None else None
@@ -136,6 +136,9 @@ class HFTransformersEmbedder:
             return
         if not self.attention_prune_ratio:
             return
+        if self.device == "cuda":
+            logger.warn("  * skip attention prune for cuda device")
+            return
 
         for layer in self.model.encoder.layer:
             if not self.has_attention(layer):
@@ -147,29 +150,35 @@ class HFTransformersEmbedder:
             if new_heads < old_heads:
                 head_size = layer.attention.self.attention_head_size
                 new_all_head_size = new_heads * head_size
+                hidden_size = layer.attention.self.query.in_features
 
                 # adjust attention layers to new number of heads
                 layer.attention.self.num_attention_heads = new_heads
                 layer.attention.self.all_head_size = new_all_head_size
 
-                # adjust Q, K, V layers to new all_head_size
+                # adjust Q, K, V layers to new all_head_size (output features)
+                # but keep the same input features (hidden_size)
+                new_features_params = {
+                    "new_in_features": hidden_size,
+                    "new_out_features": new_all_head_size,
+                }
                 layer.attention.self.query = resize_linear_layer(
-                    layer.attention.self.query, new_all_head_size
+                    layer.attention.self.query, **new_features_params
                 )
                 layer.attention.self.key = resize_linear_layer(
-                    layer.attention.self.key, new_all_head_size
+                    layer.attention.self.key, **new_features_params
                 )
                 layer.attention.self.value = resize_linear_layer(
-                    layer.attention.self.value, new_all_head_size
+                    layer.attention.self.value, **new_features_params
                 )
 
-                # adjust new input dim to new all_head_size,
-                # keeps output dim as old hidden_size
+                # adjust dense layer input dim to new_all_head_size,
+                # keeps output dim as old_hidden_size
                 old_hidden_size = layer.attention.output.dense.out_features
                 layer.attention.output.dense = resize_linear_layer(
                     layer.attention.output.dense,
-                    old_hidden_size,
-                    new_all_head_size,
+                    new_in_features=new_all_head_size,
+                    new_out_features=old_hidden_size,
                 )
 
                 if self.verbose:
