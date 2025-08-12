@@ -2,9 +2,10 @@ import numpy as np
 import os
 import torch
 
-from tclogger import logger, logstr, PathType, StrsType
+from tclogger import logger, logstr, PathType, StrsType, Runtimer
 from transformers import AutoTokenizer, AutoModel, BitsAndBytesConfig
 from typing import Literal
+from torch.ao.quantization import quantize_dynamic
 
 # suppress warnings from TensorFlow
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -73,18 +74,19 @@ class HFTransformersEmbedder:
             torch_dtype = torch.float16
         else:
             device_map = None
-            torch_dtype = torch.float16
+            torch_dtype = torch.float32
 
         self.device_kwargs = {
             "device_map": device_map,
             "torch_dtype": torch_dtype,
         }
 
-    def set_quantize(self):
-        if self.use_quantize:
+    def set_gpu_quantize(self):
+        if self.use_quantize and self.device == "cuda":
+            logger.mesg(f"  * set gpu quantize ...")
             self.quantization_config = BitsAndBytesConfig(
                 load_in_4bit=True,
-                bnb_4bit_quant_type="fp4",
+                bnb_4bit_quant_type="nf4",
                 bnb_4bit_compute_dtype=torch.float16,
                 bnb_4bit_use_double_quant=True,
             )
@@ -97,6 +99,14 @@ class HFTransformersEmbedder:
             "quantization_config": self.quantization_config,
             "low_cpu_mem_usage": self.low_cpu_mem_usage,
         }
+
+    def set_cpu_quantize(self):
+        if self.use_quantize and self.device == "cpu":
+            logger.mesg(f"  * set cpu quantize ...")
+            self.model = self.model.to(torch.float32)
+            self.model = quantize_dynamic(
+                self.model, {torch.nn.Linear}, dtype=torch.qint8, inplace=False
+            )
 
     def has_layer(self) -> bool:
         return hasattr(self.model, "encoder") and hasattr(self.model.encoder, "layer")
@@ -187,7 +197,7 @@ class HFTransformersEmbedder:
         model_name_or_path = self.model_name or self.model_path
         model_kwargs = self.model_kwargs or {}
         self.set_device()
-        self.set_quantize()
+        self.set_gpu_quantize()
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name_or_path, use_fast=True
@@ -200,8 +210,9 @@ class HFTransformersEmbedder:
         )
         self.set_layer_prune()
         self.set_attention_prune()
-        self.model.eval()
+        self.set_cpu_quantize()
 
+        self.model.eval()
         self.log_model_loaded()
 
     def embed(self, sentences: StrsType) -> np.ndarray:
@@ -211,7 +222,7 @@ class HFTransformersEmbedder:
             truncation=False,
             return_tensors="pt",
         )
-        with torch.no_grad():
+        with torch.inference_mode():
             model_output = self.model(**encoded_input)
             embeddings = model_output[0][:, 0]
         embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
@@ -231,7 +242,7 @@ def test_hftfm_bge_zh():
         model_name=model_name,
         model_path=model_path,
         device="cpu",
-        use_quantize=False,
+        use_quantize=True,
         use_layer_prune=True,
         layer_prune_ratio=0.5,
         use_attention_prune=True,
@@ -252,6 +263,7 @@ def test_hftfm_bge_zh():
 if __name__ == "__main__":
     from models.embedders.tests import test_embedder
 
-    test_hftfm_bge_zh()
+    with Runtimer():
+        test_hftfm_bge_zh()
 
     # python -m models.hftfm.embed
