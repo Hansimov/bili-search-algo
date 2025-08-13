@@ -5,9 +5,23 @@
 1. 批量处理大量文本
 2. 流式处理数据
 3. 性能对比测试
+
+
+> Performance Summary: (10000 samples)
+  * baseline           :  37.02s (1.00x)
+  * batch_16           :  33.39s (1.11x)
+  * batch_32           :  35.90s (1.03x)
+  * batch_48           :  38.50s (0.96x)
+  * multi_thread_16x16 :  23.01s (1.61x)
+  * multi_thread_16x32 :  21.50s (1.72x)
+  * multi_thread_32x32 :  18.52s (2.00x)
+  * multi_thread_32x48 :  26.79s (1.38x)
+  * multi_thread_48x48 :  31.48s (1.18x)
 """
 
 import time
+import numpy as np
+
 from typing import List, Generator
 from tclogger import logger, logstr, Runtimer
 
@@ -40,9 +54,14 @@ def generate_test_sentences(count: int = 1000) -> List[str]:
     return sentences
 
 
-def benchmark_single_vs_parallel():
+def log_timer_embeddings(timer: Runtimer, embeddings: np.ndarray):
+    logger.okay(f"  ✓ Time: {timer.elapsed_seconds:.2f}s,", end=" ")
+    logger.mesg(f"Shape: {embeddings.shape}")
+
+
+def benchmark():
     """性能对比测试：单线程 vs 并行"""
-    logger.note("> Performance Benchmark: Single vs Parallel ...")
+    logger.note("> Benchmarking ...")
 
     # 测试数据
     test_sentences = generate_test_sentences(10000)  # 样本数
@@ -51,13 +70,13 @@ def benchmark_single_vs_parallel():
     results = {}
 
     # 1. 原始单线程版本
-    logger.hint("> Testing baseline single-thread version:")
+    logger.hint("> Testing baseline version:")
     with Runtimer(False) as timer:
         embedder = HFTransformersEmbedder(
             model_name="BAAI/bge-base-zh-v1.5",
             device="cpu",
             use_quantize=True,
-            verbose=True,
+            verbose=False,
         )
         embedder.load_model()
         embeddings = embedder.embed(test_sentences)
@@ -66,7 +85,7 @@ def benchmark_single_vs_parallel():
         "time": timer.elapsed_seconds,
         "shape": embeddings.shape,
     }
-    logger.okay(f"  ✓ Time: {timer.elapsed_seconds:.2f}s, Shape: {embeddings.shape}")
+    log_timer_embeddings(timer, embeddings)
 
     # 2. 批处理优化版本
     for batch_size in [16, 32, 48]:
@@ -77,7 +96,7 @@ def benchmark_single_vs_parallel():
                 device="cpu",
                 use_quantize=True,
                 optimal_batch_size=batch_size,
-                verbose=True,
+                verbose=False,
             )
             batch_embedder.load_model()
             embeddings = batch_embedder.embed_large_batch(
@@ -88,9 +107,7 @@ def benchmark_single_vs_parallel():
             "time": timer.elapsed_seconds,
             "shape": embeddings.shape,
         }
-        logger.okay(
-            f"  ✓ Time: {timer.elapsed_seconds:.2f}s, Shape: {embeddings.shape}"
-        )
+        log_timer_embeddings(timer, embeddings)
 
     # 3. 多线程版本
     for num_workers, batch_size in [(16, 16), (16, 32), (32, 32), (32, 48), (48, 48)]:
@@ -104,7 +121,7 @@ def benchmark_single_vs_parallel():
                 num_workers=num_workers,
                 batch_size=batch_size,
                 parallel_mode="thread",
-                verbose=True,
+                verbose=False,
             ) as parallel_embedder:
                 embeddings = parallel_embedder.embed(test_sentences)
 
@@ -112,9 +129,7 @@ def benchmark_single_vs_parallel():
             "time": timer.elapsed_seconds,
             "shape": embeddings.shape,
         }
-        logger.okay(
-            f"  ✓ Time: {timer.elapsed_seconds:.2f}s, Shape: {embeddings.shape}"
-        )
+        log_timer_embeddings(timer, embeddings)
 
     # 计算加速比
     logger.note("> Performance Summary:")
@@ -122,13 +137,13 @@ def benchmark_single_vs_parallel():
     for method, result in results.items():
         speedup = baseline_time / result["time"]
         speedup_str = f"{speedup:.2f}x"
-        if abs(speedup - 1) < 0.02:
+        if abs(speedup - 1) < 0.05:
             speedup_str = logstr.file(speedup_str)
         elif speedup > 1:
             speedup_str = logstr.okay(f"{speedup:.2f}x")
         else:
             speedup_str = logstr.warn(f"{speedup:.2f}x")
-        logger.mesg(f"  * {method:18}: {result['time']:6.2f}s ({speedup_str})")
+        logger.mesg(f"  * {method:18} : {result['time']:6.2f}s ({speedup_str})")
 
 
 def demo_streaming_processing():
@@ -311,7 +326,7 @@ def main():
 
     try:
         # 1. 性能对比测试
-        benchmark_single_vs_parallel()
+        benchmark()
         print()
 
         # # 2. 流式处理演示
@@ -326,7 +341,7 @@ def main():
         # demo_memory_efficient_processing()
         # print()
 
-        logger.success("All demos completed successfully!")
+        logger.success("✓ All demos completed successfully!")
 
     except KeyboardInterrupt:
         logger.warn("Demo interrupted by user")
