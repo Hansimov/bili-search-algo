@@ -68,8 +68,11 @@ class HFTransformersEmbedder:
         self.model_kwargs = model_kwargs or None
         self.verbose = verbose
 
+    def is_cuda_device(self) -> bool:
+        return self.device.startswith("cuda")
+
     def set_device(self):
-        if self.device == "cuda":
+        if self.is_cuda_device():
             device_map = "auto"
             torch_dtype = torch.float16
         else:
@@ -82,7 +85,7 @@ class HFTransformersEmbedder:
         }
 
     def set_gpu_quantize(self):
-        if self.use_quantize and self.device == "cuda":
+        if self.use_quantize and self.is_cuda_device():
             if self.verbose:
                 logger.mesg(f"  * set gpu quantize ...")
             self.quantization_config = BitsAndBytesConfig(
@@ -138,7 +141,7 @@ class HFTransformersEmbedder:
             return
         if not self.attention_prune_ratio:
             return
-        if self.device == "cuda":
+        if self.is_cuda_device():
             logger.warn("  * skip attention prune for cuda device")
             return
 
@@ -253,7 +256,7 @@ def test_hftfm_bge_zh():
     embedder = HFTransformersEmbedder(
         model_name=model_name,
         model_path=model_path,
-        device="cpu",
+        device="cuda",
         use_quantize=True,
         use_layer_prune=True,
         layer_prune_ratio=0.5,

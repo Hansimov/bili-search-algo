@@ -7,7 +7,7 @@
 3. 性能对比测试
 
 
-> Performance Summary: (10000 samples)
+> 对于短文本：
   * baseline           :  37.02s (1.00x)
   * batch_16           :  33.39s (1.11x)
   * batch_32           :  35.90s (1.03x)
@@ -17,6 +17,31 @@
   * multi_thread_32x32 :  18.52s (2.00x)
   * multi_thread_32x48 :  26.79s (1.38x)
   * multi_thread_48x48 :  31.48s (1.18x)
+
+> 结论:
+    * 使用批处理效果有限。
+    * 多线程处理在大批量数据上表现更好，尤其是当 batch_size 较大时。
+    * 最佳性能配置为 32 个工作线程和 48 的批处理大小，达到了 2.00x 的加速比。
+
+> 对于长文本：
+  * baseline           : 368.77s (1.00x)
+  * multi_thread_4x64  : 341.50s (1.08x)
+  * multi_thread_8x64  : 368.77s (1.00x)
+  * multi_thread_8x128 : 328.69s (1.12x)
+  * multi_thread_16x32 : 341.67s (1.08x)
+  * multi_thread_16x64 : 362.96s (1.02x)
+  * multi_thread_32x32 : 346.52s (1.06x)
+  * multi_thread_32x48 : 301.82s (1.22x)
+
+> 结论:
+    * 对于长文本，批处理和多线程的效果都不明显。
+
+> 对于 GPU：
+    ...
+
+> 结论：
+    * 使用 GPU 比 CPU 快约 20 倍。
+    * 使用 3080 和 4090 在不优化 IO 的情况下，性能差异不大。
 """
 
 import time
@@ -47,9 +72,8 @@ def generate_test_sentences(count: int = 1000) -> List[str]:
 
     sentences = []
     for i in range(count):
-        # 添加一些变化以模拟真实数据
         base_sentence = base_sentences[i % len(base_sentences)]
-        sentences.append(f"[{i+1:04d}] {base_sentence}")
+        sentences.append(f"[{i+1:04d}] {base_sentence}" * 10)
 
     return sentences
 
@@ -69,54 +93,63 @@ def benchmark():
 
     results = {}
 
-    # 1. 原始单线程版本
-    logger.hint("> Testing baseline version:")
-    with Runtimer(False) as timer:
-        embedder = HFTransformersEmbedder(
-            model_name="BAAI/bge-base-zh-v1.5",
-            device="cpu",
-            use_quantize=True,
-            verbose=False,
-        )
-        embedder.load_model()
-        embeddings = embedder.embed(test_sentences)
+    # # 1. 原始单线程版本
+    # logger.hint("> Testing baseline version:")
+    # with Runtimer(False) as timer:
+    #     embedder = HFTransformersEmbedder(
+    #         model_name="BAAI/bge-base-zh-v1.5",
+    #         device="cpu",
+    #         use_quantize=True,
+    #         verbose=False,
+    #     )
+    #     embedder.load_model()
+    #     embeddings = embedder.embed(test_sentences)
 
-    results["baseline"] = {
-        "time": timer.elapsed_seconds,
-        "shape": embeddings.shape,
-    }
-    log_timer_embeddings(timer, embeddings)
+    # results["baseline"] = {
+    #     "time": timer.elapsed_seconds,
+    #     "shape": embeddings.shape,
+    # }
+    # log_timer_embeddings(timer, embeddings)
 
-    # 2. 批处理优化版本
-    for batch_size in [16, 32, 48]:
-        logger.hint(f"> Testing batch version: ({batch_size})")
-        with Runtimer(False) as timer:
-            batch_embedder = BatchHFTransformersEmbedder(
-                model_name="BAAI/bge-base-zh-v1.5",
-                device="cpu",
-                use_quantize=True,
-                optimal_batch_size=batch_size,
-                verbose=False,
-            )
-            batch_embedder.load_model()
-            embeddings = batch_embedder.embed_large_batch(
-                test_sentences, batch_size=batch_size
-            )
+    # # 2. 批处理优化版本
+    # for batch_size in [16, 32, 48]:
+    #     logger.hint(f"> Testing batch version: ({batch_size})")
+    #     with Runtimer(False) as timer:
+    #         batch_embedder = BatchHFTransformersEmbedder(
+    #             model_name="BAAI/bge-base-zh-v1.5",
+    #             device="cpu",
+    #             use_quantize=True,
+    #             optimal_batch_size=batch_size,
+    #             verbose=False,
+    #         )
+    #         batch_embedder.load_model()
+    #         embeddings = batch_embedder.embed_large_batch(
+    #             test_sentences, batch_size=batch_size
+    #         )
 
-        results[f"batch_{batch_size}"] = {
-            "time": timer.elapsed_seconds,
-            "shape": embeddings.shape,
-        }
-        log_timer_embeddings(timer, embeddings)
+    #     results[f"batch_{batch_size}"] = {
+    #         "time": timer.elapsed_seconds,
+    #         "shape": embeddings.shape,
+    #     }
+    #     log_timer_embeddings(timer, embeddings)
 
     # 3. 多线程版本
-    for num_workers, batch_size in [(16, 16), (16, 32), (32, 32), (32, 48), (48, 48)]:
+    for num_workers, batch_size in [
+        # (4, 64),
+        # (8, 64),
+        # (8, 128),
+        # (16, 32),
+        # (16, 64),
+        # (32, 32),
+        # (32, 48),
+        (1, 64)
+    ]:
         stat_str = f"{num_workers}x{batch_size}"
         logger.hint(f"> Testing multi-thread version: ({stat_str})")
         with Runtimer(False) as timer:
             with ParallelHFTransformersEmbedder(
                 model_name="BAAI/bge-base-zh-v1.5",
-                device="cpu",
+                device="cuda:1",
                 use_quantize=True,
                 num_workers=num_workers,
                 batch_size=batch_size,
@@ -133,7 +166,9 @@ def benchmark():
 
     # 计算加速比
     logger.note("> Performance Summary:")
-    baseline_time = results["baseline"]["time"]
+    # baseline_time = results["baseline"]["time"]
+    baseline_time = max(result["time"] for result in results.values())
+    results["baseline"] = {"time": baseline_time, "shape": None}
     for method, result in results.items():
         speedup = baseline_time / result["time"]
         speedup_str = f"{speedup:.2f}x"
@@ -356,3 +391,5 @@ if __name__ == "__main__":
     main()
 
     # python -m models.hftfm.demo_parallel
+    # CUDA_VISIBLE_DEVICES=0 python -m models.hftfm.demo_parallel # device="cuda:0"
+    # CUDA_VISIBLE_DEVICES=1 python -m models.hftfm.demo_parallel # device="cuda:1"
