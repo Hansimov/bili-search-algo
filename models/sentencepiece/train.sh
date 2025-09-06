@@ -1,6 +1,6 @@
 #!/bin/bash
 
-prefix="sp_703m"
+prefix="sp_750m"
 zhwiki_prefix="sp_wiki_8m_400k"
 zhwiki_vocab_size=400000
 
@@ -10,7 +10,7 @@ declare -A groups=(
 [2]="music_dance fashion_ent know_info"
 [3]="daily_life other_life"
 [4]="mobile_game other_game"
-[l]="latest"
+[r]="recent"
 [w]="zhwiki"
 [x]="test"
 )
@@ -51,4 +51,4 @@ done
 # ./models/sentencepiece/train.sh 2
 # ./models/sentencepiece/train.sh 3
 # ./models/sentencepiece/train.sh 4
-# ./models/sentencepiece/train.sh l
+# ./models/sentencepiece/train.sh r

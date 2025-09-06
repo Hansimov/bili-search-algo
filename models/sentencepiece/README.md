@@ -30,6 +30,8 @@ cd ~/repos/sentencepiece
 ./bin/protoc --version
 ```
 
+It should be `libprotoc 3.14.0` or later. If not, see:
+
 * protobuf upgrade to 3.14.0 · Issue #595 · google/sentencepiece
   * https://github.com/google/sentencepiece/issues/595
 
@@ -77,6 +79,16 @@ Or install as editable package:
 
 ```sh
 pip install -e .
+```
+
+```sh
+pip show sentencepiece | grep Location
+```
+
+It should be:
+
+```sh
+Location: ~/repos/sentencepiece/python/src
 ```
 
 ## Check built files

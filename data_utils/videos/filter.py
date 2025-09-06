@@ -22,7 +22,7 @@ REGION_MONGO_FILTERS = {
     "cine_movie": {"ptid": {"$in": [181, 177, 23, 11, 165]}},
     "fashion_ent": {"ptid": {"$in": [155, 5]}},
     "know_info": {"ptid": {"$in": [36, 202]}},
-    "latest": {
+    "recent": {
         "pubdate": {"$gte": get_now_ts() - 90 * 86400},
     },
     "test": {
