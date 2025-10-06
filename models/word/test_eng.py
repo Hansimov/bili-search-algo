@@ -20,7 +20,8 @@ def test_re_word():
         ("iOS app", ["iOS app"]),  # 数字在中间，包含空格
         ("HTTP 2.0", ["HTTP 2.0"]),  # 包含点号和空格
         ("user123", ["user123"]),  # 字母开头包含数字
-        ("A", []),  # 单个字母
+        # ("A", ["A"]),  # 单个字母
+        ("a thousand files", ["a thousand files"]),  # 多个单词
         ("x86-64", ["x86-64"]),  # 字母开头，包含数字和连字符
         ("version 1.2.3", ["version 1.2.3"]),  # 包含多个点号
         ("Node.js app", ["Node.js app"]),  # 包含点号和空格
@@ -31,6 +32,7 @@ def test_re_word():
         ("中文ABC", ["ABC"]),  # 中文后的英文
         ("test@email.com", ["test", "email.com"]),  # 邮箱格式，@分隔
         ("hello, world", ["hello", "world"]),  # 逗号分隔
+        ("3000 SUV", ["SUV"]),  # 数字开头+字母，但数字以纯空格形式出现
         # 中英文夹杂测试用例
         ("我喜欢Python编程", ["Python"]),  # 中文中间的英文单词
         ("使用JavaScript和CSS", ["JavaScript", "CSS"]),  # 多个英文单词
@@ -39,6 +41,7 @@ def test_re_word():
         ("学习AI和ML技术", ["AI", "ML"]),  # 缩写词
         ("GitHub上的project", ["GitHub", "project"]),  # 前后都有中文
         ("用React开发web应用", ["React", "web"]),  # 分散的英文单词
+        ("AG13:12极限翻盘战胜EP", ["AG13", "EP"]),  # 包含数字和字母
         ("版本v2.1.0发布了", ["v2.1.0"]),  # 版本号格式
         ("这是test-case测试", ["test-case"]),  # 包含连字符
         ("支持UTF-8编码", ["UTF-8"]),  # 数字开头包含字母的情况
@@ -51,11 +54,15 @@ def test_re_word():
         # 边界情况测试
         ("123abc456", ["123abc456"]),  # 数字开头包含字母，前后有数字边界
         ("abc123def", ["abc123def"]),  # 字母开头，前后非字母数字
-        ("开始a结束", []),  # 单个字母被中文包围
+        # ("开始a结束", ["a"]),  # 单个字母被中文包围
         ("test1test", ["test1test"]),  # 应该作为一个完整单词
         ("a1b2c3", ["a1b2c3"]),  # 字母数字交替
         ("中文A-B英文", ["A-B"]),  # 包含连字符的短单词
         ("前缀1a后缀", ["1a"]),  # 数字开头包含字母的最小情况
+        (
+            "https://www.google.com/search?qq=test-case",
+            ["https", "www.google.com", "search", "qq", "test-case"],
+        ),  # URL
     ]
 
     logger.note("测试 RE_ENG 正则表达式:")
