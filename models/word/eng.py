@@ -1,6 +1,8 @@
+import polars as pl
 import re
 
 from itertools import islice
+from pathlib import Path
 from sedb import MongoDocsGenerator
 from tclogger import logger, logstr, dict_get
 from typing import TypedDict
@@ -61,12 +63,14 @@ class EnglishWordsRecorder:
         generator: MongoDocsGenerator,
         text_fields: list[str] = TEXT_FIELDS,
         sort_key: str = "doc_freq",
-        min_count: int = 2,
+        min_freq: int = 3,
+        docs_count: int = None,
     ):
         self.generator = generator
         self.text_fields = text_fields
         self.sort_key = sort_key
-        self.min_count = min_count
+        self.min_freq = min_freq
+        self.docs_count = docs_count
         self.extractor = EnglishWordExtractor()
         self.records: dict[str, RecordType] = {}
 
@@ -112,12 +116,16 @@ class EnglishWordsRecorder:
 
     def filter_records(self):
         logger.note(f"> Filter records:")
-        logger.mesg(f"  * {self.sort_key} < {self.min_count}")
+        logger.mesg(f"  * {self.sort_key} < {self.min_freq}")
         old_count = len(self.records)
         self.records = {
-            word: record
+            word: {
+                "word": word,
+                "doc_freq": record["doc_freq"],
+                "term_freq": record["term_freq"],
+            }
             for word, record in self.records.items()
-            if record[self.sort_key] >= self.min_count
+            if record[self.sort_key] >= self.min_freq
         }
         new_count = len(self.records)
         diff_count = old_count - new_count
@@ -129,13 +137,25 @@ class EnglishWordsRecorder:
         ratio_str = logstr.warn(f"-{diff_ratio:.1f}%")
         logger.okay(f"  * {count_str} ({ratio_str})")
 
+    def dump_records(self):
+        logger.note(f"> Dump records:")
+        df = pl.DataFrame(list(self.records.values()))
+        logger.line(df, indent=2)
+        self.output_path = (
+            Path(__file__).parent / "eng" / f"eng_freq_{self.docs_count}.csv"
+        )
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        df.write_csv(self.output_path)
+        logger.okay(f"  * {self.output_path}")
+
     def log_results(self):
         top_k = 15
         total_n = len(self.records)
         count_str = f"{logstr.file(top_k)}/{logstr.mesg(total_n)}"
         logger.note(f"> Top words: ({count_str})")
         for i, v in enumerate(islice(self.records.values(), top_k)):
-            print(f"[{i}]: {v}")
+            record_str = f"{logstr.mesg(v['word'])} {logstr.file(v['doc_freq'])}"
+            logger.line(f"  * [{i}]: {record_str}")
 
     def run(self):
         for doc_idx, doc in enumerate(self.generator.doc_generator()):
@@ -154,6 +174,7 @@ class EnglishWordsRecorder:
         self.filter_records()
         self.sort_records()
         self.log_results()
+        self.dump_records()
 
 
 def main():
@@ -163,13 +184,14 @@ def main():
             **MONGO_ENVS,
             "mongo_collection": "videos",
             "include_fields": "title,tags,desc",
-            "extra_filters": "u:stat.view>1k;d:pubdate>=2025-09-01",
+            # "extra_filters": "u:stat.view>1k;d:pubdate>=2025-08-01",
+            "extra_filters": "u:stat.view>1k",
         }
     )
     logger.okay(generator.args)
     # generator.init_all_with_cli_args(set_count=False, set_bar=False)
     generator.init_all_with_cli_args()
-    recorder = EnglishWordsRecorder(generator)
+    recorder = EnglishWordsRecorder(generator, docs_count=generator.total_count)
     recorder.run()
 
 
