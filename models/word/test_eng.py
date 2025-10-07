@@ -63,6 +63,10 @@ def test_re_word():
             "https://www.google.com/search?qq=test-case",
             ["https", "www.google.com", "search", "qq", "test-case"],
         ),  # URL
+        # 连字符两侧有空格的情况（应该被分割）
+        ("i-dle - queencard", ["i-dle", "queencard"]),  # 空格-空格应该分割
+        ("t-ara - bunny style", ["t-ara", "bunny style"]),  # 空格-空格应该分割
+        ("hello - world - test", ["hello", "world", "test"]),  # 多个空格-空格
     ]
 
     logger.note("测试 RE_ENG 正则表达式:")
