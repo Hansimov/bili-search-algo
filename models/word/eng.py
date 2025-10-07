@@ -1,10 +1,11 @@
 import polars as pl
 import re
+import signal
 
 from itertools import islice
 from pathlib import Path
 from sedb import MongoDocsGenerator
-from tclogger import logger, logstr, dict_get
+from tclogger import logger, logstr, brk, dict_get
 from typing import TypedDict
 
 from configs.envs import MONGO_ENVS
@@ -15,52 +16,62 @@ from configs.envs import MONGO_ENVS
 2. 开头和结尾必须是字母或数字
 3. 前后必须有边界（非字母数字字符）
 4. 如果以数字开头，必须包含至少一个字母
-5. 不能包含 \s\-\s 模式（连字符两侧同时有空格时作为分隔符），分为：
-    * 字母数字点号（紧密连接）
-    * 连字符（紧密，前后不能同时是空格）
-    * 空格（后面必须跟字母数字点号，不能跟连字符）
+5. 对连字符进行预处理
 """
 RE_ENG = r"""
     (?<![0-9a-zA-Z])          # 前面不能是字母或数字（负向后查）
     (?:                       # 非捕获组
         # 情况1：以字母开头
         [a-zA-Z]              # 以字母开头
-        (?:
-            [0-9a-zA-Z\.]     # 字母、数字、点号
-            | \-(?!\ )        # 连字符，后面不能是空格
-            | (?<!\ )\-       # 连字符，前面不能是空格
-            | \ (?!\-)        # 空格，后面不能是连字符
-        )*
+        [0-9a-zA-Z\-\ \.]*    # 后面可以跟字母、数字、连字符、空格、点号
         [0-9a-zA-Z]           # 以字母或数字结尾
         |
-        # 情况2：以数字开头（则必须包含字母）
+        # 情况2：以数字开头（但必须包含字母）
         [0-9]                 # 以数字开头
         (?=                   # 正向前查：必须包含字母
-            [0-9a-zA-Z\.\-]*  # 不包含空格的紧密字符
+            [0-9a-zA-Z\-\.]*  # 不包含空格的紧密字符
             [a-zA-Z]          # 必须包含字母
         )
-        [0-9a-zA-Z\.\-]*      # 紧密字符序列
+        [0-9a-zA-Z\-\.]*      # 紧密字符序列
         [0-9a-zA-Z]           # 以字母或数字结尾
-        (?:
-            \ [a-zA-Z]        # 空格+字母开头
-            (?:
-                [0-9a-zA-Z\.]
-                | \-(?!\ )
-                | (?<!\ )\-
-                | \ (?!\-)
-            )*
-            [0-9a-zA-Z]
-        )*
+        (?:\ [a-zA-Z][0-9a-zA-Z\-\ \.]*[0-9a-zA-Z])*  # 后面可以跟空格+字母开头的部分
     )
     (?![0-9a-zA-Z])           # 后面不能是字母或数字（负向前查）
 """
 
 REP_ENG = re.compile(RE_ENG, re.VERBOSE)
+REP_DASHES = re.compile(r"\-{2,}")
+REP_DASH_WS = re.compile(r"\s+\-\s+")
 
 
 class EnglishWordExtractor:
+    def timeout_handler(self, signum, frame):
+        raise RuntimeError("re.match timeout")
+
+    def set_signal(self):
+        signal.signal(signal.SIGALRM, self.timeout_handler)
+        signal.alarm(1)
+
+    def clear_signal(self):
+        signal.alarm(0)
+
+    def clear_dash(self, text: str) -> str:
+        if "-" not in text:
+            return text
+        text = REP_DASHES.sub("|", text)
+        text = REP_DASH_WS.sub(" | ", text)
+        return text
+
     def extract(self, text: str) -> list[str]:
-        return REP_ENG.findall(text)
+        text = self.clear_dash(text)
+        # self.set_signal()
+        try:
+            result = REP_ENG.findall(text)
+            # self.clear_signal()
+            return result
+        except Exception as e:
+            # self.clear_signal()
+            raise e
 
 
 class RecordType(TypedDict):
@@ -182,12 +193,23 @@ class EnglishWordsRecorder:
             record_str = f"{logstr.mesg(v['word'])} {logstr.file(v['doc_freq'])}"
             logger.line(f"  * [{i}]: {record_str}")
 
+    def log_error(self, e: Exception, text: str, doc: dict):
+        print()
+        logger.warn(f"{logstr.mesg(brk(doc['_id']))}: {text}")
+
     def run(self):
         for doc_idx, doc in enumerate(self.generator.doc_generator()):
             text = self.doc_to_text(doc)
             if not text:
                 continue
-            words = self.extractor.extract(text)
+
+            try:
+                words = self.extractor.extract(text)
+            except Exception as e:
+                self.log_error(e, text=text, doc=doc)
+                # raise e
+                continue
+
             # if words:
             #     logger.okay(f"[{doc_idx}]: {words}")
             unique_words = set(words)

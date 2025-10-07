@@ -2,11 +2,9 @@
 测试 RE_WORD 正则表达式
 """
 
-import re
-
 from tclogger import logger
 
-from models.word.eng import REP_ENG
+from models.word.eng import EnglishWordExtractor
 
 
 def test_re_word():
@@ -63,16 +61,20 @@ def test_re_word():
             "https://www.google.com/search?qq=test-case",
             ["https", "www.google.com", "search", "qq", "test-case"],
         ),  # URL
-        # 连字符两侧有空格的情况（应该被分割）
+        # 连字符测试
         ("i-dle - queencard", ["i-dle", "queencard"]),  # 空格-空格应该分割
         ("t-ara - bunny style", ["t-ara", "bunny style"]),  # 空格-空格应该分割
         ("hello - world - test", ["hello", "world", "test"]),  # 多个空格-空格
+        (
+            "https://www.patreon.com/tomstanton---------",
+            ["https", "www.patreon.com", "tomstanton"],
+        ),  # 多个连字符
     ]
 
     logger.note("测试 RE_ENG 正则表达式:")
-
+    extractor = EnglishWordExtractor()
     for text, expected in test_cases:
-        matches = REP_ENG.findall(text)
+        matches = extractor.extract(text)
         is_matched = matches == expected
         status = "✓" if is_matched else "✗"
         if is_matched:
