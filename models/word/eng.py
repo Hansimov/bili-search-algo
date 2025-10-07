@@ -23,25 +23,24 @@ RE_ENG = r"""
     (?:                       # 非捕获组
         # 情况1：以字母开头
         [a-zA-Z]              # 以字母开头
-        [0-9a-zA-Z\-\ \.]*    # 后面可以跟字母、数字、连字符、空格、点号
+        [0-9a-zA-Z\-\.\ ]*    # 后面可以跟字母、数字、连字符、空格、点号
         [0-9a-zA-Z]           # 以字母或数字结尾
         |
         # 情况2：以数字开头（但必须包含字母）
         [0-9]                 # 以数字开头
         (?=                   # 正向前查：必须包含字母
-            [0-9a-zA-Z\-\.]*  # 不包含空格的紧密字符
+            [0-9a-zA-Z\-\.]*  # 紧密字符（不含空格）
             [a-zA-Z]          # 必须包含字母
         )
-        [0-9a-zA-Z\-\.]*      # 紧密字符序列
+        [0-9a-zA-Z\-\.\ ]*    # 后面可以跟字母、数字、连字符、空格、点号
         [0-9a-zA-Z]           # 以字母或数字结尾
-        (?:\ [a-zA-Z][0-9a-zA-Z\-\ \.]*[0-9a-zA-Z])*  # 后面可以跟空格+字母开头的部分
     )
     (?![0-9a-zA-Z])           # 后面不能是字母或数字（负向前查）
 """
 
 REP_ENG = re.compile(RE_ENG, re.VERBOSE)
 REP_DASHES = re.compile(r"\-{2,}")
-REP_DASH_WS = re.compile(r"\s+\-\s+")
+REP_DASH_WS = re.compile(r"(\ \-\ |\ \-|\-\ )")
 
 
 class EnglishWordExtractor:
@@ -56,10 +55,10 @@ class EnglishWordExtractor:
         signal.alarm(0)
 
     def clear_dash(self, text: str) -> str:
-        if "-" not in text:
-            return text
-        text = REP_DASHES.sub("|", text)
-        text = REP_DASH_WS.sub(" | ", text)
+        if "--" in text:
+            text = REP_DASHES.sub("|", text)
+        if "- " in text or " -" in text:
+            text = REP_DASH_WS.sub("|", text)
         return text
 
     def extract(self, text: str) -> list[str]:

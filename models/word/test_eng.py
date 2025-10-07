@@ -31,6 +31,8 @@ def test_re_word():
         ("test@email.com", ["test", "email.com"]),  # 邮箱格式，@分隔
         ("hello, world", ["hello", "world"]),  # 逗号分隔
         ("3000 SUV", ["SUV"]),  # 数字开头+字母，但数字以纯空格形式出现
+        ("3d3", ["3d3"]),  # 数字开头+数字结尾
+        ("3-sec", ["3-sec"]),  # 数字开头+连字符+字母
         # 中英文夹杂测试用例
         ("我喜欢Python编程", ["Python"]),  # 中文中间的英文单词
         ("使用JavaScript和CSS", ["JavaScript", "CSS"]),  # 多个英文单词
@@ -62,8 +64,10 @@ def test_re_word():
             ["https", "www.google.com", "search", "qq", "test-case"],
         ),  # URL
         # 连字符测试
-        ("i-dle - queencard", ["i-dle", "queencard"]),  # 空格-空格应该分割
-        ("t-ara - bunny style", ["t-ara", "bunny style"]),  # 空格-空格应该分割
+        ("i-dle - queencard", ["i-dle", "queencard"]),  # 分割带空格的连字符
+        ("i-dle- queencard", ["i-dle", "queencard"]),  # 分割带空格的连字符
+        ("i-dle -queencard", ["i-dle", "queencard"]),  # 分割带空格的连字符
+        ("t-ara - bunny style", ["t-ara", "bunny style"]),  #
         ("hello - world - test", ["hello", "world", "test"]),  # 多个空格-空格
         (
             "https://www.patreon.com/tomstanton---------",
