@@ -154,16 +154,24 @@ class EnglishWordsRecorder:
         ratio_str = logstr.warn(f"-{diff_ratio:.1f}%")
         logger.okay(f"  * {count_str} ({ratio_str})")
 
+    def set_dump_path(self):
+        # keep first two digits of docs_count as suffix (12345 -> 12000)
+        if self.docs_count:
+            n_bits = len(str(self.docs_count))
+            div = 10 ** (n_bits - 2)
+            suffix = self.docs_count // div * div
+        else:
+            suffix = "latest"
+        self.csv_path = Path(__file__).parent / "eng" / f"eng_freq_{suffix}.csv"
+
     def dump_records(self):
         logger.note(f"> Dump records:")
         df = pl.DataFrame(list(self.records.values()))
         logger.line(df, indent=2)
-        self.output_path = (
-            Path(__file__).parent / "eng" / f"eng_freq_{self.docs_count}.csv"
-        )
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        df.write_csv(self.output_path)
-        logger.okay(f"  * {self.output_path}")
+        self.set_dump_path()
+        self.csv_path.parent.mkdir(parents=True, exist_ok=True)
+        df.write_csv(self.csv_path)
+        logger.okay(f"  * {self.csv_path}")
 
     def log_results(self):
         top_k = 15
@@ -202,13 +210,17 @@ def main():
             "mongo_collection": "videos",
             "include_fields": "title,tags,desc",
             # "extra_filters": "u:stat.view>1k;d:pubdate>=2025-08-01",
-            "extra_filters": "u:stat.view>1k",
+            # "extra_filters": "u:stat.view>1k",
         }
     )
     logger.okay(generator.args)
     # generator.init_all_with_cli_args(set_count=False, set_bar=False)
     generator.init_all_with_cli_args()
-    recorder = EnglishWordsRecorder(generator, docs_count=generator.total_count)
+    recorder = EnglishWordsRecorder(
+        generator,
+        min_freq=5,
+        docs_count=generator.total_count,
+    )
     recorder.run()
 
 
@@ -217,3 +229,4 @@ if __name__ == "__main__":
 
     # python -m models.word.eng
     # python -m models.word.eng -m 20
+    # python -m models.word.eng -t
