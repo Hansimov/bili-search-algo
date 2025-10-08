@@ -1,12 +1,13 @@
+import argparse
 import polars as pl
 import re
 import signal
 
 from itertools import islice
 from pathlib import Path
-from sedb import MongoDocsGenerator
-from tclogger import logger, logstr, brk, dict_get
-from typing import TypedDict
+from sedb import MongoDocsGenerator, MongoDocsGeneratorArgParser
+from tclogger import PathType, logger, logstr, brk, dict_get, MergedArgParser
+from typing import TypedDict, Union
 
 from configs.envs import MONGO_ENVS
 
@@ -73,6 +74,12 @@ class EnglishWordExtractor:
             raise e
 
 
+class ChineseWordExtractor:
+    def extract(self, text: str) -> list[str]:
+        result = text.split(",")
+        return result
+
+
 class RecordType(TypedDict):
     word: str
     doc_freq: int
@@ -84,21 +91,22 @@ class RecordType(TypedDict):
 TEXT_FIELDS = ["title", "tags", "desc"]
 
 
-class EnglishWordsRecorder:
+class WordsRecorder:
     def __init__(
         self,
         generator: MongoDocsGenerator,
+        extractor: Union[EnglishWordExtractor, ChineseWordExtractor],
         text_fields: list[str] = TEXT_FIELDS,
         sort_key: str = "doc_freq",
         min_freq: int = 3,
-        docs_count: int = None,
+        dump_path: PathType = None,
     ):
         self.generator = generator
         self.text_fields = text_fields
         self.sort_key = sort_key
         self.min_freq = min_freq
-        self.docs_count = docs_count
-        self.extractor = EnglishWordExtractor()
+        self.dump_path = dump_path
+        self.extractor = extractor
         self.records: dict[str, RecordType] = {}
 
     def doc_to_text(self, doc: dict):
@@ -164,24 +172,13 @@ class EnglishWordsRecorder:
         ratio_str = logstr.warn(f"-{diff_ratio:.1f}%")
         logger.okay(f"  * {count_str} ({ratio_str})")
 
-    def set_dump_path(self):
-        # keep first two digits of docs_count as suffix (12345 -> 12000)
-        if self.docs_count:
-            n_bits = len(str(self.docs_count))
-            div = 10 ** (n_bits - 2)
-            suffix = self.docs_count // div * div
-        else:
-            suffix = "latest"
-        self.csv_path = Path(__file__).parent / "eng" / f"eng_freq_{suffix}.csv"
-
     def dump_records(self):
         logger.note(f"> Dump records:")
         df = pl.DataFrame(list(self.records.values()))
         logger.line(df, indent=2)
-        self.set_dump_path()
-        self.csv_path.parent.mkdir(parents=True, exist_ok=True)
-        df.write_csv(self.csv_path)
-        logger.okay(f"  * {self.csv_path}")
+        self.dump_path.parent.mkdir(parents=True, exist_ok=True)
+        df.write_csv(self.dump_path)
+        logger.okay(f"  * {self.dump_path}")
 
     def log_results(self):
         top_k = 15
@@ -206,8 +203,8 @@ class EnglishWordsRecorder:
                 words = self.extractor.extract(text)
             except Exception as e:
                 self.log_error(e, text=text, doc=doc)
-                # raise e
-                continue
+                raise e
+                # continue
 
             # if words:
             #     logger.okay(f"[{doc_idx}]: {words}")
@@ -223,13 +220,46 @@ class EnglishWordsRecorder:
         self.dump_records()
 
 
-def main():
+class RecordArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("-mf", "--min_freq", type=int, default=3)
+        self.add_argument("-en", "--english", action="store_true")
+        self.add_argument("-zh", "--chinese", action="store_true")
+        self.args, _ = self.parse_known_args()
+
+
+def get_dump_path(docs_count: int = None, lang: str = None) -> Path:
+    if docs_count:
+        # keep first 2 digits of docs_count as suffix (12345 -> 12000)
+        n_bits = len(str(docs_count))
+        div = 10 ** (n_bits - 2)
+        suffix = docs_count // div * div
+    else:
+        suffix = "latest"
+    if not lang:
+        lang = "en"
+    dump_path = Path(__file__).parent / "eng" / f"{lang}_freq_{suffix}.csv"
+    return dump_path
+
+
+def main(args: argparse.Namespace):
+    if args.chinese:
+        lang = "zh"
+        include_fields = "tags"
+        extractor = ChineseWordExtractor()
+    else:
+        lang = "en"
+        include_fields = "title,tags,desc"
+        extractor = EnglishWordExtractor()
+    text_fields = include_fields.split(",")
+
     generator = MongoDocsGenerator()
     generator.init_cli_args(
         ikvs={
             **MONGO_ENVS,
             "mongo_collection": "videos",
-            "include_fields": "title,tags,desc",
+            "include_fields": include_fields,
             # "extra_filters": "u:stat.view>1k;d:pubdate>=2025-08-01",
             # "extra_filters": "u:stat.view>1k",
         }
@@ -237,17 +267,23 @@ def main():
     logger.okay(generator.args)
     # generator.init_all_with_cli_args(set_count=False, set_bar=False)
     generator.init_all_with_cli_args()
-    recorder = EnglishWordsRecorder(
-        generator,
-        min_freq=5,
-        docs_count=generator.total_count,
+
+    dump_path = get_dump_path(docs_count=generator.total_count, lang=lang)
+
+    recorder = WordsRecorder(
+        generator=generator,
+        extractor=extractor,
+        text_fields=text_fields,
+        min_freq=args.min_freq,
+        dump_path=dump_path,
     )
     recorder.run()
 
 
 if __name__ == "__main__":
-    main()
+    arg_parser = MergedArgParser(MongoDocsGeneratorArgParser, RecordArgParser)
+    args = arg_parser.parse_args()
+    main(arg_parser.args)
 
-    # python -m models.word.eng
-    # python -m models.word.eng -m 20
-    # python -m models.word.eng -t
+    # python -m models.word.eng --en -t -m 50000
+    # python -m models.word.eng --zh -t -m 50000
