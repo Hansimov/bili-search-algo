@@ -44,7 +44,7 @@ REP_DASHES = re.compile(r"\-{2,}")
 REP_DASH_WS = re.compile(r"(\ \-\ |\ \-|\-\ )")
 
 
-class EnglishWordExtractor:
+class EnglishWordsExtractor:
     def timeout_handler(self, signum, frame):
         raise RuntimeError("re.match timeout")
 
@@ -74,10 +74,19 @@ class EnglishWordExtractor:
             raise e
 
 
-class ChineseWordExtractor:
+REP_PURE_ENG = re.compile(r"^[0-9a-zA-Z\-\.\ ]+$")
+
+
+class ChineseWordsExtractor:
     def extract(self, text: str) -> list[str]:
-        result = text.split(",")
-        return result
+        words = re.split(r"[,#]", text)
+        res = []
+        for w in words:
+            w = w.strip()
+            if REP_PURE_ENG.match(w):
+                continue
+            res.append(w)
+        return res
 
 
 class RecordType(TypedDict):
@@ -95,7 +104,7 @@ class WordsRecorder:
     def __init__(
         self,
         generator: MongoDocsGenerator,
-        extractor: Union[EnglishWordExtractor, ChineseWordExtractor],
+        extractor: Union[EnglishWordsExtractor, ChineseWordsExtractor],
         text_fields: list[str] = TEXT_FIELDS,
         sort_key: str = "doc_freq",
         min_freq: int = 3,
@@ -206,6 +215,8 @@ class WordsRecorder:
                 raise e
                 # continue
 
+            if not words:
+                continue
             # if words:
             #     logger.okay(f"[{doc_idx}]: {words}")
             unique_words = set(words)
@@ -223,7 +234,7 @@ class WordsRecorder:
 class RecordArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.add_argument("-mf", "--min_freq", type=int, default=3)
+        self.add_argument("-mf", "--min-freq", type=int, default=3)
         self.add_argument("-en", "--english", action="store_true")
         self.add_argument("-zh", "--chinese", action="store_true")
         self.args, _ = self.parse_known_args()
@@ -247,11 +258,11 @@ def main(args: argparse.Namespace):
     if args.chinese:
         lang = "zh"
         include_fields = "tags"
-        extractor = ChineseWordExtractor()
+        extractor = ChineseWordsExtractor()
     else:
         lang = "en"
         include_fields = "title,tags,desc"
-        extractor = EnglishWordExtractor()
+        extractor = EnglishWordsExtractor()
     text_fields = include_fields.split(",")
 
     generator = MongoDocsGenerator()
@@ -281,9 +292,11 @@ def main(args: argparse.Namespace):
 
 
 if __name__ == "__main__":
-    arg_parser = MergedArgParser(MongoDocsGeneratorArgParser, RecordArgParser)
+    arg_parser = MergedArgParser(RecordArgParser, MongoDocsGeneratorArgParser)
     args = arg_parser.parse_args()
-    main(arg_parser.args)
+    main(args)
 
-    # python -m models.word.eng --en -t -m 50000
-    # python -m models.word.eng --zh -t -m 50000
+    # python -m models.word.eng -ed -en -mn 50000
+    # python -m models.word.eng -ec -zh -mf 6 -mn 5000000
+    # python -m models.word.eng -ec -en -mf 6
+    # python -m models.word.eng -ec -zh -mf 6
