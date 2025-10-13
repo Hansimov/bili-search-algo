@@ -38,7 +38,17 @@ or with more params:
 python -m models.sentencepiece.merge -vs 1000000 -i sp_518m_ -o sp_merged
 ```
 
-See detailed usage in [merge.py](models/sentencepiece/merge.py).
+See more example usages in comments of [merge.py](models/sentencepiece/merge.py).
+
+## models.sentencepiece.convert
+
+Convert sentencepiece vocab to txt:
+
+```bash
+python -m models.sentencepiece.convert
+```
+
+See more example usages in comments of [convert.py](models/sentencepiece/convert.py).
 
 ## data_utils.videos.cache
 

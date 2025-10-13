@@ -74,12 +74,12 @@ class EnglishWordsExtractor:
             raise e
 
 
-REP_PURE_ENG = re.compile(r"^[0-9a-zA-Z\-\.\ ]+$")
+REP_PURE_ENG = re.compile(r"^[0-9a-zA-Z\_\-\.\ ]+$")
 
 
 class ChineseWordsExtractor:
     def extract(self, text: str) -> list[str]:
-        words = re.split(r"[,#]", text)
+        words = re.split(r"[,#@]", text)
         res = []
         for w in words:
             w = w.strip()
