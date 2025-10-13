@@ -10,6 +10,7 @@ secrets.json
 *.npy
 *.model
 *.vocab
+*.txt
 *.old
 *.crt
 *.prof

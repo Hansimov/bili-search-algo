@@ -7,7 +7,7 @@ from itertools import islice
 from pathlib import Path
 from sedb import MongoDocsGenerator, MongoDocsGeneratorArgParser
 from tclogger import PathType, logger, logstr, brk, dict_get, MergedArgParser
-from typing import TypedDict, Union
+from typing import TypedDict, Union, Literal
 
 from configs.envs import MONGO_ENVS
 
@@ -240,7 +240,7 @@ class RecordArgParser(argparse.ArgumentParser):
         self.args, _ = self.parse_known_args()
 
 
-def get_dump_path(docs_count: int = None, lang: str = None) -> Path:
+def get_dump_path(docs_count: int = None, lang: Literal["zh", "en"] = None) -> Path:
     if docs_count:
         # keep first 2 digits of docs_count as suffix (12345 -> 12000)
         n_bits = len(str(docs_count))
