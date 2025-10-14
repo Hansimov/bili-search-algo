@@ -80,8 +80,9 @@ class SentencePieceConverter:
 
 
 class WordRecordsConverter:
-    def __init__(self, min_doc_freq: int = 20):
+    def __init__(self, min_doc_freq: int = 20, max_char_len: int = 32):
         self.min_doc_freq = min_doc_freq
+        self.max_char_len = max_char_len
 
     def set_csv_path(self, csv_path: PathType):
         self.csv_path = Path(csv_path)
@@ -105,7 +106,6 @@ class WordRecordsConverter:
         words: list[str],
         ignore_one_char: bool = True,
         ignore_specials: bool = True,
-        max_char_len: int = 50,
     ) -> list[str]:
         filtered_words = []
         for word in words:
@@ -114,7 +114,7 @@ class WordRecordsConverter:
             # word contain any special characters
             if ignore_specials and PT_SPECIALS.search(word):
                 continue
-            if max_char_len and chars_len(word) > max_char_len:
+            if self.max_char_len and chars_len(word) > self.max_char_len:
                 continue
             filtered_words.append(word)
         return filtered_words
@@ -179,6 +179,7 @@ class ConverterMergerArgParser(argparse.ArgumentParser):
         self.add_argument("-r", "--record", action="store_true")
         self.add_argument("-m", "--merge", action="store_true")
         self.add_argument("-n", "--min-doc-freq", type=int, default=20)
+        self.add_argument("-l", "--max-char-len", type=int, default=32)
         self.add_argument("-o", "--save-path", type=str)
         self.args, _ = self.parse_known_args()
 
@@ -197,7 +198,9 @@ def main():
     if args.record:
         doc_count = 770000000
         en_csv_path = get_dump_path(doc_count, lang="en")
-        word_converter = WordRecordsConverter(min_doc_freq=args.min_doc_freq)
+        word_converter = WordRecordsConverter(
+            min_doc_freq=args.min_doc_freq, max_char_len=args.max_char_len
+        )
         word_converter.set_csv_path(en_csv_path)
         word_converter.to_txt()
         txt_paths.append(word_converter.txt_path)
@@ -218,4 +221,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-    # python -m models.sentencepiece.convert -s -r -m -n 20
+    # python -m models.sentencepiece.convert -s -r -m -n 20 -l 32
