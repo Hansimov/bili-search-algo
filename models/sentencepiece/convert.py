@@ -14,6 +14,10 @@ PT_ONE_WORD = re.compile(RE_ONE_WORD)
 RE_ENG_WORD = r"^[a-zA-Z\s▂\-\_]+$"
 PT_ENG_WORD = re.compile(RE_ENG_WORD)
 
+# RE_SPECIALS = r"[()（）\[\]【】{}<>《》「」‘’“”'\"`~!！@#$￥%^&*+=;；:：,，。?？\\|\/]"
+RE_SPECIALS = r"[()\[\]{}<>'\"`~!@#$%^&*+=;,?|\\\/]"
+PT_SPECIALS = re.compile(RE_SPECIALS)
+
 
 class SentencePieceConverter:
     def __init__(self, model_path: PathType = SP_MERGED_MODEL_PATH):
@@ -31,7 +35,7 @@ class SentencePieceConverter:
         logger.mesg(f"{brk(len(self.vocab_scores))}")
         logger.file(f"  * {self.vocab_path}")
 
-    def to_txt(
+    def filter_vocabs(
         self,
         ignore_score: bool = True,
         sep: str = ",",
@@ -39,9 +43,7 @@ class SentencePieceConverter:
         ignore_eng_word: bool = True,
         ignore_one_char: bool = True,
         ignore_one_word: bool = True,
-    ) -> Path:
-        self.load_vocabs()
-        logger.note("> Convert vocab to txt:", end=" ")
+    ) -> list[str]:
         lines = []
         for vocab_score in self.vocab_scores:
             if len(vocab_score) == 2:
@@ -62,16 +64,24 @@ class SentencePieceConverter:
             else:
                 line = f"{vocab}{sep}{score}"
             lines.append(line)
+        return lines
+
+    def save_txt(self, lines: list[str]):
+        logger.note("> Save to txt:", end=" ")
         with open(self.txt_path, "w", encoding="utf-8") as wf:
             wf.write("\n".join(lines) + "\n")
         logger.mesg(f"{brk(len(lines))}")
         logger.okay(f"  * {self.txt_path}")
 
+    def to_txt(self):
+        self.load_vocabs()
+        lines = self.filter_vocabs()
+        self.save_txt(lines)
+
 
 class WordRecordsConverter:
-    def __init__(self, csv_path: PathType):
-        self.csv_path = Path(csv_path)
-        self.txt_path = self.csv_path.with_suffix(".txt")
+    def __init__(self, min_doc_freq: int = 20):
+        self.min_doc_freq = min_doc_freq
 
     def set_csv_path(self, csv_path: PathType):
         self.csv_path = Path(csv_path)
@@ -90,11 +100,31 @@ class WordRecordsConverter:
         logger.mesg(f"{brk(len(words))}")
         logger.okay(f"  * {self.txt_path}")
 
+    def filter_words(
+        self,
+        words: list[str],
+        ignore_one_char: bool = True,
+        ignore_specials: bool = True,
+    ) -> list[str]:
+        filtered_words = []
+        for word in words:
+            if ignore_one_char and len(word) <= 1:
+                continue
+            # word contain any special characters
+            if ignore_specials and PT_SPECIALS.search(word):
+                continue
+            filtered_words.append(word)
+        return filtered_words
+
     def to_txt(self):
         df = self.load_csv()
         logger.note("> Save to txt:", end=" ")
-        # only keep first column, and remove header
+        # filter by doc_freq
+        if "doc_freq" in df.columns:
+            df = df.filter(pl.col("doc_freq") >= self.min_doc_freq)
+        # only keep first column ("word"), and remove header
         words = df.select(df.columns[0]).to_series().to_list()
+        words = self.filter_words(words)
         self.save_txt(words)
 
 
@@ -133,6 +163,9 @@ class VocabsMerger:
             f"* Merged vocabs: "
             f"{logstr.okay(nodup_count)}/{logstr.mesg(total_count)}"
         )
+        logger.note(f"> Sorting vocabs:")
+        # sort by len(vocab) asc, then alphabetically
+        merged_vocabs.sort(key=lambda x: (len(x), x))
         self.save_vocabs(merged_vocabs, save_path)
 
 
@@ -142,6 +175,7 @@ class ConverterMergerArgParser(argparse.ArgumentParser):
         self.add_argument("-s", "--sentencepiece", action="store_true")
         self.add_argument("-r", "--record", action="store_true")
         self.add_argument("-m", "--merge", action="store_true")
+        self.add_argument("-n", "--min-doc-freq", type=int, default=20)
         self.add_argument("-o", "--save-path", type=str)
         self.args, _ = self.parse_known_args()
 
@@ -160,7 +194,8 @@ def main():
     if args.record:
         doc_count = 770000000
         en_csv_path = get_dump_path(doc_count, lang="en")
-        word_converter = WordRecordsConverter(csv_path=en_csv_path)
+        word_converter = WordRecordsConverter(min_doc_freq=args.min_doc_freq)
+        word_converter.set_csv_path(en_csv_path)
         word_converter.to_txt()
         txt_paths.append(word_converter.txt_path)
 
@@ -180,4 +215,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-    # python -m models.sentencepiece.convert -s -r -m
+    # python -m models.sentencepiece.convert -s -r -m -n 20
