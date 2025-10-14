@@ -3,7 +3,7 @@ import re
 import polars as pl
 
 from pathlib import Path
-from tclogger import PathType, PathsType, logger, logstr, brk
+from tclogger import PathType, PathsType, logger, logstr, brk, chars_len
 
 from configs.envs import SP_MERGED_MODEL_PATH
 from models.word.eng import get_dump_path
@@ -105,6 +105,7 @@ class WordRecordsConverter:
         words: list[str],
         ignore_one_char: bool = True,
         ignore_specials: bool = True,
+        max_char_len: int = 50,
     ) -> list[str]:
         filtered_words = []
         for word in words:
@@ -112,6 +113,8 @@ class WordRecordsConverter:
                 continue
             # word contain any special characters
             if ignore_specials and PT_SPECIALS.search(word):
+                continue
+            if max_char_len and chars_len(word) > max_char_len:
                 continue
             filtered_words.append(word)
         return filtered_words
@@ -165,7 +168,7 @@ class VocabsMerger:
         )
         logger.note(f"> Sorting vocabs:")
         # sort by len(vocab) asc, then alphabetically
-        merged_vocabs.sort(key=lambda x: (len(x), x))
+        merged_vocabs.sort(key=lambda x: (chars_len(x), x))
         self.save_vocabs(merged_vocabs, save_path)
 
 
