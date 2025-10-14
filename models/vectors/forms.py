@@ -9,6 +9,15 @@ def trunc(num: float, trunc_at: float = 0, trunc_to: float = 0) -> float:
     return num
 
 
+def flat_arr(arr: np.ndarray) -> np.ndarray:
+    """Flatten 2D ndarray shape=(1,N) to 1D ndarray shape=(N,).
+    If arr is already 1D or has more than 1 row, return as is.
+    """
+    if arr.ndim == 2 and arr.shape[0] == 1:
+        return arr.flatten()
+    return arr
+
+
 def stretch_copy(arr: np.ndarray, scale: int = 5) -> np.ndarray:
     return arr.repeat(scale, axis=0)
 

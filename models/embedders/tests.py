@@ -3,6 +3,7 @@ from typing import Union
 
 from models.fasttext.test import TEST_PAIRS
 from models.vectors.calcs import dot_sim
+from models.vectors.forms import flat_arr
 
 
 class EmbedderBase:
@@ -27,14 +28,14 @@ def test_embedder(
             query = " ".join(query)
         logger.note(f"  * [{logstr.file(query)}]: ")
         query = add_prefix(query, prefix=query_prefix)
-        query_vector = embedder.embed(query)
+        query_vector = flat_arr(embedder.embed(query))
         sample_vectors = []
         scores = []
         for sample in samples:
             if isinstance(sample, list):
                 sample = " ".join(sample)
             sample = add_prefix(sample, prefix=passage_prefix)
-            sample_vector = embedder.embed(sample)
+            sample_vector = flat_arr(embedder.embed(sample))
             sample_vectors.append(sample_vector)
             score = dot_sim(query_vector, sample_vector, 4)
             scores.append(score)

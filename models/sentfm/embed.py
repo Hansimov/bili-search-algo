@@ -1,7 +1,7 @@
 import numpy as np
 
-from sentence_transformers import SentenceTransformer
-from tclogger import logger, logstr, PathType, brk, norm_path, strf_path
+from tclogger import logger, PathType
+from webu import EmbedClient
 from typing import Union, Literal
 
 """
@@ -64,6 +64,8 @@ class SentfmEmbedder:
         self.verbose = verbose
 
     def load_model(self):
+        from sentence_transformers import SentenceTransformer
+
         if self.verbose:
             logger.note(f"> Loading model:")
             if self.model_name:
@@ -124,10 +126,17 @@ def test_e5():
     test_embedder(embedder, query_prefix="query:", passage_prefix="passage:")
 
 
+def test_tei():
+    endpoint = "http://127.0.0.1:28888/embed"
+    embedder = EmbedClient(endpoint, verbose=False)
+    test_embedder(embedder)
+
+
 if __name__ == "__main__":
     from models.embedders.tests import test_embedder
 
     # test_e5()
-    test_bge_zh()
+    # test_bge_zh()
+    test_tei()
 
     # python -m models.sentfm.embed
