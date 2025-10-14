@@ -5,7 +5,7 @@ from tclogger import logger, logstr, PathType, brk, norm_path, strf_path
 from typing import Union, Literal
 
 """
-Install dependencies:
+# Install dependencies
 
 ```sh
 pip install --upgrade torch torchvision
@@ -13,15 +13,34 @@ pip install --upgrade tensorrt
 pip install --upgrade 'sentence-transformers[onnx-gpu]'
 ```
 
+# References
+
+thenlper/gte-large-zh
+- https://huggingface.co/thenlper/gte-large-zh
+
+Alibaba-NLP/gte-multilingual-base
+- https://huggingface.co/Alibaba-NLP/gte-multilingual-base
+
+huggingface/text-embeddings-inference
+- https://github.com/huggingface/text-embeddings-inference
+
+# Run `BGE-Base-ZH-V1.5`
+
 Download ONNX model manually if the auto-download fails:
 - https://huggingface.co/Xenova/bge-base-zh-v1.5
 
 ```sh
-export HF_ENDPOINT=https://alpha.hf-mirror.com
+export HF_ENDPOINT=https://hf-mirror.com
 export CURRENT_MODEL="Xenova/bge-base-zh-v1.5"
 hf auth login
 hf download "$CURRENT_MODEL" --include "*.json" "*.txt" "onnx/model_int8.onnx"
 # ~/downloads/hfd.sh "$CURRENT_MODEL" --local-dir "/home/<username>/.cache/huggingface/hub/models--Xenova--bge-base-zh-v1.5" --include "*.json" "*.txt" "onnx/model_int8.onnx"
+```
+
+# Run `gte-multilingual-base` with docker:
+
+```
+./run_embed.sh
 ```
 
 """
@@ -55,8 +74,9 @@ class SentfmEmbedder:
         self.model = SentenceTransformer(
             self.model_name or self.model_path,
             device=self.device,
-            backend=self.backend,
+            trust_remote_code=True,
             model_kwargs=self.model_kwargs,
+            backend=self.backend,
         )
 
     def embed(self, sentences: Union[str, list[str]]) -> np.ndarray:
@@ -64,7 +84,11 @@ class SentfmEmbedder:
 
 
 def test_bge_zh():
-    model_name = "BAAI/bge-base-zh-v1.5"
+    # model_name = "BAAI/bge-base-zh-v1.5"
+    # model_name = "BAAI/bge-large-zh-v1.5"
+    # model_name = "thenlper/gte-large-zh"
+    model_name = "Alibaba-NLP/gte-multilingual-base"
+
     model_path = None
     model_kwargs = None
 
@@ -78,7 +102,7 @@ def test_bge_zh():
     embedder = SentfmEmbedder(
         model_name=model_name,
         model_path=model_path,
-        device="cpu",
+        device="cuda",
         backend="torch",
         model_kwargs=model_kwargs,
         verbose=True,
