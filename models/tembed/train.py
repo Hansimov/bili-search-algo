@@ -154,6 +154,42 @@ class QuerySearcher:
         return res
 
 
+class PassageJsonManager:
+    """Manage multiple jsons with set_file_idx, set_item_idx, load_passages, and save_result."""
+
+    def __init__(self, items_per_file: int = 1000):
+        self.items_per_file = items_per_file
+        self.base_dir = Path(__file__).parent / "passages"
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.current_file_idx = 0
+        self.current_item_idx = -1
+
+    def set_file_idx(self, item_idx: int):
+        self.current_file_idx = item_idx // self.items_per_file
+        self.current_file_path = (
+            self.base_dir / f"passage_{self.current_file_idx:04d}.json"
+        )
+
+    def load_passages(self) -> dict:
+        if not self.current_file_path.exists():
+            passages = {}
+        else:
+            with open(self.current_file_path, encoding="utf-8") as f:
+                passages = json.load(f)
+        self.passages = passages
+
+    def set_item_idx(self, item_idx: int):
+        self.current_item_idx = item_idx
+        if item_idx % self.items_per_file == 0:
+            self.set_file_idx(item_idx)
+            self.load_passages()
+
+    def save_result(self, query: str, result: dict):
+        self.passages[query] = result
+        with open(self.current_file_path, encoding="utf-8", mode="w") as wf:
+            json.dump(self.passages, wf, ensure_ascii=False, indent=2)
+
+
 class PassagesGenerator:
     """Generate data for text-embedding examination."""
 
@@ -161,36 +197,22 @@ class PassagesGenerator:
         self.samples_path = Path(__file__).parent / "keyword_samples.csv"
         self.passages_path = Path(__file__).parent / "query_passages.json"
         self.searcher = QuerySearcher()
+        self.manager = PassageJsonManager(items_per_file=1000)
 
     def load_samples(self) -> pl.DataFrame:
         logger.note(f"> Loading samples from:")
         self.df = pl.read_csv(self.samples_path)
         logger.okay(f"  * {self.samples_path}")
-        # logger.line(self.df, indent=4)
-
-    def load_passages(self) -> dict:
-        if not self.passages_path.exists():
-            self.passages_path.parent.mkdir(parents=True, exist_ok=True)
-            passages = {}
-        else:
-            with open(self.passages_path, encoding="utf-8") as f:
-                passages = json.load(f)
-        self.passages = passages
-
-    def save_result(self, query: str, result: dict):
-        self.passages[query] = result
-        with open(self.passages_path, encoding="utf-8", mode="w") as f:
-            json.dump(self.passages, f, ensure_ascii=False, indent=2)
 
     def run(self):
         self.load_samples()
-        self.load_passages()
         bar = TCLogbar(total=len(self.df), desc="* keyword")
         for idx, (word, doc_freq) in enumerate(
             zip(self.df["word"], self.df["doc_freq"])
         ):
             bar.update(increment=1, desc=f"{chars_slice(word,end=10)}")
-            if word in self.passages:
+            self.manager.set_item_idx(idx)
+            if word in self.manager.passages:
                 continue
             try:
                 res = self.searcher.search(word)
@@ -199,7 +221,7 @@ class PassagesGenerator:
                 # break
                 continue
             res.update({"query": word, "doc_freq": doc_freq, "query_idx": idx})
-            self.save_result(word, res)
+            self.manager.save_result(word, res)
 
 
 class TembedTrainerArgParser(argparse.ArgumentParser):
