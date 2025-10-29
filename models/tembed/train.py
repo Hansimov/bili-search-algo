@@ -2,9 +2,11 @@ import argparse
 import random
 import polars as pl
 
+from copy import deepcopy
 from pathlib import Path
 from sedb import ElasticOperator
 from tclogger import logger, logstr, brk, dict_to_str
+from tclogger import dict_get, dict_pop, dict_flatten
 from typing import Literal
 
 from models.word.eng import get_dump_path
@@ -48,6 +50,64 @@ class QuerySampler:
         logger.okay(f"  * {self.save_path}")
 
 
+class ElasticResultsParser:
+    """Parse results from elasticsearch."""
+
+    def parse_source(self, source: dict) -> dict:
+        res = deepcopy(source)
+        for key in ["_index", "_id"]:
+            dict_pop(res, key)
+        for keys in ["owner", "stat"]:
+            dict_flatten(res, keys=keys, in_replace=True, expand_sub=True)
+        return res
+
+    def parse_hit(self, hit: dict) -> dict:
+        source = dict_get(hit, "_source", {})
+        parsed_source = self.parse_source(source)
+        extra_info = {
+            "elastic_score": dict_get(hit, "_score", 0),
+        }
+        hit_info = {
+            **parsed_source,
+            **extra_info,
+        }
+        return hit_info
+
+    def parse(self, es_resp: dict) -> dict:
+        """Example output:
+        {
+            "hits": [
+                {
+                    "bvid": "...",
+                    "title": "...",
+                    "tags": "...",
+                    "desc": "...",
+                    "owner.name": "...",
+                    "stat.favorite": ...,
+                    "elastic_score": ...,
+                    "elastic_score_rank": ...,
+                },
+                ...
+            ],
+            "total_hits": ...,
+            "return_hits": ...,
+        }
+        """
+        hits_dict = dict_get(dict(es_resp), "hits", {})
+        hits = hits_dict.get("hits", [])
+        hits_info = []
+        for idx, hit in enumerate(hits):
+            hit_info = self.parse_hit(hit)
+            hit_info["elastic_score_rank"] = idx + 1
+            hits_info.append(hit_info)
+        res = {
+            "hits": hits_info,
+            "return_hits": len(hits_info),
+            "total_hits": hits_dict.get("total", {}).get("value", -1),
+        }
+        return res
+
+
 class TextEmbedExamineDataGenerator:
     """Generate examine data for text embedding model tuning."""
 
@@ -55,6 +115,7 @@ class TextEmbedExamineDataGenerator:
         self.configs = SECRETS["elastic_dev"]
         self.index_name = "bili_videos_dev5"
         self.es = ElasticOperator(configs=self.configs, connect_cls=self.__class__)
+        self.parser = ElasticResultsParser()
 
     def query_to_es_dict(self, query: str) -> dict:
         query_dict = {
@@ -73,14 +134,16 @@ class TextEmbedExamineDataGenerator:
                     "min_kept_tokens_ratio": -1,
                 }
             },
-            "_source": ["title", "tags", "owner.name", "desc", "stat.favorite"],
+            "_source": ["bvid", "title", "tags", "owner.name", "desc", "stat.favorite"],
             "size": 10,
+            "track_total_hits": True,
         }
         return query_dict
 
     def search(self, query: str) -> dict:
         query_dict = self.query_to_es_dict(query)
-        res = self.es.client.search(index=self.index_name, body=query_dict)
+        es_resp = self.es.client.search(index=self.index_name, body=query_dict)
+        res = self.parser.parse(es_resp)
         return res
 
 
