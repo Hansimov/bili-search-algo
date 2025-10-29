@@ -1,12 +1,14 @@
 import argparse
+import json
 import random
 import polars as pl
 
 from copy import deepcopy
 from pathlib import Path
 from sedb import ElasticOperator
-from tclogger import logger, logstr, brk, dict_to_str
+from tclogger import logger, logstr, brk, chars_slice
 from tclogger import dict_get, dict_pop, dict_flatten
+from tclogger import TCLogbar
 from typing import Literal
 
 from models.word.eng import get_dump_path
@@ -48,6 +50,11 @@ class QuerySampler:
         logger.note(f"> Saving samples to csv:")
         self.samples.write_csv(self.save_path)
         logger.okay(f"  * {self.save_path}")
+
+    def run(self):
+        self.load_csv(docs_count=770000000, lang="zh")
+        self.random_samples(num=10000, seed=2)
+        self.save_csv()
 
 
 class ElasticResultsParser:
@@ -108,8 +115,8 @@ class ElasticResultsParser:
         return res
 
 
-class TextEmbedExamineDataGenerator:
-    """Generate examine data for text embedding model tuning."""
+class QuerySearcher:
+    """Search results of queries from elasticsearch."""
 
     def __init__(self):
         self.configs = SECRETS["elastic_dev"]
@@ -147,6 +154,54 @@ class TextEmbedExamineDataGenerator:
         return res
 
 
+class PassagesGenerator:
+    """Generate data for text-embedding examination."""
+
+    def __init__(self):
+        self.samples_path = Path(__file__).parent / "keyword_samples.csv"
+        self.passages_path = Path(__file__).parent / "query_passages.json"
+        self.searcher = QuerySearcher()
+
+    def load_samples(self) -> pl.DataFrame:
+        logger.note(f"> Loading samples from:")
+        self.df = pl.read_csv(self.samples_path)
+        logger.okay(f"  * {self.samples_path}")
+        # logger.line(self.df, indent=4)
+
+    def load_passages(self) -> dict:
+        if not self.passages_path.exists():
+            self.passages_path.parent.mkdir(parents=True, exist_ok=True)
+            passages = {}
+        else:
+            with open(self.passages_path, encoding="utf-8") as f:
+                passages = json.load(f)
+        self.passages = passages
+
+    def save_result(self, query: str, result: dict):
+        self.passages[query] = result
+        with open(self.passages_path, encoding="utf-8", mode="w") as f:
+            json.dump(self.passages, f, ensure_ascii=False, indent=2)
+
+    def run(self):
+        self.load_samples()
+        self.load_passages()
+        bar = TCLogbar(total=len(self.df), desc="* keyword")
+        for idx, (word, doc_freq) in enumerate(
+            zip(self.df["word"], self.df["doc_freq"])
+        ):
+            bar.update(increment=1, desc=f"{chars_slice(word,end=10)}")
+            if word in self.passages:
+                continue
+            try:
+                res = self.searcher.search(word)
+            except Exception as e:
+                logger.warn(f"× Error query: {word}")
+                # break
+                continue
+            res.update({"query": word, "doc_freq": doc_freq, "query_idx": idx})
+            self.save_result(word, res)
+
+
 class TembedTrainerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -161,17 +216,11 @@ def main():
 
     if args.sample:
         sampler = QuerySampler()
-        sampler.load_csv(docs_count=770000000, lang="zh")
-        sampler.random_samples(num=10000, seed=2)
-        sampler.save_csv()
+        sampler.run()
 
     if args.generate:
-        generator = TextEmbedExamineDataGenerator()
-        queries = ["机器学习"]
-        for query in queries:
-            logger.note(f"> Query: {logstr.mesg(brk(query))}")
-            res = generator.search(query)
-            logger.line(dict_to_str(res), indent=4)
+        generator = PassagesGenerator()
+        generator.run()
 
 
 if __name__ == "__main__":
