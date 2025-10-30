@@ -80,7 +80,7 @@ class ElasticResultsParser:
         }
         return hit_info
 
-    def parse(self, es_resp: dict) -> dict:
+    def parse(self, es_resp: dict, ranks: list[int] = None) -> dict:
         """Example output:
         {
             "hits": [
@@ -104,6 +104,8 @@ class ElasticResultsParser:
         hits = hits_dict.get("hits", [])
         hits_info = []
         for idx, hit in enumerate(hits):
+            if ranks and (idx + 1) not in ranks:
+                continue
             hit_info = self.parse_hit(hit)
             hit_info["elastic_score_rank"] = idx + 1
             hits_info.append(hit_info)
@@ -115,6 +117,9 @@ class ElasticResultsParser:
         return res
 
 
+PASSAGE_PICK_RANKS = [1, 2, 3, 4, 5, 10, 20, 30, 40, 50]
+
+
 class QuerySearcher:
     """Search results of queries from elasticsearch."""
 
@@ -124,7 +129,7 @@ class QuerySearcher:
         self.es = ElasticOperator(configs=self.configs, connect_cls=self.__class__)
         self.parser = ElasticResultsParser()
 
-    def query_to_es_dict(self, query: str) -> dict:
+    def query_to_es_dict(self, query: str, size: int = 10) -> dict:
         query_dict = {
             "query": {
                 "es_tok_query_string": {
@@ -142,15 +147,24 @@ class QuerySearcher:
                 }
             },
             "_source": ["bvid", "title", "tags", "owner.name", "desc", "stat.favorite"],
-            "size": 10,
+            "size": size,
             "track_total_hits": True,
         }
         return query_dict
 
-    def search(self, query: str) -> dict:
-        query_dict = self.query_to_es_dict(query)
+    def topk(self, query: str, size: int = 10) -> dict:
+        query_dict = self.query_to_es_dict(query, size=size)
         es_resp = self.es.client.search(index=self.index_name, body=query_dict)
         res = self.parser.parse(es_resp)
+        return res
+
+    def pick(
+        self, query: str, size: int = 50, ranks: list = PASSAGE_PICK_RANKS
+    ) -> dict:
+        """variant of `topk`, pick results with given ranks (idx+1)"""
+        query_dict = self.query_to_es_dict(query, size=size)
+        es_resp = self.es.client.search(index=self.index_name, body=query_dict)
+        res = self.parser.parse(es_resp, ranks=ranks)
         return res
 
 
@@ -190,6 +204,9 @@ class PassageJsonManager:
             json.dump(self.passages, wf, ensure_ascii=False, indent=2)
 
 
+QUERY_TANS_TABLE = str.maketrans("", "", "/[]()!")
+
+
 class PassagesGenerator:
     """Generate data for text-embedding examination."""
 
@@ -204,18 +221,25 @@ class PassagesGenerator:
         self.df = pl.read_csv(self.samples_path)
         logger.okay(f"  * {self.samples_path}")
 
-    def run(self):
+    def unify_query(self, query: str) -> str:
+        return query.translate(QUERY_TANS_TABLE)
+
+    def run(self, search_type: Literal["topk", "pick"] = "pick"):
         self.load_samples()
         bar = TCLogbar(total=len(self.df), desc="* keyword")
         for idx, (word, doc_freq) in enumerate(
             zip(self.df["word"], self.df["doc_freq"])
         ):
+            word = self.unify_query(word)
             bar.update(increment=1, desc=f"{chars_slice(word,end=10)}")
             self.manager.set_item_idx(idx)
             if word in self.manager.passages:
                 continue
             try:
-                res = self.searcher.search(word)
+                if search_type == "pick":
+                    res = self.searcher.pick(word)
+                else:
+                    res = self.searcher.topk(word)
             except Exception as e:
                 logger.warn(f"× Error query: {word}")
                 # break
@@ -229,6 +253,9 @@ class TembedTrainerArgParser(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
         self.add_argument("-s", "--sample", action="store_true")
         self.add_argument("-g", "--generate", action="store_true")
+        self.add_argument(
+            "-t", "--search-type", type=str, choices=["topk", "pick"], default="pick"
+        )
         self.args = self.parse_args()
 
 
@@ -242,7 +269,7 @@ def main():
 
     if args.generate:
         generator = PassagesGenerator()
-        generator.run()
+        generator.run(search_type=args.search_type)
 
 
 if __name__ == "__main__":
