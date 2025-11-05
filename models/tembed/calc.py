@@ -1,9 +1,10 @@
 import json
 
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from sedb import RedisOperator, RocksOperator
-from tclogger import logger
+from tclogger import logger, log_error
 from tfmx import EmbedClient
 from typing import Literal, Optional, Union, Any
 
@@ -11,7 +12,7 @@ from configs.envs import REDIS_ENVS
 from models.tembed.train import PassageJsonManager
 
 EmbedModelType = Literal["gte", "bge"]
-EmbedKeyType = Literal["query", "bv"]
+EmbedKeyType = Literal["qr", "bv"]
 
 
 @dataclass(frozen=True)
@@ -23,34 +24,29 @@ class KeyParts:
     redis_field: Optional[str]
 
 
-QUERY_PREFIX = "query:"
-BV_PREFIX = "bv:"
-
-
-def log_error(mesg: str):
-    logger.warn(mesg)
-    raise ValueError(mesg)
+QR_PREFIX = "tembed.qr:"
+BV_PREFIX = "tembed.bv:"
 
 
 class EmbeddingKeyConverter:
     """Convert keys mappings for embeddings in RocksDB and Redis."""
 
-    def is_query_key(self, key: str) -> bool:
-        return key.startswith(QUERY_PREFIX)
+    def is_qr_key(self, key: str) -> bool:
+        return key.startswith(QR_PREFIX)
 
     def is_bv_key(self, key: str) -> bool:
         return key.startswith(BV_PREFIX)
 
-    def to_query_keyparts(self, key: str) -> KeyParts:
+    def to_qr_keyparts(self, key: str) -> KeyParts:
         try:
             _, query = key.split(":", 1)
         except Exception as e:
-            err_mesg = f"× Invalid query:<query>: {key}"
+            err_mesg = f"× Invalid qr:<query>: {key}"
             log_error(err_mesg)
 
         return KeyParts(
             raw_key=key,
-            key_type="query",
+            key_type="qr",
             rocks_key=key,
             redis_key=key,
             redis_field=None,
@@ -58,7 +54,7 @@ class EmbeddingKeyConverter:
 
     def to_bv_keyparts(self, key: str) -> KeyParts:
         try:
-            bv, bvid, field = key.split(":", 2)
+            _, bvid, field = key.split(":", 2)
         except Exception as e:
             err_mesg = f"× Invalid bv:<bvid>:<field>: {key}"
             log_error(err_mesg)
@@ -67,13 +63,13 @@ class EmbeddingKeyConverter:
             raw_key=key,
             key_type="bv",
             rocks_key=key,
-            redis_key=f"{bv}:{bvid}",
+            redis_key=f"{BV_PREFIX}{bvid}",
             redis_field=field,
         )
 
     def resolve(self, key: str) -> KeyParts:
-        if self.is_query_key(key):
-            return self.to_query_keyparts(key)
+        if self.is_qr_key(key):
+            return self.to_qr_keyparts(key)
         if self.is_bv_key(key):
             return self.to_bv_keyparts(key)
         err_mesg = f"× Invalid key: {key}"
@@ -87,8 +83,22 @@ def resolve_key(key: str) -> KeyParts:
     return key_converter.resolve(key)
 
 
-def resolve_embedding(embedding: list[Any]) -> list[float]:
+def get_redis_key_field(key: str) -> tuple[str, Union[str, None]]:
+    parts = key_converter.resolve(key)
+    return parts.redis_key, parts.redis_field
+
+
+def get_rocks_key(key: str) -> str:
+    parts = key_converter.resolve(key)
+    return parts.rocks_key
+
+
+def floatize_embedding(embedding: list[Any]) -> list[float]:
     return [float(v) for v in embedding]
+
+
+def stringify_embedding(embedding: list[float]) -> str:
+    return json.dumps(embedding, ensure_ascii=False, separators=(",", ":"))
 
 
 class EmbeddingPreCalculator:
@@ -114,50 +124,75 @@ class EmbeddingPreCalculator:
         )
 
     def is_key_exist(self, key: str) -> bool:
-        parts = resolve_key(key)
+        if not key:
+            return None
         rc = self.redis.client
-        if parts.redis_field is None:
-            return bool(rc.exists(parts.redis_key))
-        return bool(rc.hexists(parts.redis_key, parts.redis_field))
+        redis_key, redis_field = get_redis_key_field(key)
+        if redis_field is None:
+            return bool(rc.exists(redis_key))
+        else:
+            return bool(rc.hexists(redis_key, redis_field))
 
-    def set_key_exist(self, key: str) -> bool:
-        parts = resolve_key(key)
+    def set_key_exist(self, key: str):
+        if not key:
+            return
         rc = self.redis.client
-        if parts.redis_field is None:
-            rc.set(parts.redis_key, "1")
-            return True
-        rc.hset(parts.redis_key, parts.redis_field, 1)
-        return True
+        redis_key, redis_field = get_redis_key_field(key)
+        if redis_field is None:
+            rc.set(redis_key, 1)
+        else:
+            rc.hset(redis_key, redis_field, 1)
 
-    def del_key_exist(self, key: str) -> bool:
-        parts = resolve_key(key)
+    def set_keys_exist(self, keys: list[str]):
+        if not keys:
+            return
         rc = self.redis.client
-        if parts.redis_field is None:
-            rc.delete(parts.redis_key)
-            return True
-        rc.hdel(parts.redis_key, parts.redis_field)
-        if rc.hlen(parts.redis_key) == 0:
-            rc.delete(parts.redis_key)
-        return True
+        pipeline = rc.pipeline()
+        redis_keys: set[str] = set()
+        redis_fields: dict[str, set[str]] = defaultdict(set)
+        for key in keys:
+            redis_key, redis_field = get_redis_key_field(key)
+            if redis_field is None:
+                redis_keys.add(redis_key)
+            else:
+                redis_fields[redis_key].add(redis_field)
+        for redis_key in redis_keys:
+            pipeline.set(redis_key, 1)
+        for redis_key, redis_fields in redis_fields.items():
+            for redis_field in redis_fields:
+                pipeline.hset(redis_key, redis_field, 1)
+        pipeline.execute()
+
+    def del_key_exist(self, key: str):
+        if not key:
+            return
+        rc = self.redis.client
+        redis_key, redis_field = get_redis_key_field(key)
+        if redis_field is None:
+            rc.delete(redis_key)
+            return
+        rc.hdel(redis_key, redis_field)
+        if rc.hlen(redis_key) == 0:
+            rc.delete(redis_key)
 
     def load_embedding(self, key: str) -> list[float]:
-        if not self.is_key_exist(key):
+        if not key or not self.is_key_exist(key):
             return None
-        parts = resolve_key(key)
-        value = self.rocks.get(parts.rocks_key)
+        rocks_key = get_rocks_key(key)
+        value = self.rocks.get(rocks_key)
         if value is None:
             return None
         embedding = json.loads(value)
         if not isinstance(embedding, list):
             error_mesg = "× Stored embedding is not a list"
             log_error(error_mesg)
-        return [float(v) for v in embedding]
+        return floatize_embedding(embedding)
 
     def save_embedding(self, key: str, embedding: list[float]):
-        parts = resolve_key(key)
-        sanitized = [float(v) for v in embedding]
-        embedding_str = json.dumps(sanitized, ensure_ascii=False, separators=(",", ":"))
-        self.rocks.db[parts.rocks_key] = embedding_str
+        if not key or not embedding:
+            return
+        rocks_key = get_rocks_key(key)
+        self.rocks.set(rocks_key, stringify_embedding(embedding))
         self.set_key_exist(key)
 
     def calc_hits_embeddings(self, hits: list[dict]):
