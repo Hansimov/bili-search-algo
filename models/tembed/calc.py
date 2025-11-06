@@ -2,6 +2,7 @@ import argparse
 import json
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from sedb import RedisOperator, RocksOperator
@@ -247,6 +248,15 @@ class EmbeddingPreCalculator:
             log_error(f"× Unknown embed_type: {embed_type}")
         return embeddings
 
+    def embed_key_text_pairs(
+        self, key_text_pairs: list[tuple[str, str]], emb_type: EmbedModelType
+    ) -> dict[str, list[float]]:
+        if not key_text_pairs:
+            return {}
+        bv_keys, field_texts = zip(*key_text_pairs)
+        embeddings = self.embed_text_by_type(field_texts, emb_type)
+        return {bv_key: embedding for bv_key, embedding in zip(bv_keys, embeddings)}
+
     def calc_qr_embedding(self, query: str):
         if not query:
             return
@@ -313,18 +323,20 @@ class EmbeddingPreCalculator:
             field_text, emb_type = bv_keys_info[bv_key]
             texts_to_embed[emb_type].append((bv_key, field_text))
 
-        # batch embed all texts
+        # batch embed all texts in parallel
         all_embeddings: dict[str, list[float]] = {}
         all_keys: list[str] = []
-        for emb_type in self.embed_types:
-            key_text_pairs = texts_to_embed[emb_type]
-            if not key_text_pairs:
-                continue
-            bv_keys, field_texts = zip(*key_text_pairs)
-            embeddings = self.embed_text_by_type(field_texts, emb_type)
-            for bv_key, embedding in zip(bv_keys, embeddings):
-                all_embeddings[bv_key] = embedding
-                all_keys.append(bv_key)
+        with ThreadPoolExecutor(max_workers=len(self.embed_types)) as executor:
+            futures = [
+                executor.submit(
+                    self.embed_key_text_pairs, texts_to_embed[emb_type], emb_type
+                )
+                for emb_type in self.embed_types
+            ]
+            for future in as_completed(futures):
+                embed_res = future.result()
+                all_embeddings.update(embed_res)
+                all_keys.extend(embed_res.keys())
 
         # batch save all embeddings
         if all_embeddings:
