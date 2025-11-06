@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from sedb import RedisOperator, RocksOperator
-from tclogger import logger, log_error
+from tclogger import StrsType, logger, log_error, dict_get
 from tfmx import EmbedClient
 from typing import Literal, Optional, Union, Any
 
@@ -110,18 +110,27 @@ class EmbeddingPreCalculator:
 
     def init_processors(self):
         self.embed_db = Path(__file__).parent / "embeddings.rkdb"
-        self.rocks = RocksOperator(configs={"db_path": self.embed_db})
+        self.rocks = RocksOperator(
+            configs={"db_path": self.embed_db}, connect_cls=self.__class__
+        )
         self.redis = RedisOperator(configs=REDIS_ENVS, connect_cls=self.__class__)
         self.passage_manager = PassageJsonManager()
 
     def init_embed_clients(self):
         embed_params = {"api_format": "tei", "res_format": "list2d"}
+        self.embed_types = ["gte", "bge"]
+        # python -m tfmx.embed_server -t "tei" -p 28888 -m "Alibaba-NLP/gte-multilingual-base" -id "Alibaba-NLP--gte-multilingual-base" -b
         self.gte_embed = EmbedClient(
             endpoint="http://localhost:28888/embed", **embed_params
         )
+        # python -m tfmx.embed_server -t "tei" -p 28889 -m "BAAI/bge-large-zh-v1.5" -id "BAAI--bge-large-zh-v1.5" -b
         self.bge_embed = EmbedClient(
             endpoint="http://localhost:28889/embed", **embed_params
         )
+        self.embed_clients: dict[EmbedModelType, EmbedClient] = {
+            "gte": self.gte_embed,
+            "bge": self.bge_embed,
+        }
 
     def is_key_exist(self, key: str) -> bool:
         if not key:
@@ -195,12 +204,108 @@ class EmbeddingPreCalculator:
         self.rocks.set(rocks_key, stringify_embedding(embedding))
         self.set_key_exist(key)
 
+    def save_embeddings(self, key_embeddings: dict[str, list[float]]):
+        if not key_embeddings:
+            return
+        self.rocks.mset(key_embeddings)
+
+    def embed_text_by_type(
+        self, texts: StrsType, embed_type: EmbedModelType
+    ) -> list[list[float]]:
+        if not texts:
+            return []
+        embed_client = self.embed_clients.get(embed_type)
+        if embed_client:
+            embeddings = embed_client.embed(texts)
+        else:
+            log_error(f"× Unknown embed_type: {embed_type}")
+        return embeddings
+
+    def calc_qr_embedding(self, query: str):
+        if not query:
+            return
+        qr_keys = []
+        qr_embeddings: dict[str, list[float]] = {}
+        for emb_type in self.embed_types:
+            qr_key = f"{QR_PREFIX}{query}.{emb_type}"
+            if self.is_key_exist(qr_key):
+                # logger.mesg(f"→ qr_key exists: {qr_key}")
+                continue
+            qr_keys.append(qr_key)
+            qr_embeddings[qr_key] = self.embed_text_by_type(query, emb_type)[0]
+        self.save_embeddings(qr_embeddings)
+        self.set_keys_exist(qr_keys)
+
+    def get_field_texts(self, hit: dict) -> dict[str, str]:
+        title = hit.get("title", "")
+        tags = hit.get("tags", "")
+        owner_name = dict_get(hit, "owner.name", "")
+        desc = hit.get("desc", "")
+        merged = f"{title} {tags} {owner_name} {desc}".strip()
+        return {
+            "title": title,
+            "tags": tags,
+            "merged": merged,
+        }
+
+    def calc_bv_embedding(self, hit: dict):
+        if not hit:
+            return
+        self.calc_hits_embeddings([hit])
+
     def calc_hits_embeddings(self, hits: list[dict]):
-        pass
+        """Batch calc embeddings of multi hits"""
+        if not hits:
+            return
+        # collect all texts to embed, grouped by embed_type
+        texts_to_embed: dict[EmbedModelType, list[tuple[str, str]]] = {
+            "gte": [],
+            "bge": [],
+        }
+        for hit in hits:
+            bvid = hit.get("bvid")
+            if not bvid:
+                continue
+            field_texts = self.get_field_texts(hit)
+            for field_name, field_text in field_texts.items():
+                if not field_text:
+                    continue
+                for emb_type in self.embed_types:
+                    bv_key = f"{BV_PREFIX}{bvid}:{field_name}.{emb_type}"
+                    if self.is_key_exist(bv_key):
+                        # logger.mesg(f"→ bv_key exists: {bv_key}")
+                        continue
+                    texts_to_embed[emb_type].append((bv_key, field_text))
+
+        # batch embed all texts
+        all_embeddings: dict[str, list[float]] = {}
+        all_keys: list[str] = []
+        for emb_type in self.embed_types:
+            key_text_pairs = texts_to_embed[emb_type]
+            if not key_text_pairs:
+                continue
+            bv_keys, field_texts = zip(*key_text_pairs)
+            embeddings = self.embed_text_by_type(field_texts, emb_type)
+            for bv_key, embedding in zip(bv_keys, embeddings):
+                all_embeddings[bv_key] = embedding
+                all_keys.append(bv_key)
+
+        # batch save all embeddings
+        if all_embeddings:
+            self.save_embeddings(all_embeddings)
+            self.set_keys_exist(all_keys)
 
     def run(self):
-        for query, passage in self.passage_manager.iter_query_passages():
-            pass
+        max_count = 10
+        for idx, (query, passage) in enumerate(
+            self.passage_manager.iter_query_passages()
+        ):
+            if idx >= max_count:
+                break
+            logger.note(query)
+            self.calc_qr_embedding(query)
+            hits = passage["hits"]
+            self.calc_hits_embeddings(hits)
 
 
 class EmbeddingModelBenchmarker:
@@ -212,6 +317,7 @@ class EmbeddingModelBenchmarker:
 
 def main():
     calculator = EmbeddingPreCalculator()
+    calculator.run()
 
 
 if __name__ == "__main__":
