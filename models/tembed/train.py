@@ -9,7 +9,7 @@ from sedb import ElasticOperator
 from tclogger import logger, logstr, brk, chars_slice
 from tclogger import dict_get, dict_pop, dict_flatten
 from tclogger import TCLogbar
-from typing import Literal
+from typing import Literal, Generator
 
 from models.word.eng import get_dump_path
 from configs.envs import SECRETS
@@ -173,6 +173,9 @@ class PassageJsonManager:
 
     def __init__(self, items_per_file: int = 1000):
         self.items_per_file = items_per_file
+        self.init_paths()
+
+    def init_paths(self):
         self.base_dir = Path(__file__).parent / "passages"
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.current_file_idx = 0
@@ -203,8 +206,27 @@ class PassageJsonManager:
         with open(self.current_file_path, encoding="utf-8", mode="w") as wf:
             json.dump(self.passages, wf, ensure_ascii=False, indent=2)
 
+    def iter_query_passages(self) -> Generator[tuple[str, dict], None, None]:
+        file_paths = sorted(self.base_dir.glob("passage_*.json"))
+        for file_idx, file_path in enumerate(file_paths):
+            with open(file_path, encoding="utf-8") as f:
+                passages = json.load(f)
+            for query, result in passages.items():
+                yield query, result
 
-QUERY_TANS_TABLE = str.maketrans("", "", "/[]()!")
+    def get_total_count(self) -> int:
+        file_paths = sorted(self.base_dir.glob("passage_*.json"))
+        if not file_paths:
+            return 0
+
+        with open(file_paths[-1], encoding="utf-8") as f:
+            last_file_passages = json.load(f)
+        last_file_count = len(last_file_passages)
+        total_count = (len(file_paths) - 1) * self.items_per_file + last_file_count
+        return total_count
+
+
+QUERY_TRANS_TABLE = str.maketrans("", "", "/[]()!｀^")
 
 
 class PassagesGenerator:
@@ -222,9 +244,36 @@ class PassagesGenerator:
         logger.okay(f"  * {self.samples_path}")
 
     def unify_query(self, query: str) -> str:
-        return query.translate(QUERY_TANS_TABLE)
+        return query.translate(QUERY_TRANS_TABLE)
 
     def run(self, search_type: Literal["topk", "pick"] = "pick"):
+        """Format of query-passage(hits) pair in result JSON:
+        ```
+        {
+            "query_xxxx": {
+                "hits": [
+                    {
+                        "bvid": "BV...",
+                        "desc": "...",
+                        "title": "...",
+                        "tags": "...",
+                        "owner.name": "...",
+                        "stat.favorite": ...,
+                        "elastic_score": ...,
+                        "elastic_score_rank": ...
+                    },
+                    ...
+                ]
+                "return_hits": 10,
+                "total_hits": ...,
+                "query": "query_xxxx",
+                "doc_freq": ...,
+                "query_idx": ...
+            }
+        }
+        ```
+        """
+
         self.load_samples()
         bar = TCLogbar(total=len(self.df), desc="* keyword")
         for idx, (word, doc_freq) in enumerate(
