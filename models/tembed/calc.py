@@ -1,10 +1,11 @@
+import argparse
 import json
 
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from sedb import RedisOperator, RocksOperator
-from tclogger import StrsType, logger, log_error, dict_get
+from tclogger import StrsType, log_error, dict_get, TCLogbar, chars_slice
 from tfmx import EmbedClient
 from typing import Literal, Optional, Union, Any
 
@@ -104,7 +105,8 @@ def stringify_embedding(embedding: list[float]) -> str:
 class EmbeddingPreCalculator:
     """Pre-calculate embeddings for query-passage pairs."""
 
-    def __init__(self):
+    def __init__(self, max_count: int = None):
+        self.max_count = max_count
         self.init_processors()
         self.init_embed_clients()
 
@@ -141,6 +143,30 @@ class EmbeddingPreCalculator:
             return bool(rc.exists(redis_key))
         else:
             return bool(rc.hexists(redis_key, redis_field))
+
+    def is_keys_exist(self, keys: list[str]) -> list[bool]:
+        """Batch check if keys exist in Redis."""
+        if not keys:
+            return []
+
+        rc = self.redis.client
+        pipeline = rc.pipeline()
+
+        # Group keys by their redis_key and field
+        key_checks = []  # List of (key, redis_key, redis_field)
+        for key in keys:
+            redis_key, redis_field = get_redis_key_field(key)
+            key_checks.append((key, redis_key, redis_field))
+            if redis_field is None:
+                pipeline.exists(redis_key)
+            else:
+                pipeline.hexists(redis_key, redis_field)
+
+        # Execute pipeline and get results
+        results = pipeline.execute()
+
+        # Convert results to list of bools
+        return [bool(result) for result in results]
 
     def set_key_exist(self, key: str):
         if not key:
@@ -257,11 +283,10 @@ class EmbeddingPreCalculator:
         """Batch calc embeddings of multi hits"""
         if not hits:
             return
-        # collect all texts to embed, grouped by embed_type
-        texts_to_embed: dict[EmbedModelType, list[tuple[str, str]]] = {
-            "gte": [],
-            "bge": [],
-        }
+
+        # collect all bv_keys
+        all_bv_keys = []
+        bv_keys_info = {}  # Map bv_key to (field_text, emb_type)
         for hit in hits:
             bvid = hit.get("bvid")
             if not bvid:
@@ -272,10 +297,21 @@ class EmbeddingPreCalculator:
                     continue
                 for emb_type in self.embed_types:
                     bv_key = f"{BV_PREFIX}{bvid}:{field_name}.{emb_type}"
-                    if self.is_key_exist(bv_key):
-                        # logger.mesg(f"→ bv_key exists: {bv_key}")
-                        continue
-                    texts_to_embed[emb_type].append((bv_key, field_text))
+                    all_bv_keys.append(bv_key)
+                    bv_keys_info[bv_key] = (field_text, emb_type)
+
+        # check bv_keys exist
+        keys_exist = self.is_keys_exist(all_bv_keys)
+        texts_to_embed: dict[EmbedModelType, list[tuple[str, str]]] = {
+            "gte": [],
+            "bge": [],
+        }
+        for bv_key, is_exists in zip(all_bv_keys, keys_exist):
+            if is_exists:
+                # logger.mesg(f"→ bv_key exists: {bv_key}")
+                continue
+            field_text, emb_type = bv_keys_info[bv_key]
+            texts_to_embed[emb_type].append((bv_key, field_text))
 
         # batch embed all texts
         all_embeddings: dict[str, list[float]] = {}
@@ -295,14 +331,24 @@ class EmbeddingPreCalculator:
             self.save_embeddings(all_embeddings)
             self.set_keys_exist(all_keys)
 
+    def get_upper_count(self) -> int:
+        max_count = self.max_count
+        total_count = self.passage_manager.get_total_count()
+        if max_count:
+            upper_count = min(max_count, total_count)
+        else:
+            upper_count = total_count
+        return upper_count
+
     def run(self):
-        max_count = 10
+        bar = TCLogbar(total=self.get_upper_count(), desc="* query")
         for idx, (query, passage) in enumerate(
             self.passage_manager.iter_query_passages()
         ):
-            if idx >= max_count:
+            if self.max_count and idx >= self.max_count:
                 break
-            logger.note(query)
+            # logger.note(query)
+            bar.update(increment=1, desc=f"{chars_slice(query,end=10)}")
             self.calc_qr_embedding(query)
             hits = passage["hits"]
             self.calc_hits_embeddings(hits)
@@ -315,12 +361,20 @@ class EmbeddingModelBenchmarker:
         pass
 
 
+class CalculatorArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_argument("-n", "--max-count", type=int, default=None)
+        self.args, _ = self.parse_known_args()
+
+
 def main():
-    calculator = EmbeddingPreCalculator()
+    args = CalculatorArgParser().args
+    calculator = EmbeddingPreCalculator(max_count=args.max_count)
     calculator.run()
 
 
 if __name__ == "__main__":
     main()
 
-    # python -m models.tembed.calc
+    # python -m models.tembed.calc -n 100
