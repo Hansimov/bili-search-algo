@@ -11,7 +11,7 @@ from tfmx import EmbedClient
 from typing import Literal, Optional, Union, Any
 
 from configs.envs import REDIS_ENVS
-from models.tembed.train import PassageJsonManager
+from models.tembed.sample import PassageJsonManager
 
 EmbedModelType = Literal["gte", "bge"]
 EmbedKeyType = Literal["qr", "bv"]

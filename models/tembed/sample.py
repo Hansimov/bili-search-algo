@@ -297,7 +297,7 @@ class PassagesGenerator:
             self.manager.save_result(word, res)
 
 
-class TembedTrainerArgParser(argparse.ArgumentParser):
+class SamplerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-s", "--sample", action="store_true")
@@ -305,12 +305,11 @@ class TembedTrainerArgParser(argparse.ArgumentParser):
         self.add_argument(
             "-t", "--search-type", type=str, choices=["topk", "pick"], default="pick"
         )
-        self.args = self.parse_args()
+        self.args, _ = self.parse_known_args()
 
 
 def main():
-    arg_parser = TembedTrainerArgParser()
-    args = arg_parser.args
+    args = SamplerArgParser().args
 
     if args.sample:
         sampler = QuerySampler()
@@ -324,5 +323,5 @@ def main():
 if __name__ == "__main__":
     main()
 
-    # python -m models.tembed.train -s
-    # python -m models.tembed.train -g
+    # python -m models.tembed.sample -s
+    # python -m models.tembed.sample -g
