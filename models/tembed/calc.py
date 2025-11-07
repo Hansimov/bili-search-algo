@@ -13,7 +13,7 @@ from typing import Literal, Optional, Union, Any
 from configs.envs import REDIS_ENVS
 from models.tembed.sample import PassageJsonManager
 
-EmbedModelType = Literal["gte", "bge"]
+EmbedModelType = Literal["gte", "bge", "qwen3_06b"]
 EmbedKeyType = Literal["qr", "bv"]
 
 
@@ -121,18 +121,23 @@ class EmbeddingPreCalculator:
 
     def init_embed_clients(self):
         embed_params = {"api_format": "tei", "res_format": "list2d"}
-        self.embed_types = ["gte", "bge"]
-        # python -m tfmx.embed_server -t "tei" -p 28888 -m "Alibaba-NLP/gte-multilingual-base" -id "Alibaba-NLP--gte-multilingual-base" -b
+        self.embed_types = ["gte", "bge", "qwen3_06b"]
+        # python -m tfmx.embed_server -t "tei" -m "Alibaba-NLP/gte-multilingual-base" -p 28888 -b
         self.gte_embed = EmbedClient(
             endpoint="http://localhost:28888/embed", **embed_params
         )
-        # python -m tfmx.embed_server -t "tei" -p 28889 -m "BAAI/bge-large-zh-v1.5" -id "BAAI--bge-large-zh-v1.5" -b
+        # python -m tfmx.embed_server -t "tei" -m "BAAI/bge-large-zh-v1.5" -p 28889 -b
         self.bge_embed = EmbedClient(
             endpoint="http://localhost:28889/embed", **embed_params
+        )
+        # python -m tfmx.embed_server -t "tei" -m "Qwen/Qwen3-Embedding-0.6B" -p 28887 -b
+        self.qwen3_06b_embed = EmbedClient(
+            endpoint="http://localhost:28887/embed", **embed_params
         )
         self.embed_clients: dict[EmbedModelType, EmbedClient] = {
             "gte": self.gte_embed,
             "bge": self.bge_embed,
+            "qwen3_06b": self.qwen3_06b_embed,
         }
 
     def is_key_exist(self, key: str) -> bool:
@@ -313,8 +318,7 @@ class EmbeddingPreCalculator:
         # check bv_keys exist
         keys_exist = self.is_keys_exist(all_bv_keys)
         texts_to_embed: dict[EmbedModelType, list[tuple[str, str]]] = {
-            "gte": [],
-            "bge": [],
+            emb_type: [] for emb_type in self.embed_types
         }
         for bv_key, is_exists in zip(all_bv_keys, keys_exist):
             if is_exists:
@@ -372,21 +376,32 @@ class EmbeddingModelBenchmarker:
     def __init__(self):
         pass
 
+    def run(self):
+        pass
+
 
 class CalculatorArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-n", "--max-count", type=int, default=None)
+        self.add_argument("-c", "--calc", action="store_true")
+        self.add_argument("-b", "--benchmark", action="store_true")
         self.args, _ = self.parse_known_args()
 
 
 def main():
     args = CalculatorArgParser().args
-    calculator = EmbeddingPreCalculator(max_count=args.max_count)
-    calculator.run()
+
+    if args.calc:
+        calculator = EmbeddingPreCalculator(max_count=args.max_count)
+        calculator.run()
+
+    if args.benchmark:
+        benchmark = EmbeddingModelBenchmarker()
+        benchmark.run()
 
 
 if __name__ == "__main__":
     main()
 
-    # python -m models.tembed.calc -n 100
+    # python -m models.tembed.calc -c
