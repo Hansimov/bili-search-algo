@@ -6,7 +6,8 @@ data/
 logs/
 checkpoints/
 cmteb_results/
-passages
+passages/
+benchmarks/
 secrets.json
 *.npy
 *.model

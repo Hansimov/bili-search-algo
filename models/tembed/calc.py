@@ -1,12 +1,13 @@
 import argparse
 import json
+import numpy as np
 
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from sedb import RedisOperator, RocksOperator
-from tclogger import StrsType, log_error, dict_get, TCLogbar, chars_slice
+from tclogger import StrsType, logger, log_error, dict_get, TCLogbar, chars_slice, brk
 from tfmx import EmbedClient
 from typing import Literal, Optional, Union, Any
 
@@ -101,6 +102,16 @@ def floatize_embedding(embedding: list[Any]) -> list[float]:
 
 def stringify_embedding(embedding: list[float]) -> str:
     return json.dumps(embedding, ensure_ascii=False, separators=(",", ":"))
+
+
+def dot_sim(vec1: list[float], vec2: list[float]) -> float:
+    return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+
+
+def calc_median_ranks(ranks_by_emb: dict[str, list[int]]) -> list[int]:
+    """Calculate median ranks across different embedding types."""
+    ranks_matrix = np.array(list(ranks_by_emb.values()))
+    return np.median(ranks_matrix, axis=0).astype(int).tolist()
 
 
 class EmbeddingPreCalculator:
@@ -215,19 +226,6 @@ class EmbeddingPreCalculator:
         rc.hdel(redis_key, redis_field)
         if rc.hlen(redis_key) == 0:
             rc.delete(redis_key)
-
-    def load_embedding(self, key: str) -> list[float]:
-        if not key or not self.is_key_exist(key):
-            return None
-        rocks_key = get_rocks_key(key)
-        value = self.rocks.get(rocks_key)
-        if value is None:
-            return None
-        embedding = json.loads(value)
-        if not isinstance(embedding, list):
-            error_mesg = "× Stored embedding is not a list"
-            log_error(error_mesg)
-        return floatize_embedding(embedding)
 
     def save_embedding(self, key: str, embedding: list[float]):
         if not key or not embedding:
@@ -370,14 +368,185 @@ class EmbeddingPreCalculator:
             self.calc_hits_embeddings(hits)
 
 
-class EmbeddingModelBenchmarker:
-    """Benchmark embedding model with query-passage pairs."""
+class EmbeddingBenchmarkBuilder:
+    """Build benchmark with embeddings from multi models."""
 
-    def __init__(self):
-        pass
+    def __init__(self, max_count: int = None):
+        self.max_count = max_count
+        self.init_processors()
+
+    def init_processors(self):
+        self.embed_db = Path(__file__).parent / "embeddings.rkdb"
+        self.rocks = RocksOperator(
+            configs={"db_path": self.embed_db}, connect_cls=self.__class__
+        )
+        self.passage_manager = PassageJsonManager()
+        self.embed_types = ["gte", "bge", "qwen3_06b"]
+        self.benchmark_ranks_path = (
+            Path(__file__).parent / "benchmarks" / "benchmark_ranks.json"
+        )
+
+    def load_embedding(self, key: str) -> list[float]:
+        if not key or not self.is_key_exist(key):
+            return None
+        rocks_key = get_rocks_key(key)
+        value = self.rocks.get(rocks_key)
+        if value is None:
+            return None
+        if isinstance(value, list):
+            embedding = value
+        else:
+            embedding = json.loads(value)
+        if not isinstance(embedding, list):
+            error_mesg = "× Stored embedding is not a list"
+            log_error(error_mesg)
+        return floatize_embedding(embedding)
+
+    def load_embeddings(self, keys: list[str]) -> dict[str, list[float]]:
+        if not keys:
+            return {}
+        rocks_keys = [get_rocks_key(key) for key in keys]
+        values = self.rocks.mget(rocks_keys)
+        embeddings: dict[str, list[float]] = {}
+        for key, value in zip(keys, values):
+            if value is None:
+                continue
+            try:
+                if isinstance(value, list):
+                    embedding = value
+                else:
+                    embedding = json.loads(value)
+                embeddings[key] = floatize_embedding(embedding)
+            except Exception as e:
+                error_mesg = f"× Fail to load embedding of key {brk(key)}: {e}"
+                log_error(error_mesg)
+        return embeddings
+
+    def get_upper_count(self) -> int:
+        max_count = self.max_count
+        total_count = self.passage_manager.get_total_count()
+        if max_count:
+            upper_count = min(max_count, total_count)
+        else:
+            upper_count = total_count
+        return upper_count
+
+    def calc_ranks_for_anchor(
+        self,
+        hits: list[dict],
+        anchor_idx: int,
+        field_name: str,
+        emb_type: str,
+        embeddings: dict[str, list[float]],
+    ) -> list[int]:
+        """Calculate ranks of all hits relative to anchor_idx hit for given field+emb_type."""
+        # get anchor embedding
+        anchor_bvid = hits[anchor_idx].get("bvid")
+        anchor_key = f"{BV_PREFIX}{anchor_bvid}:{field_name}.{emb_type}"
+        anchor_emb = embeddings.get(anchor_key)
+        if anchor_emb is None:
+            return None
+
+        # calc similarity scores
+        scores: list[tuple[int, float]] = []
+        for idx, hit in enumerate(hits):
+            bvid = hit.get("bvid")
+            key = f"{BV_PREFIX}{bvid}:{field_name}.{emb_type}"
+            emb = embeddings.get(key)
+            if emb is None:
+                scores.append((idx, -1))
+            else:
+                sim = dot_sim(anchor_emb, emb)
+                scores.append((idx, sim))
+
+        # sort scores desc, and get ranks
+        scores.sort(key=lambda x: x[1], reverse=True)
+        idx_to_rank = {idx: rank + 1 for rank, (idx, _) in enumerate(scores)}
+        return [idx_to_rank[i] for i in range(len(hits))]
+
+    def calc_hits_ranks(
+        self,
+        hits: list[dict],
+        anchor_indices: list[int] = [0, 1, 4, 9],
+        field_names: list[str] = ["title", "tags", "merged"],
+    ) -> dict[int, dict]:
+        """Calc ranks for hits by anchor indices and field names.
+
+        Example output:
+        {
+            0: {
+                "anchor_idx": 0,
+                "title.gte": [1, 3, 2, 5, 4, 7, 6, 9, 8, 10],
+                "title.bge": [1, 2, 4, 3, 5, 6, 8, 7, 9, 10],
+                "title.qwen3_06b": [1, 4, 3, 2, 6, 5, 7, 9, 8, 10],
+                "title.med": [1, 3, 3, 3, 5, 6, 7, 9, 8, 10],
+                "tags.gte": [...],
+                "tags.bge": [...],
+                "tags.qwen3_06b": [...],
+                "tags.med": [...],
+                "merged.gte": [...],
+                "merged.bge": [...],
+                "merged.qwen3_06b": [...],
+                "merged.med": [...]
+            },
+            1: {...},
+            4: {...},
+            9: {...}
+        }
+        """
+        # batch load all embeddings at once
+        all_keys: list[str] = []
+        for hit in hits:
+            bvid = hit.get("bvid")
+            if not bvid:
+                continue
+            for field_name in field_names:
+                for emb_type in self.embed_types:
+                    key = f"{BV_PREFIX}{bvid}:{field_name}.{emb_type}"
+                    all_keys.append(key)
+        embeddings = self.load_embeddings(all_keys)
+
+        # calc adjacent-hits-ranks for each anchor_idx
+        result: dict[int, dict] = {}
+        for anchor_idx in anchor_indices:
+            if anchor_idx >= len(hits):
+                continue
+            anchor_result = {"anchor_idx": anchor_idx}
+            for field_name in field_names:
+                ranks_by_emb = {}
+                for emb_type in self.embed_types:
+                    field_emb_key = f"{field_name}.{emb_type}"
+                    ranks = self.calc_ranks_for_anchor(
+                        hits, anchor_idx, field_name, emb_type, embeddings
+                    )
+                    if ranks:
+                        anchor_result[field_emb_key] = ranks
+                        ranks_by_emb[emb_type] = ranks
+                field_med_key = f"{field_name}.med"
+                anchor_result[field_med_key] = calc_median_ranks(ranks_by_emb)
+            result[anchor_idx] = anchor_result
+        return result
+
+    def save_benchmark_ranks(self, results: dict):
+        self.benchmark_ranks_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.benchmark_ranks_path, encoding="utf-8", mode="w") as wf:
+            json.dump(results, wf, ensure_ascii=False, indent=2)
+        logger.note(f"> Save benchmark ranks to:")
+        logger.file(f"  * {self.benchmark_ranks_path}")
 
     def run(self):
-        pass
+        results: dict[str, dict] = {}
+        bar = TCLogbar(total=self.get_upper_count(), desc="* query")
+        for idx, (query, passage) in enumerate(
+            self.passage_manager.iter_query_passages()
+        ):
+            if self.max_count and idx >= self.max_count:
+                break
+            bar.update(increment=1, desc=f"{chars_slice(query,end=10)}")
+            hits = passage["hits"]
+            results[query] = self.calc_hits_ranks(hits)
+        print()
+        self.save_benchmark_ranks(results)
 
 
 class CalculatorArgParser(argparse.ArgumentParser):
@@ -385,7 +554,7 @@ class CalculatorArgParser(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
         self.add_argument("-n", "--max-count", type=int, default=None)
         self.add_argument("-c", "--calc", action="store_true")
-        self.add_argument("-b", "--benchmark", action="store_true")
+        self.add_argument("-b", "--build", action="store_true")
         self.args, _ = self.parse_known_args()
 
 
@@ -396,12 +565,13 @@ def main():
         calculator = EmbeddingPreCalculator(max_count=args.max_count)
         calculator.run()
 
-    if args.benchmark:
-        benchmark = EmbeddingModelBenchmarker()
-        benchmark.run()
+    if args.build:
+        benchmark_builder = EmbeddingBenchmarkBuilder(max_count=args.max_count)
+        benchmark_builder.run()
 
 
 if __name__ == "__main__":
     main()
 
     # python -m models.tembed.calc -c
+    # python -m models.tembed.calc -b -n 10
