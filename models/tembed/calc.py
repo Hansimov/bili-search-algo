@@ -408,20 +408,21 @@ class EmbeddingBenchmarkBuilder:
             configs={"db_path": self.embed_db}, connect_cls=self.__class__
         )
         self.passage_manager = PassageJsonManager()
-
         self.benchmark_ranks_path = (
             Path(__file__).parent / "benchmarks" / "benchmark_ranks.json"
         )
+        self.is_calc_rank_med = True
 
     def init_embed_types(self):
         """Must call this before using `calc_ranks_for_anchor()` or `calc_hits_ranks()`."""
         self.embed_types = ["gte", "bge", "qwen3_06b"]
 
-    def set_embed_types(self, embed_types: list[str]):
+    def set_embed_types(self, embed_types: list[str], is_calc_rank_med: bool = False):
         """Dynamically set embed types for rank calc. Must call this before using `calc_ranks_for_anchor()` or `calc_hits_ranks()`."""
         if not isinstance(embed_types, (list, tuple)):
             embed_types = [embed_types]
         self.embed_types = embed_types
+        self.is_calc_rank_med = is_calc_rank_med
 
     def load_embedding(self, key: str) -> list[float]:
         if not key:
@@ -560,15 +561,33 @@ class EmbeddingBenchmarkBuilder:
                     if ranks:
                         anchor_result[field_emb_key] = ranks
                         ranks_by_emb[emb_type] = ranks
-                field_med_key = f"{field_name}.med"
-                anchor_result[field_med_key] = calc_median_ranks(ranks_by_emb)
+                if self.is_calc_rank_med:
+                    field_med_key = f"{field_name}.med"
+                    anchor_result[field_med_key] = calc_median_ranks(ranks_by_emb)
             result[anchor_idx] = anchor_result
         return result
 
+    def update_benchmark_data(self, data: dict, results: dict):
+        for query, ranks_data in results.items():
+            if query not in data:
+                data[query] = defaultdict(dict)
+            for anchor_idx, anchor_ranks in ranks_data.items():
+                data[query][str(anchor_idx)].update(anchor_ranks)
+        return data
+
     def save_benchmark_ranks(self, results: dict):
         self.benchmark_ranks_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+        if self.benchmark_ranks_path.exists():
+            try:
+                with open(self.benchmark_ranks_path, encoding="utf-8", mode="r") as rf:
+                    data = json.load(rf)
+            except Exception as e:
+                err_mesg = f"× Failed to load existing benchmark ranks: {e}"
+                log_error(err_mesg)
+        data = self.update_benchmark_data(data, results)
         with open(self.benchmark_ranks_path, encoding="utf-8", mode="w") as wf:
-            json.dump(results, wf, ensure_ascii=False, indent=2)
+            json.dump(data, wf, ensure_ascii=False, indent=2)
         logger.note(f"> Save benchmark ranks to:")
         logger.file(f"  * {self.benchmark_ranks_path}")
 
@@ -600,44 +619,50 @@ class EmbedderBenchmarker:
 class CalculatorArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # ints: max_count
         self.add_argument("-n", "--max-count", type=int, default=None)
-        self.add_argument("-c", "--calc", action="store_true")
-        self.add_argument("-b", "--build", action="store_true")
-        self.add_argument("-x", "--test", action="store_true")
+        # tasks: precalc, builder
+        self.add_argument("-p", "--precalc", action="store_true")
+        self.add_argument("-r", "--builder", action="store_true")
+        # models: baseline, compare
+        self.add_argument("-b", "--baseline", action="store_true")
+        self.add_argument("-c", "--compare", action="store_true")
         self.args, _ = self.parse_known_args()
 
 
 def main():
     args = CalculatorArgParser().args
 
-    if args.calc:
+    if args.precalc:
         calculator = EmbeddingPreCalculator(max_count=args.max_count)
-        if args.test:
+        if args.baseline:
             random_embedder = RandomEmbedder(dim=128)
             calculator.set_embed_clients({"test": random_embedder})
-        else:
+            calculator.run()
+        if args.compare:
             calculator.init_embed_clients()
-        calculator.run()
+            calculator.run()
 
-    if args.build:
+    if args.builder:
         benchmark_builder = EmbeddingBenchmarkBuilder(max_count=args.max_count)
-        if args.test:
+        if args.baseline:
             benchmark_builder.set_embed_types(["test"])
-        else:
+            benchmark_builder.run()
+        if args.compare:
             benchmark_builder.init_embed_types()
-        benchmark_builder.run()
+            benchmark_builder.run()
 
 
 if __name__ == "__main__":
     main()
     # Case 1: pre-calc embeddings for default embed_types ["gte", "bge", "qwen3_06b"]
-    # python -m models.tembed.calc -c
+    # python -m models.tembed.calc -p -b
 
     # Case 2: build benchmark ranks based on pre-calced embeddings
-    # python -m models.tembed.calc -b -n 10
+    # python -m models.tembed.calc -r -b -n 10
 
     # Case 3: pre-calc test embeddings
-    # python -m models.tembed.calc -c -x
+    # python -m models.tembed.calc -p -c
 
     # Case 4: build test benchmark ranks
-    # python -m models.tembed.calc -b -x -n 10
+    # python -m models.tembed.calc -r -c -n 10
