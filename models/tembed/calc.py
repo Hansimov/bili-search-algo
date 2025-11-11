@@ -2,6 +2,7 @@ import argparse
 import json
 import numpy as np
 
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -114,13 +115,33 @@ def calc_median_ranks(ranks_by_emb: dict[str, list[int]]) -> list[int]:
     return np.median(ranks_matrix, axis=0).astype(int).tolist()
 
 
+class EmbedInterface(ABC):
+    @abstractmethod
+    def embed(self, texts: StrsType) -> list[list[float]]:
+        """Return embeddings (2d-list) of texts."""
+        pass
+
+
+class RandomEmbedder(EmbedInterface):
+    """Generate random embeddings with given dimension."""
+
+    def __init__(self, dim: int = 768):
+        self.dim = dim
+
+    def embed(self, texts: StrsType) -> list[list[float]]:
+        embeddings: list[list[float]] = []
+        for _ in texts:
+            emb = np.random.rand(self.dim).tolist()
+            embeddings.append(emb)
+        return embeddings
+
+
 class EmbeddingPreCalculator:
     """Pre-calculate embeddings for query-passage pairs."""
 
     def __init__(self, max_count: int = None):
         self.max_count = max_count
         self.init_processors()
-        self.init_embed_clients()
 
     def init_processors(self):
         self.embed_db = Path(__file__).parent / "embeddings.rkdb"
@@ -131,6 +152,7 @@ class EmbeddingPreCalculator:
         self.passage_manager = PassageJsonManager()
 
     def init_embed_clients(self):
+        """Must call this before using `embed_text_by_type()`."""
         embed_params = {"api_format": "tei", "res_format": "list2d"}
         self.embed_types = ["gte", "bge", "qwen3_06b"]
         # python -m tfmx.embed_server -t "tei" -m "Alibaba-NLP/gte-multilingual-base" -p 28888 -b
@@ -150,6 +172,11 @@ class EmbeddingPreCalculator:
             "bge": self.bge_embed,
             "qwen3_06b": self.qwen3_06b_embed,
         }
+
+    def set_embed_clients(self, embed_clients: dict[EmbedModelType, EmbedInterface]):
+        """Dynamically set embed types and clients. Must call this before using `embed_text_by_type()`."""
+        self.embed_types = list(embed_clients.keys())
+        self.embed_clients = embed_clients
 
     def is_key_exist(self, key: str) -> bool:
         if not key:
@@ -381,24 +408,35 @@ class EmbeddingBenchmarkBuilder:
             configs={"db_path": self.embed_db}, connect_cls=self.__class__
         )
         self.passage_manager = PassageJsonManager()
-        self.embed_types = ["gte", "bge", "qwen3_06b"]
+
         self.benchmark_ranks_path = (
             Path(__file__).parent / "benchmarks" / "benchmark_ranks.json"
         )
 
+    def init_embed_types(self):
+        """Must call this before using `calc_ranks_for_anchor()` or `calc_hits_ranks()`."""
+        self.embed_types = ["gte", "bge", "qwen3_06b"]
+
+    def set_embed_types(self, embed_types: list[str]):
+        """Dynamically set embed types for rank calc. Must call this before using `calc_ranks_for_anchor()` or `calc_hits_ranks()`."""
+        if not isinstance(embed_types, (list, tuple)):
+            embed_types = [embed_types]
+        self.embed_types = embed_types
+
     def load_embedding(self, key: str) -> list[float]:
-        if not key or not self.is_key_exist(key):
+        if not key:
             return None
         rocks_key = get_rocks_key(key)
         value = self.rocks.get(rocks_key)
         if value is None:
             return None
-        if isinstance(value, list):
-            embedding = value
-        else:
-            embedding = json.loads(value)
-        if not isinstance(embedding, list):
-            error_mesg = "× Stored embedding is not a list"
+        try:
+            if isinstance(value, list):
+                embedding = value
+            else:
+                embedding = json.loads(value)
+        except Exception as e:
+            error_mesg = f"× Fail to load embedding of key {brk(key)}: {e}"
             log_error(error_mesg)
         return floatize_embedding(embedding)
 
@@ -468,7 +506,7 @@ class EmbeddingBenchmarkBuilder:
         self,
         hits: list[dict],
         anchor_indices: list[int] = [0, 1, 4, 9],
-        field_names: list[str] = ["title", "tags", "merged"],
+        field_names: list[str] = ["merged"],
     ) -> dict[int, dict]:
         """Calc ranks for hits by anchor indices and field names.
 
@@ -549,12 +587,23 @@ class EmbeddingBenchmarkBuilder:
         self.save_benchmark_ranks(results)
 
 
+class EmbedderBenchmarker:
+    """Benchmark embedding models based on pre-calculated ranks."""
+
+    def __init__(self, max_count: int = None):
+        self.max_count = max_count
+
+    def run(self):
+        pass
+
+
 class CalculatorArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("-n", "--max-count", type=int, default=None)
         self.add_argument("-c", "--calc", action="store_true")
         self.add_argument("-b", "--build", action="store_true")
+        self.add_argument("-x", "--test", action="store_true")
         self.args, _ = self.parse_known_args()
 
 
@@ -563,15 +612,32 @@ def main():
 
     if args.calc:
         calculator = EmbeddingPreCalculator(max_count=args.max_count)
+        if args.test:
+            random_embedder = RandomEmbedder(dim=128)
+            calculator.set_embed_clients({"test": random_embedder})
+        else:
+            calculator.init_embed_clients()
         calculator.run()
 
     if args.build:
         benchmark_builder = EmbeddingBenchmarkBuilder(max_count=args.max_count)
+        if args.test:
+            benchmark_builder.set_embed_types(["test"])
+        else:
+            benchmark_builder.init_embed_types()
         benchmark_builder.run()
 
 
 if __name__ == "__main__":
     main()
-
+    # Case 1: pre-calc embeddings for default embed_types ["gte", "bge", "qwen3_06b"]
     # python -m models.tembed.calc -c
+
+    # Case 2: build benchmark ranks based on pre-calced embeddings
     # python -m models.tembed.calc -b -n 10
+
+    # Case 3: pre-calc test embeddings
+    # python -m models.tembed.calc -c -x
+
+    # Case 4: build test benchmark ranks
+    # python -m models.tembed.calc -b -x -n 10
