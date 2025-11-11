@@ -636,33 +636,39 @@ def main():
     if args.precalc:
         calculator = EmbeddingPreCalculator(max_count=args.max_count)
         if args.baseline:
-            random_embedder = RandomEmbedder(dim=128)
-            calculator.set_embed_clients({"test": random_embedder})
+            calculator.init_embed_clients()
             calculator.run()
         if args.compare:
-            calculator.init_embed_clients()
+            random_embedder = RandomEmbedder(dim=128)
+            calculator.set_embed_clients({"test": random_embedder})
             calculator.run()
 
     if args.builder:
         benchmark_builder = EmbeddingBenchmarkBuilder(max_count=args.max_count)
         if args.baseline:
-            benchmark_builder.set_embed_types(["test"])
+            benchmark_builder.init_embed_types()
             benchmark_builder.run()
         if args.compare:
-            benchmark_builder.init_embed_types()
+            benchmark_builder.set_embed_types(["test"])
             benchmark_builder.run()
 
 
 if __name__ == "__main__":
     main()
-    # Case 1: pre-calc embeddings for default embed_types ["gte", "bge", "qwen3_06b"]
+    # Case 1: pre-calc embeddings for baseline embed_types ["gte", "bge", "qwen3_06b"]
     # python -m models.tembed.calc -p -b
 
     # Case 2: build benchmark ranks based on pre-calced embeddings
     # python -m models.tembed.calc -r -b -n 10
+    # python -m models.tembed.calc -r -b
 
-    # Case 3: pre-calc test embeddings
+    # Case 3: pre-calc embeddings for compare
     # python -m models.tembed.calc -p -c
 
-    # Case 4: build test benchmark ranks
+    # Case 4: build benchmark ranks for compare
     # python -m models.tembed.calc -r -c -n 10
+    # python -m models.tembed.calc -r -c
+
+    # Case 5: run for both baseline and compare
+    # python -m models.tembed.calc -p -b -c
+    # python -m models.tembed.calc -r -b -c
