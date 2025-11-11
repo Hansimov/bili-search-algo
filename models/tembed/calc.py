@@ -606,14 +606,175 @@ class EmbeddingBenchmarkBuilder:
         self.save_benchmark_ranks(results)
 
 
-class EmbedderBenchmarker:
-    """Benchmark embedding models based on pre-calculated ranks."""
+class EmbeddingBenchmarkScorer:
+    """Score embedding models with benchmarks based on pre-calced ranks."""
 
     def __init__(self, max_count: int = None):
         self.max_count = max_count
+        self.init_processors()
+
+    def init_processors(self):
+        self.passage_manager = PassageJsonManager()
+        self.benchmark_ranks_path = (
+            Path(__file__).parent / "benchmarks" / "benchmark_ranks.json"
+        )
+        self.benchmark_scores_path = (
+            Path(__file__).parent / "benchmarks" / "benchmark_scores.json"
+        )
+
+    def load_benchmark_ranks(self) -> dict:
+        """Load pre-calculated benchmark ranks from JSON file."""
+        if not self.benchmark_ranks_path.exists():
+            err_mesg = f"× Benchmark ranks file not found: {self.benchmark_ranks_path}"
+            log_error(err_mesg)
+        try:
+            with open(self.benchmark_ranks_path, encoding="utf-8", mode="r") as rf:
+                return json.load(rf)
+        except Exception as e:
+            err_mesg = f"× Failed to load benchmark ranks: {e}"
+            log_error(err_mesg)
+
+    def calc_max_diff_sum(self, med_ranks: list[int]) -> int:
+        """Calculate maximum possible rank difference sum: SUM(len(ranks) - rank[i]).
+        Add bias -1.85*n to fit real distribution of ranks, with amortization.
+        """
+        n = len(med_ranks)
+        return sum(n - rank for rank in med_ranks) - (1.85 * n)
+
+    def calc_rank_score(self, emb_ranks: list[int], med_ranks: list[int]) -> float:
+        """Calculate score for one embedding type against median ranks.
+
+        Score = 1 - SUM(abs(diff)) / SUM(n - med_rank[i])
+        where n is the number of hits.
+        """
+        if not emb_ranks or not med_ranks or len(emb_ranks) != len(med_ranks):
+            return None
+
+        # Calculate actual rank differences
+        actual_diff_sum = sum(abs(e - m) for e, m in zip(emb_ranks, med_ranks))
+
+        # Calculate maximum possible difference
+        max_diff_sum = self.calc_max_diff_sum(med_ranks)
+
+        if max_diff_sum == 0:
+            # All ranks are at max position, perfect score
+            return 1.0
+
+        # Calculate normalized score
+        diff_ratio = actual_diff_sum / max_diff_sum
+        score = 1.0 - diff_ratio
+
+        return score
+
+    def calc_anchor_scores(
+        self, anchor_data: dict, field_name: str = "merged"
+    ) -> dict[str, float]:
+        """Calculate scores for all embedding types at one anchor_idx.
+
+        Returns: {emb_type: score}
+        """
+        scores = {}
+        med_key = f"{field_name}.med"
+        med_ranks = anchor_data.get(med_key)
+
+        if not med_ranks:
+            return scores
+
+        # Find all embedding type keys (exclude .med)
+        for key, ranks in anchor_data.items():
+            if not key.startswith(f"{field_name}."):
+                continue
+            if key.endswith(".med"):
+                continue
+
+            # Extract embedding type from key like "merged.gte"
+            emb_type = key.split(".", 1)[1]
+
+            score = self.calc_rank_score(ranks, med_ranks)
+            if score is not None:
+                scores[emb_type] = score
+
+        return scores
+
+    def calc_query_scores(
+        self, query_data: dict, field_name: str = "merged"
+    ) -> dict[str, float]:
+        """Calculate average scores for all embedding types across all anchor_indices.
+
+        Returns: {emb_type: avg_score}
+        """
+        emb_scores_by_anchor: dict[str, list[float]] = defaultdict(list)
+
+        for anchor_idx, anchor_data in query_data.items():
+            if not isinstance(anchor_data, dict):
+                continue
+
+            anchor_scores = self.calc_anchor_scores(anchor_data, field_name)
+            for emb_type, score in anchor_scores.items():
+                emb_scores_by_anchor[emb_type].append(score)
+
+        # Calculate average score for each embedding type
+        avg_scores = {}
+        for emb_type, scores in emb_scores_by_anchor.items():
+            if scores:
+                avg_scores[emb_type] = sum(scores) / len(scores)
+
+        return avg_scores
+
+    def calc_all_scores(
+        self, benchmark_data: dict, field_name: str = "merged"
+    ) -> dict[str, dict]:
+        """Calculate scores for all queries and overall averages.
+
+        Returns: {
+            "by_query": {query: {emb_type: score}},
+            "overall": {emb_type: avg_score}
+        }
+        """
+        query_scores = {}
+        emb_scores_all: dict[str, list[float]] = defaultdict(list)
+
+        bar = TCLogbar(total=len(benchmark_data), desc="* scoring")
+        for query, query_data in benchmark_data.items():
+            bar.update(increment=1, desc=f"{chars_slice(query, end=10)}")
+
+            scores = self.calc_query_scores(query_data, field_name)
+            query_scores[query] = scores
+
+            for emb_type, score in scores.items():
+                emb_scores_all[emb_type].append(score)
+
+        print()
+
+        # Calculate overall average for each embedding type
+        overall_scores = {}
+        for emb_type, scores in emb_scores_all.items():
+            if scores:
+                overall_scores[emb_type] = sum(scores) / len(scores)
+
+        return {"by_query": query_scores, "overall": overall_scores}
+
+    def save_benchmark_scores(self, scores_data: dict):
+        """Save calculated scores to JSON file."""
+        self.benchmark_scores_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.benchmark_scores_path, encoding="utf-8", mode="w") as wf:
+            json.dump(scores_data, wf, ensure_ascii=False, indent=2)
+        logger.note(f"> Save benchmark scores to:")
+        logger.file(f"  * {self.benchmark_scores_path}")
+
+        # Print overall scores
+        logger.note(f"\n> Overall Scores:")
+        overall = scores_data.get("overall", {})
+        for emb_type, score in sorted(
+            overall.items(), key=lambda x: x[1], reverse=True
+        ):
+            logger.success(f"  * {emb_type:10s}: {score:.4f}")
 
     def run(self):
-        pass
+        """Run the scoring process."""
+        benchmark_data = self.load_benchmark_ranks()
+        scores_data = self.calc_all_scores(benchmark_data, field_name="merged")
+        self.save_benchmark_scores(scores_data)
 
 
 class CalculatorArgParser(argparse.ArgumentParser):
@@ -621,9 +782,10 @@ class CalculatorArgParser(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
         # ints: max_count
         self.add_argument("-n", "--max-count", type=int, default=None)
-        # tasks: precalc, builder
+        # tasks: precalc, builder, scorer
         self.add_argument("-p", "--precalc", action="store_true")
         self.add_argument("-r", "--builder", action="store_true")
+        self.add_argument("-s", "--scorer", action="store_true")
         # models: baseline, compare
         self.add_argument("-b", "--baseline", action="store_true")
         self.add_argument("-c", "--compare", action="store_true")
@@ -652,6 +814,10 @@ def main():
             benchmark_builder.set_embed_types(["test"])
             benchmark_builder.run()
 
+    if args.scorer:
+        benchmark_scorer = EmbeddingBenchmarkScorer(max_count=args.max_count)
+        benchmark_scorer.run()
+
 
 if __name__ == "__main__":
     main()
@@ -672,3 +838,11 @@ if __name__ == "__main__":
     # Case 5: run for both baseline and compare
     # python -m models.tembed.calc -p -b -c
     # python -m models.tembed.calc -r -b -c
+
+    # Case 6: score embeddings based on benchmark ranks
+    # python -m models.tembed.calc -s
+
+    # format json
+    # cd ~/repos/bili-search-algo/models/tembed
+    # npx prettier --write benchmarks/benchmark_ranks.json
+    # npx prettier --write benchmarks/benchmark_scores.json
