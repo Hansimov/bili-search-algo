@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from sedb import RedisOperator, RocksOperator
 from tclogger import StrsType, logger, log_error, dict_get, TCLogbar, chars_slice, brk
-from tfmx import EmbedClient
+from tfmx import EmbedClient, floats_to_bits, bits_to_hash, dot_sim, hash_sim
 from typing import Literal, Optional, Union, Any
 
 from configs.envs import REDIS_ENVS
@@ -17,6 +17,7 @@ from models.tembed.sample import PassageJsonManager
 
 EmbedModelType = Literal["gte", "bge", "qwen3_06b"]
 EmbedKeyType = Literal["qr", "bv"]
+EmbedValType = Union[list[float], list[int], str]
 
 
 @dataclass(frozen=True)
@@ -107,10 +108,6 @@ def stringify_embedding(embedding: list[float]) -> str:
     return json.dumps(embedding, ensure_ascii=False, separators=(",", ":"))
 
 
-def dot_sim(vec1: list[float], vec2: list[float]) -> float:
-    return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
-
-
 def calc_median_ranks(ranks_by_emb: dict[str, list[int]]) -> list[int]:
     """Calculate median ranks across different embedding types."""
     ranks_matrix = np.array(list(ranks_by_emb.values()))
@@ -119,7 +116,7 @@ def calc_median_ranks(ranks_by_emb: dict[str, list[int]]) -> list[int]:
 
 class EmbedInterface(ABC):
     @abstractmethod
-    def embed(self, texts: StrsType) -> list[list[float]]:
+    def embed(self, texts: StrsType) -> list[EmbedValType]:
         """Return embeddings (2d-list) of texts."""
         pass
 
@@ -136,6 +133,29 @@ class RandomEmbedder(EmbedInterface):
             emb = np.random.rand(self.dim).tolist()
             embeddings.append(emb)
         return embeddings
+
+
+class HashEmbedder(EmbedInterface):
+    """Convert float-type gte embeddings to hash-type embeddings."""
+
+    def __init__(self):
+        self.init_client()
+
+    def init_client(self):
+        self.client = EmbedClient(
+            endpoint="http://localhost:28888/embed",
+            api_format="tei",
+            res_format="list2d",
+            verbose=False,
+        )
+
+    def embed(self, texts: StrsType) -> list[str]:
+        floats_embs = self.client.embed(texts)
+        hash_embs = [bits_to_hash(floats_to_bits(emb, k=2)) for emb in floats_embs]
+        return hash_embs
+
+
+EmbedClientType = Union[EmbedClient, RandomEmbedder, HashEmbedder]
 
 
 class EmbeddingPreCalculator:
@@ -169,16 +189,16 @@ class EmbeddingPreCalculator:
         self.qwen3_06b_embed = EmbedClient(
             endpoint="http://localhost:28887/embed", **embed_params
         )
-        self.embed_clients: dict[EmbedModelType, EmbedClient] = {
+        self.embed_clients: dict[EmbedModelType, EmbedClientType] = {
             "gte": self.gte_embed,
             "bge": self.bge_embed,
             "qwen3_06b": self.qwen3_06b_embed,
         }
 
-    def set_embed_clients(self, embed_clients: dict[EmbedModelType, EmbedInterface]):
+    def set_embed_clients(self, embed_clients: dict[EmbedModelType, EmbedClientType]):
         """Dynamically set embed types and clients. Must call this before using `embed_text_by_type()`."""
         self.embed_types = list(embed_clients.keys())
-        self.embed_clients = embed_clients
+        self.embed_clients: dict[EmbedModelType, EmbedClientType] = embed_clients
 
     def is_key_exist(self, key: str) -> bool:
         if not key:
@@ -256,24 +276,24 @@ class EmbeddingPreCalculator:
         if rc.hlen(redis_key) == 0:
             rc.delete(redis_key)
 
-    def save_embedding(self, key: str, embedding: list[float]):
+    def save_embedding(self, key: str, embedding: EmbedValType):
         if not key or not embedding:
             return
         rocks_key = get_rocks_key(key)
         self.rocks.set(rocks_key, stringify_embedding(embedding))
         self.set_key_exist(key)
 
-    def save_embeddings(self, key_embeddings: dict[str, list[float]]):
+    def save_embeddings(self, key_embeddings: dict[str, EmbedValType]):
         if not key_embeddings:
             return
         self.rocks.mset(key_embeddings)
 
     def embed_text_by_type(
         self, texts: StrsType, embed_type: EmbedModelType
-    ) -> list[list[float]]:
+    ) -> list[EmbedValType]:
         if not texts:
             return []
-        embed_client = self.embed_clients.get(embed_type)
+        embed_client: EmbedClientType = self.embed_clients.get(embed_type)
         if embed_client:
             embeddings = embed_client.embed(texts)
         else:
@@ -282,7 +302,7 @@ class EmbeddingPreCalculator:
 
     def embed_key_text_pairs(
         self, key_text_pairs: list[tuple[str, str]], emb_type: EmbedModelType
-    ) -> dict[str, list[float]]:
+    ) -> dict[str, EmbedValType]:
         if not key_text_pairs:
             return {}
         bv_keys, field_texts = zip(*key_text_pairs)
@@ -392,7 +412,7 @@ class EmbeddingPreCalculator:
                 break
             # logger.note(query)
             bar.update(increment=1, desc=f"{chars_slice(query,end=10)}")
-            self.calc_qr_embedding(query)
+            # self.calc_qr_embedding(query)
             hits = passage["hits"]
             self.calc_hits_embeddings(hits)
 
@@ -411,20 +431,30 @@ class EmbeddingBenchmarkBuilder:
         )
         self.passage_manager = PassageJsonManager()
         self.bm_ranks_path = PARENT_DIR / "benchmarks" / "benchmark_ranks.json"
-        self.is_calc_rank_med = True
 
     def init_embed_types(self):
         """Must call this before using `calc_ranks_for_anchor()` or `calc_hits_ranks()`."""
         self.embed_types = ["gte", "bge", "qwen3_06b"]
+        self.is_calc_rank_med = True
+        self.ele_type = "dot"
 
-    def set_embed_types(self, embed_types: list[str], is_calc_rank_med: bool = False):
+    def set_embed_types(
+        self,
+        embed_types: list[str],
+        is_calc_rank_med: bool = False,
+        ele_type: Literal["dot", "hash"] = "dot",
+    ):
         """Dynamically set embed types for rank calc. Must call this before using `calc_ranks_for_anchor()` or `calc_hits_ranks()`."""
         if not isinstance(embed_types, (list, tuple)):
             embed_types = [embed_types]
         self.embed_types = embed_types
         self.is_calc_rank_med = is_calc_rank_med
+        self.ele_type = ele_type
 
-    def load_embedding(self, key: str) -> list[float]:
+    def is_hash_ele(self):
+        return self.ele_type == "hash"
+
+    def load_embedding(self, key: str) -> EmbedValType:
         if not key:
             return None
         rocks_key = get_rocks_key(key)
@@ -432,30 +462,37 @@ class EmbeddingBenchmarkBuilder:
         if value is None:
             return None
         try:
-            if isinstance(value, list):
+            if self.is_hash_ele():
                 embedding = value
             else:
-                embedding = json.loads(value)
-        except Exception as e:
-            error_mesg = f"× Fail to load embedding of key {brk(key)}: {e}"
-            log_error(error_mesg)
-        return floatize_embedding(embedding)
-
-    def load_embeddings(self, keys: list[str]) -> dict[str, list[float]]:
-        if not keys:
-            return {}
-        rocks_keys = [get_rocks_key(key) for key in keys]
-        values = self.rocks.mget(rocks_keys)
-        embeddings: dict[str, list[float]] = {}
-        for key, value in zip(keys, values):
-            if value is None:
-                continue
-            try:
                 if isinstance(value, list):
                     embedding = value
                 else:
                     embedding = json.loads(value)
-                embeddings[key] = floatize_embedding(embedding)
+                embedding = floatize_embedding(embedding)
+        except Exception as e:
+            error_mesg = f"× Fail to load embedding of key {brk(key)}: {e}"
+            log_error(error_mesg)
+        return embedding
+
+    def load_embeddings(self, keys: list[str]) -> dict[str, EmbedValType]:
+        if not keys:
+            return {}
+        rocks_keys = [get_rocks_key(key) for key in keys]
+        values = self.rocks.mget(rocks_keys)
+        embeddings: dict[str, EmbedValType] = {}
+        for key, value in zip(keys, values):
+            if value is None:
+                continue
+            try:
+                if self.is_hash_ele():
+                    embeddings[key] = value
+                else:
+                    if isinstance(value, list):
+                        embedding = value
+                    else:
+                        embedding = json.loads(value)
+                    embeddings[key] = floatize_embedding(embedding)
             except Exception as e:
                 error_mesg = f"× Fail to load embedding of key {brk(key)}: {e}"
                 log_error(error_mesg)
@@ -476,7 +513,7 @@ class EmbeddingBenchmarkBuilder:
         anchor_idx: int,
         field_name: str,
         emb_type: str,
-        embeddings: dict[str, list[float]],
+        embeddings: dict[str, EmbedValType],
     ) -> list[int]:
         """Calculate ranks of all hits relative to anchor_idx hit for given field+emb_type."""
         # get anchor embedding
@@ -495,7 +532,10 @@ class EmbeddingBenchmarkBuilder:
             if emb is None:
                 scores.append((idx, -1))
             else:
-                sim = dot_sim(anchor_emb, emb)
+                if self.is_hash_ele():
+                    sim = hash_sim(anchor_emb, emb)
+                else:
+                    sim = dot_sim(anchor_emb, emb)
                 scores.append((idx, sim))
 
         # sort scores desc, and get ranks
@@ -758,8 +798,10 @@ def main():
             calculator.init_embed_clients()
             calculator.run()
         if args.compare:
-            random_embedder = RandomEmbedder(dim=128)
-            calculator.set_embed_clients({"test": random_embedder})
+            # random_embedder = RandomEmbedder(dim=128)
+            # calculator.set_embed_clients({"test": random_embedder})
+            hash_embedder = HashEmbedder()
+            calculator.set_embed_clients({"hash": hash_embedder})
             calculator.run()
 
     if args.builder:
@@ -768,7 +810,10 @@ def main():
             benchmark_builder.init_embed_types()
             benchmark_builder.run()
         if args.compare:
-            benchmark_builder.set_embed_types(["test"])
+            # benchmark_builder.set_embed_types(["test"])
+            benchmark_builder.set_embed_types(
+                ["hash"], is_calc_rank_med=False, ele_type="hash"
+            )
             benchmark_builder.run()
 
     if args.scorer:
