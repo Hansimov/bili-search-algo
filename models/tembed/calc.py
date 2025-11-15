@@ -773,6 +773,15 @@ class EmbeddingBenchmarkScorer:
         scores_data = self.calc_all_scores(bm_data, field_name="merged")
         self.save_benchmark_scores(scores_data)
 
+    """
+    > Overall Scores:
+    * qwen3_06b : 0.7543
+    * gte       : 0.7469
+    * bge       : 0.7042
+    * hash      : 0.4023
+    * test      : 0.0094
+    """
+
 
 class CalculatorArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
