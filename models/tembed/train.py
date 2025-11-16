@@ -20,7 +20,7 @@ TEXT_TAGS = {
 
 BASE_NAME = "qwen3_06b"
 REDIS_PREFIX = f"bv.emb:"
-EMB_FIELD = f"is_emb_{BASE_NAME}"
+EMB_FIELD = f"{BASE_NAME}"
 
 # sudo mkdir -p /media/data/tembed && sudo chown -R "$USER:$USER" /media/data/tembed
 STORAGE_DIR = Path("/media/data/tembed")
@@ -73,10 +73,8 @@ class EmbedBatcher:
     def should_submit(self) -> bool:
         return len(self.batch) >= self.batch_size
 
-    def append(self, bvid: str, text: str):
-        self.batch[bvid] = text
-        if self.should_submit():
-            self.submit()
+    def clear(self):
+        self.batch.clear()
 
     def bvids_to_redis_name_fields(self, bvids: list[str]) -> list[tuple[str, str]]:
         return [(f"{REDIS_PREFIX}{bvid}", EMB_FIELD) for bvid in bvids]
@@ -110,8 +108,12 @@ class EmbedBatcher:
         }
         self.rocks.mset(rocks_data)
         self.redis.set_hashes_exist(non_exist_name_fields)
-        # clear batch
-        self.batch = {}
+
+    def append(self, bvid: str, text: str):
+        self.batch[bvid] = text
+        if self.should_submit():
+            self.submit()
+            self.clear()
 
 
 class EmbeddingDataCalculator:
@@ -119,7 +121,7 @@ class EmbeddingDataCalculator:
 
     def __init__(self):
         self.converter = MongoDocConverter()
-        self.batcher = EmbedBatcher(batch_size=100)
+        self.batcher = EmbedBatcher()
         self.init_docs_generator()
 
     def init_docs_generator(self):
@@ -164,4 +166,5 @@ def main():
 if __name__ == "__main__":
     main()
 
-    # python -m models.tembed.train -cc -ec -mn 1000
+    # python -m models.tembed.train -cc -ec -mn 10000
+    # python -m models.tembed.train -cc
