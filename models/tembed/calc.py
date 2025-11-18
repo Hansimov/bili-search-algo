@@ -455,6 +455,7 @@ class EmbeddingPreCalculator:
             # self.calc_qr_embedding(query)
             hits = passage["hits"]
             self.calc_hits_embeddings(hits)
+        print()
 
 
 class EmbeddingBenchmarkBuilder:

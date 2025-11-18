@@ -23,7 +23,7 @@ class LSHConverter:
         """init random hyper-planes matrix"""
         logger.note(f"> Init LSH HyperPlanes:", end=" ")
         logger.mesg(f"(dims={self.dims}, bitn={self.bitn}, seed={self.seed})")
-        hps_name = f"lsh_hps_sd{self.seed}_{self.dims}f_{self.bitn}b.npy"
+        hps_name = f"lsh_hps_sd{self.seed}_{self.dims}_{self.bitn}.npy"
         self.hps_path = WEIGHTS_DIR / hps_name
         if self.hps_path.exists():
             self.load_hyperplanes()
