@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from sedb import RedisOperator, RocksOperator
 from tclogger import StrsType, logger, log_error, dict_get, TCLogbar, chars_slice, brk
+from tclogger import shell_cmd
 from tfmx import EmbedClient, floats_to_bits, bits_to_hash, dot_sim, hash_sim
 from typing import Literal, Optional, Union, Any
 
@@ -185,8 +186,9 @@ EmbedClientType = Union[EmbedClient, RandomEmbedder, HashEmbedder, LSHEmbedder]
 class EmbeddingPreCalculator:
     """Pre-calculate embeddings for query-passage pairs."""
 
-    def __init__(self, max_count: int = None):
+    def __init__(self, max_count: int = None, overwrite: bool = False):
         self.max_count = max_count
+        self.overwrite = overwrite
         self.init_processors()
 
     def init_processors(self):
@@ -238,12 +240,9 @@ class EmbeddingPreCalculator:
         """Batch check if keys exist in Redis."""
         if not keys:
             return []
-
         rc = self.redis.client
         pipeline = rc.pipeline()
-
-        # Group keys by their redis_key and field
-        key_checks = []  # List of (key, redis_key, redis_field)
+        key_checks = []  # list of (key, redis_key, redis_field)
         for key in keys:
             redis_key, redis_field = get_redis_key_field(key)
             key_checks.append((key, redis_key, redis_field))
@@ -251,11 +250,7 @@ class EmbeddingPreCalculator:
                 pipeline.exists(redis_key)
             else:
                 pipeline.hexists(redis_key, redis_field)
-
-        # Execute pipeline and get results
         results = pipeline.execute()
-
-        # Convert results to list of bools
         return [bool(result) for result in results]
 
     def set_key_exist(self, key: str):
@@ -387,7 +382,10 @@ class EmbeddingPreCalculator:
                     bv_keys_info[bv_key] = (field_text, emb_type)
 
         # check bv_keys exist
-        keys_exist = self.is_keys_exist(all_bv_keys)
+        if self.overwrite:
+            keys_exist = [False] * len(all_bv_keys)
+        else:
+            keys_exist = self.is_keys_exist(all_bv_keys)
         texts_to_embed: dict[EmbedModelType, list[tuple[str, str]]] = {
             emb_type: [] for emb_type in self.embed_types
         }
@@ -428,6 +426,11 @@ class EmbeddingPreCalculator:
         return upper_count
 
     def run(self):
+        logger.note(f"> Calculating embeddings:", end=" ")
+        if self.overwrite:
+            logger.mesg(f"(overwrite={self.overwrite})")
+        else:
+            logger.mesg("")
         bar = TCLogbar(total=self.get_upper_count(), desc="* query")
         for idx, (query, passage) in enumerate(
             self.passage_manager.iter_query_passages()
@@ -654,6 +657,8 @@ class EmbeddingBenchmarkBuilder:
             json.dump(data, wf, ensure_ascii=False, indent=2)
         logger.note(f"> Save benchmark ranks to:")
         logger.file(f"  * {self.bm_ranks_path}")
+        cmd_prettier = f"cd {PARENT_DIR.resolve()} && npx prettier --write benchmarks/benchmark_ranks.json"
+        shell_cmd(cmd_prettier)
 
     def run(self):
         results: dict[str, dict] = {}
@@ -810,8 +815,9 @@ class EmbeddingBenchmarkScorer:
 class CalculatorArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # ints: max_count
+        # flags: max_count, overwrite
         self.add_argument("-n", "--max-count", type=int, default=None)
+        self.add_argument("-w", "--overwrite", action="store_true")
         # tasks: precalc, builder, scorer
         self.add_argument("-p", "--precalc", action="store_true")
         self.add_argument("-r", "--builder", action="store_true")
@@ -826,7 +832,9 @@ def main():
     args = CalculatorArgParser().args
 
     if args.precalc:
-        calculator = EmbeddingPreCalculator(max_count=args.max_count)
+        calculator = EmbeddingPreCalculator(
+            max_count=args.max_count, overwrite=args.overwrite
+        )
         if args.baseline:
             calculator.init_embed_clients()
             calculator.run()
@@ -859,19 +867,24 @@ def main():
 
 if __name__ == "__main__":
     main()
-    # Case 1: pre-calc embeddings for baseline embed_types ["gte", "bge", "qwen3_06b"]
+    # Case 1: (baseline) pre-calc embeddings for embed_types ["gte", "bge", "qwen3_06b"]
     # python -m models.tembed.calc -p -b
 
-    # Case 2: build benchmark ranks based on pre-calced embeddings
+    # Case 2: (baseline) build benchmark ranks based on pre-calced embeddings
     # python -m models.tembed.calc -r -b -n 10
     # python -m models.tembed.calc -r -b
 
-    # Case 3: pre-calc embeddings for compare
+    # Case 3: (compare) pre-calc embeddings
     # python -m models.tembed.calc -p -c
+    # python -m models.tembed.calc -p -c -w
 
-    # Case 4: build benchmark ranks for compare
+    # Case 4: (compare) build benchmark ranks
     # python -m models.tembed.calc -r -c -n 10
     # python -m models.tembed.calc -r -c
+
+    # format json
+    # cd ~/repos/bili-search-algo/models/tembed
+    # npx prettier --write benchmarks/benchmark_ranks.json
 
     # Case 5: run for both baseline and compare
     # python -m models.tembed.calc -p -b -c
@@ -879,8 +892,3 @@ if __name__ == "__main__":
 
     # Case 6: score embeddings based on benchmark ranks
     # python -m models.tembed.calc -s
-
-    # format json
-    # cd ~/repos/bili-search-algo/models/tembed
-    # npx prettier --write benchmarks/benchmark_ranks.json
-    # npx prettier --write benchmarks/benchmark_scores.json

@@ -8,7 +8,7 @@ class LSHConverter:
     """Convert emb-floats to hash-bits with LSH.
     - dims: input embedding floats dimension (1024)
     - bitn: output hash bits num (2048)
-    - seed: random seed for reproducibility
+    - seed: random seed for reproducibility (42)
     """
 
     def __init__(self, dims: int = 1024, bitn: int = 2048, seed: int = 42):
@@ -19,7 +19,10 @@ class LSHConverter:
 
     def init_hyperplanes(self):
         """init random hyper-planes matrix"""
-        self.hps_path = Path(__file__).parent / f"lsh_hps_{self.dims}d_{self.bitn}b.npy"
+        self.hps_path = (
+            Path(__file__).parent
+            / f"lsh_hps_sd{self.seed}_{self.dims}f_{self.bitn}b.npy"
+        )
         if self.hps_path.exists():
             self.load_hyperplanes()
         else:
@@ -44,8 +47,8 @@ class LSHConverter:
         Output:
         - bits: with shape (n, bitn) or (bitn,)
         """
-        # reshape for single row
-        if embs.ndims == 1:
+        # reshape single row
+        if embs.ndim == 1:
             embs = embs.reshape(1, -1)
             squeeze = True
         else:
