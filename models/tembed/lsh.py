@@ -3,6 +3,8 @@ import numpy as np
 from pathlib import Path
 from tclogger import logger
 
+WEIGHTS_DIR = Path(__file__).parent / "weights"
+
 
 class LSHConverter:
     """Convert emb-floats to hash-bits with LSH.
@@ -19,10 +21,10 @@ class LSHConverter:
 
     def init_hyperplanes(self):
         """init random hyper-planes matrix"""
-        self.hps_path = (
-            Path(__file__).parent
-            / f"lsh_hps_sd{self.seed}_{self.dims}f_{self.bitn}b.npy"
-        )
+        logger.note(f"> Init LSH HyperPlanes:", end=" ")
+        logger.mesg(f"(dims={self.dims}, bitn={self.bitn}, seed={self.seed})")
+        hps_name = f"lsh_hps_sd{self.seed}_{self.dims}f_{self.bitn}b.npy"
+        self.hps_path = WEIGHTS_DIR / hps_name
         if self.hps_path.exists():
             self.load_hyperplanes()
         else:
@@ -83,6 +85,7 @@ class LSHConverter:
 
     def save_hyperplanes(self):
         logger.note(f"> Save LSH HyperPlanes to:")
+        self.hps_path.parent.mkdir(parents=True, exist_ok=True)
         np.save(self.hps_path, self.hps)
         logger.okay(f"  * {self.hps_path}")
 

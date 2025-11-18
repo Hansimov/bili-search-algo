@@ -158,8 +158,9 @@ class HashEmbedder(EmbedInterface):
 
 
 class LSHEmbedder(EmbedInterface):
-    def __init__(self):
+    def __init__(self, bitn: int = None, seed: int = None):
         self.init_client()
+        self.init_lsh(bitn=bitn, seed=seed)
 
     def init_client(self):
         # python -m tfmx.embed_server -t "tei" -m "Qwen/Qwen3-Embedding-0.6B" -p 28887 -b
@@ -169,7 +170,14 @@ class LSHEmbedder(EmbedInterface):
             res_format="list2d",
             verbose=False,
         )
-        self.lsh = LSHConverter()
+
+    def init_lsh(self, bitn: int = None, seed: int = None):
+        lsh_params = {}
+        if bitn is not None:
+            lsh_params["bitn"] = bitn
+        if seed is not None:
+            lsh_params["seed"] = seed
+        self.lsh = LSHConverter(**lsh_params)
 
     def embed(self, texts: StrsType) -> list[str]:
         """Get embeddings from qwen3-0.6b and convert to LSH hash strings."""
@@ -186,9 +194,12 @@ EmbedClientType = Union[EmbedClient, RandomEmbedder, HashEmbedder, LSHEmbedder]
 class EmbeddingPreCalculator:
     """Pre-calculate embeddings for query-passage pairs."""
 
-    def __init__(self, max_count: int = None, overwrite: bool = False):
+    def __init__(
+        self, max_count: int = None, overwrite: bool = False, skip_set: bool = False
+    ):
         self.max_count = max_count
         self.overwrite = overwrite
+        self.skip_set = skip_set
         self.init_processors()
 
     def init_processors(self):
@@ -414,7 +425,9 @@ class EmbeddingPreCalculator:
         # batch save all embeddings
         if all_embeddings:
             self.save_embeddings(all_embeddings)
-            self.set_keys_exist(all_keys)
+            if not self.skip_set:
+                # often used at same time with "overwrite" in a re-calc
+                self.set_keys_exist(all_keys)
 
     def get_upper_count(self) -> int:
         max_count = self.max_count
@@ -447,8 +460,9 @@ class EmbeddingPreCalculator:
 class EmbeddingBenchmarkBuilder:
     """Build benchmark with embeddings from multi models."""
 
-    def __init__(self, max_count: int = None):
+    def __init__(self, max_count: int = None, prettify_json: bool = False):
         self.max_count = max_count
+        self.prettify_json = prettify_json
         self.init_processors()
 
     def init_processors(self):
@@ -657,7 +671,12 @@ class EmbeddingBenchmarkBuilder:
             json.dump(data, wf, ensure_ascii=False, indent=2)
         logger.note(f"> Save benchmark ranks to:")
         logger.file(f"  * {self.bm_ranks_path}")
-        cmd_prettier = f"cd {PARENT_DIR.resolve()} && npx prettier --write benchmarks/benchmark_ranks.json"
+
+    def prettify_ranks_json(self):
+        cmd_prettier = (
+            f"cd {PARENT_DIR.resolve()} && "
+            f"npx prettier --write benchmarks/benchmark_ranks.json"
+        )
         shell_cmd(cmd_prettier)
 
     def run(self):
@@ -673,6 +692,8 @@ class EmbeddingBenchmarkBuilder:
             results[query] = self.calc_hits_ranks(hits)
         print()
         self.save_benchmark_ranks(results)
+        if self.prettify_json:
+            self.prettify_ranks_json()
 
 
 class EmbeddingBenchmarkScorer:
@@ -807,6 +828,7 @@ class EmbeddingBenchmarkScorer:
     * qwen3_06b : 0.7543
     * gte       : 0.7469
     * bge       : 0.7042
+    * lsh       : 0.6412
     * hash      : 0.4023
     * test      : 0.0094
     """
@@ -818,10 +840,16 @@ class CalculatorArgParser(argparse.ArgumentParser):
         # flags: max_count, overwrite
         self.add_argument("-n", "--max-count", type=int, default=None)
         self.add_argument("-w", "--overwrite", action="store_true")
+        self.add_argument("-k", "--skip-set", action="store_true")
+        # lsh params: bitn, seed
+        self.add_argument("-bn", "--bitn", type=int, default=None)
+        self.add_argument("-sd", "--seed", type=int, default=None)
         # tasks: precalc, builder, scorer
         self.add_argument("-p", "--precalc", action="store_true")
         self.add_argument("-r", "--builder", action="store_true")
         self.add_argument("-s", "--scorer", action="store_true")
+        # options: prettify_json
+        self.add_argument("-j", "--prettify-json", action="store_true")
         # models: baseline, compare
         self.add_argument("-b", "--baseline", action="store_true")
         self.add_argument("-c", "--compare", action="store_true")
@@ -833,7 +861,7 @@ def main():
 
     if args.precalc:
         calculator = EmbeddingPreCalculator(
-            max_count=args.max_count, overwrite=args.overwrite
+            max_count=args.max_count, overwrite=args.overwrite, skip_set=args.skip_set
         )
         if args.baseline:
             calculator.init_embed_clients()
@@ -843,12 +871,14 @@ def main():
             # calculator.set_embed_clients({"test": random_embedder})
             # hash_embedder = HashEmbedder()
             # calculator.set_embed_clients({"hash": hash_embedder})
-            lsh_embedder = LSHEmbedder()
+            lsh_embedder = LSHEmbedder(bitn=args.bitn, seed=args.seed)
             calculator.set_embed_clients({"lsh": lsh_embedder})
             calculator.run()
 
     if args.builder:
-        benchmark_builder = EmbeddingBenchmarkBuilder(max_count=args.max_count)
+        benchmark_builder = EmbeddingBenchmarkBuilder(
+            max_count=args.max_count, prettify_json=args.prettify_json
+        )
         if args.baseline:
             benchmark_builder.init_embed_types()
             benchmark_builder.run()
@@ -876,11 +906,13 @@ if __name__ == "__main__":
 
     # Case 3: (compare) pre-calc embeddings
     # python -m models.tembed.calc -p -c
-    # python -m models.tembed.calc -p -c -w
+    # python -m models.tembed.calc -p -c -wk
+    # python -m models.tembed.calc -p -c -wk -sd 1
 
     # Case 4: (compare) build benchmark ranks
     # python -m models.tembed.calc -r -c -n 10
     # python -m models.tembed.calc -r -c
+    # python -m models.tembed.calc -r -c -f
 
     # format json
     # cd ~/repos/bili-search-algo/models/tembed
