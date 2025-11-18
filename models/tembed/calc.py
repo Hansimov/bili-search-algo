@@ -14,6 +14,7 @@ from typing import Literal, Optional, Union, Any
 
 from configs.envs import REDIS_ENVS
 from models.tembed.sample import PassageJsonManager
+from models.tembed.lsh import LSHConverter
 
 EmbedModelType = Literal["gte", "bge", "qwen3_06b"]
 EmbedKeyType = Literal["qr", "bv"]
@@ -155,7 +156,30 @@ class HashEmbedder(EmbedInterface):
         return hash_embs
 
 
-EmbedClientType = Union[EmbedClient, RandomEmbedder, HashEmbedder]
+class LSHEmbedder(EmbedInterface):
+    def __init__(self):
+        self.init_client()
+
+    def init_client(self):
+        # python -m tfmx.embed_server -t "tei" -m "Qwen/Qwen3-Embedding-0.6B" -p 28887 -b
+        self.client = EmbedClient(
+            endpoint="http://localhost:28887/embed",
+            api_format="tei",
+            res_format="list2d",
+            verbose=False,
+        )
+        self.lsh = LSHConverter()
+
+    def embed(self, texts: StrsType) -> list[str]:
+        """Get embeddings from qwen3-0.6b and convert to LSH hash strings."""
+        embs = self.client.embed(texts)
+        embs_np = np.array(embs, dtype=np.float32)
+        bits = self.lsh.embs_to_bits(embs_np)
+        hash_strs = [self.lsh.bits_to_hex(bits_row) for bits_row in bits]
+        return hash_strs
+
+
+EmbedClientType = Union[EmbedClient, RandomEmbedder, HashEmbedder, LSHEmbedder]
 
 
 class EmbeddingPreCalculator:
@@ -809,8 +833,10 @@ def main():
         if args.compare:
             # random_embedder = RandomEmbedder(dim=128)
             # calculator.set_embed_clients({"test": random_embedder})
-            hash_embedder = HashEmbedder()
-            calculator.set_embed_clients({"hash": hash_embedder})
+            # hash_embedder = HashEmbedder()
+            # calculator.set_embed_clients({"hash": hash_embedder})
+            lsh_embedder = LSHEmbedder()
+            calculator.set_embed_clients({"lsh": lsh_embedder})
             calculator.run()
 
     if args.builder:
@@ -819,9 +845,10 @@ def main():
             benchmark_builder.init_embed_types()
             benchmark_builder.run()
         if args.compare:
-            # benchmark_builder.set_embed_types(["test"])
+            # embed_types = ["hash"]
+            embed_types = ["lsh"]
             benchmark_builder.set_embed_types(
-                ["hash"], is_calc_rank_med=False, ele_type="hash"
+                embed_types, is_calc_rank_med=False, ele_type="hash"
             )
             benchmark_builder.run()
 
