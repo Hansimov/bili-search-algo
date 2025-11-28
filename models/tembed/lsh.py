@@ -55,7 +55,7 @@ class LSHConverter:
             squeeze = True
         else:
             squeeze = False
-        # project embs onto hyperplanes: (n, bits)
+        # project embs onto hyperplanes: (n, bitn)
         projs = np.dot(embs, self.hps.T)
         # >0 maps to 1, <=0 maps to 0
         bits = (projs > 0).astype(np.uint8)

@@ -36,6 +36,9 @@ BV_PREFIX = "tembed.bv:"
 
 PARENT_DIR = Path(__file__).parent
 
+EMB_HOST = "localhost"
+# EMB_HOST = "11.24.11.122"
+
 
 class EmbeddingKeyConverter:
     """Convert keys mappings for embeddings in RocksDB and Redis."""
@@ -145,7 +148,7 @@ class HashEmbedder(EmbedInterface):
 
     def init_client(self):
         self.client = EmbedClient(
-            endpoint="http://localhost:28888/embed",
+            endpoint=f"http://{EMB_HOST}:28888/embed",
             api_format="tei",
             res_format="list2d",
             verbose=False,
@@ -165,7 +168,7 @@ class LSHEmbedder(EmbedInterface):
     def init_client(self):
         # python -m tfmx.embed_server -t "tei" -m "Qwen/Qwen3-Embedding-0.6B" -p 28887 -b
         self.client = EmbedClient(
-            endpoint="http://localhost:28887/embed",
+            endpoint=f"http://{EMB_HOST}:28887/embed",
             api_format="tei",
             res_format="list2d",
             verbose=False,
@@ -216,15 +219,15 @@ class EmbeddingPreCalculator:
         self.embed_types = ["gte", "bge", "qwen3_06b"]
         # python -m tfmx.embed_server -t "tei" -m "Alibaba-NLP/gte-multilingual-base" -p 28888 -b
         self.gte_embed = EmbedClient(
-            endpoint="http://localhost:28888/embed", **embed_params
+            endpoint=f"http://{EMB_HOST}:28888/embed", **embed_params
         )
         # python -m tfmx.embed_server -t "tei" -m "BAAI/bge-large-zh-v1.5" -p 28889 -b
         self.bge_embed = EmbedClient(
-            endpoint="http://localhost:28889/embed", **embed_params
+            endpoint=f"http://{EMB_HOST}:28889/embed", **embed_params
         )
         # python -m tfmx.embed_server -t "tei" -m "Qwen/Qwen3-Embedding-0.6B" -p 28887 -b
         self.qwen3_06b_embed = EmbedClient(
-            endpoint="http://localhost:28887/embed", **embed_params
+            endpoint=f"http://{EMB_HOST}:28887/embed", **embed_params
         )
         self.embed_clients: dict[EmbedModelType, EmbedClientType] = {
             "gte": self.gte_embed,
