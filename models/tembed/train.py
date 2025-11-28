@@ -1,14 +1,12 @@
 import argparse
-import faiss
 import numpy as np
-import pickle
 
 from pathlib import Path
 from sedb import MongoDocsGenerator, MongoDocsGeneratorArgParser
-from sedb import RedisOperator, RocksOperator
-from tclogger import logstr, logger, dict_get, brk, MergedArgParser
+from sedb import RedisOperator, RocksOperator, FaissOperator
+from tclogger import logger, dict_get, MergedArgParser
+from tclogger import raise_breakpoint
 from tfmx import EmbedClient
-from typing import Literal, Union, Any, Generator
 
 from configs.envs import REDIS_ENVS, MONGO_ENVS
 
@@ -159,85 +157,6 @@ class EmbeddingDataCalculator:
         self.batcher.submit()
 
 
-class FaissOperator:
-    def __init__(
-        self,
-        db_path: Path,
-        dim: int = EMB_DIM,
-        M: int = 32,
-        efConstruction: int = 40,
-        efSearch: int = 64,
-    ):
-        """
-        - `dim`: embedding dimension
-        - `M`: num of connections per layer (32 is good for 10M scale)
-        - `efConstruction`: search depth during construction (higher = better quality but slower)
-        - `efSearch`: search depth during query (higher = better recall but slower)
-        """
-        self.db_path = db_path
-        self.map_path = Path(str(self.db_path) + ".map.pkl")
-        self.dim = dim
-        self.M = M
-        self.efConstruction = efConstruction
-        self.efSearch = efSearch
-        self.bvid_to_id: dict[str, int] = {}
-        self.id_to_bvid: dict[int, str] = {}
-        self.next_id: int = 0
-        self.init_db()
-
-    def init_db(self):
-        logger.note(f"> Initializing Faiss HNSW index with IDMap ...")
-        hnsw_index = faiss.IndexHNSWFlat(self.dim, self.M)
-        hnsw_index.hnsw.efConstruction = self.efConstruction
-        self.db = faiss.IndexIDMap(hnsw_index)
-        logger.okay(
-            f"  * dim={self.dim}, M={self.M}, "
-            f"efConstruction={self.efConstruction}, efSearch={self.efSearch}"
-        )
-
-    def set_search_params(self):
-        self.db.index.hnsw.efSearch = self.efSearch
-
-    def add_embeddings(self, bvids: list[str], embeddings: np.ndarray):
-        ids = []
-        for bvid in bvids:
-            if bvid not in self.bvid_to_id:
-                self.bvid_to_id[bvid] = self.next_id
-                self.id_to_bvid[self.next_id] = bvid
-                ids.append(self.next_id)
-                self.next_id += 1
-            else:
-                ids.append(self.bvid_to_id[bvid])
-        ids_array = np.array(ids, dtype=np.int64)
-        self.db.add_with_ids(embeddings, ids_array)
-
-    def save_index(self):
-        if self.db is None:
-            logger.warn("× No index to save")
-            return
-        self.set_search_params()
-        logger.note(f"> Save Faiss index:")
-        faiss.write_index(self.db, str(self.db_path))
-        logger.okay(f"  * {self.db_path}")
-        logger.mesg(f"  * {self.total_count()} rows")
-
-    def save_mapping(self):
-        logger.note(f"> Save id-bvid mappings:")
-        with open(self.map_path, "wb") as f:
-            pickle.dump(self.id_to_bvid, f, protocol=pickle.HIGHEST_PROTOCOL)
-        logger.okay(f"  * {self.map_path}")
-        logger.mesg(f"  * {len(self.id_to_bvid)} mappings")
-
-    def save(self):
-        self.save_index()
-        self.save_mapping()
-
-    def total_count(self) -> int:
-        if self.db is None:
-            return 0
-        return self.db.ntotal
-
-
 class FaissBuilder:
     """Build Faiss index with Redis and RocksDB"""
 
@@ -249,33 +168,15 @@ class FaissBuilder:
         self.redis = RedisOperator(configs=REDIS_ENVS, connect_cls=self.__class__)
         rocks_configs = {"db_path": ROCKS_DB_PATH}
         self.rocks = RocksOperator(configs=rocks_configs, connect_cls=self.__class__)
-        self.faiss = FaissOperator(FAISS_DB_PATH)
+        self.faiss = FaissOperator(FAISS_DB_PATH, dim=EMB_DIM)
+        self.faiss.init_db()
 
     def redis_key_to_bvid(self, key: str) -> str:
         """'bv.emb:BV1234567890' -> 'BV1234567890'"""
         return key.removeprefix(REDIS_PREFIX)
 
-    def scan_redis_keys(self) -> Generator[list[str], None, None]:
-        """Scan Redis keys, and yield batch_bvids"""
-        logger.note("> Scanning Redis for keys in batches...")
-        cursor = 0
-        batch_bvids = []
-        while True:
-            cursor, keys = self.redis.client.scan(
-                cursor=cursor, match=REDIS_PT, count=1000
-            )
-            for key in keys:
-                bvid = self.redis_key_to_bvid(key)
-                batch_bvids.append(bvid)
-                if len(batch_bvids) >= self.batch_size:
-                    yield batch_bvids
-                    batch_bvids = []
-            if cursor == 0:
-                break
-        if batch_bvids:
-            yield batch_bvids
-            batch_bvids = []
-        logger.okay(f"* Finished Redis scan")
+    def redis_keys_to_bvids(self, keys: list[str]) -> list[str]:
+        return [self.redis_key_to_bvid(key) for key in keys]
 
     def load_embeddings_from_rocks(
         self, bvids: list[str]
@@ -283,21 +184,16 @@ class FaissBuilder:
         """Load embeddings from RocksDB for given bvids.
         Return: (valid_bvids, embs_arr)
         """
-        valid_bvids: list[str] = []
-        embs: list[np.ndarray] = []
-        for bvid in bvids:
-            try:
-                emb = self.rocks.get(bvid)
-                if emb is not None:
-                    if isinstance(emb, list):
-                        emb = np.array(emb, dtype="float32")
-                    valid_bvids.append(bvid)
-                    embs.append(emb)
-            except Exception as e:
-                logger.warn(f"× Failed to get embedding for [{bvid}]: {e}")
-        if not embs:
-            return [], np.array([])
-        embs_arr = np.vstack(embs).astype("float32")
+        raw_embs = self.rocks.mget(bvids)
+        # filter valid entries and collect indices
+        valid_pairs = [
+            (bvid, emb) for bvid, emb in zip(bvids, raw_embs) if emb is not None
+        ]
+        if not valid_pairs:
+            return [], np.array([], dtype="float32")
+        valid_bvids = [bvid for bvid, _ in valid_pairs]
+        # pre-allocate array and fill in one go
+        embs_arr = np.array([emb for _, emb in valid_pairs], dtype="float32")
         return valid_bvids, embs_arr
 
     def bvids_to_faiss_hashes(self, bvids: list[str]) -> list[tuple[str, str]]:
@@ -307,19 +203,28 @@ class FaissBuilder:
         """Write embeddings to Faiss index and mark in Redis"""
         if len(bvids) == 0 or len(embeddings) == 0:
             return
-        self.faiss.add_embeddings(bvids, embeddings)
-        faiss_hashes = self.bvids_to_faiss_hashes(bvids)
-        self.redis.set_hashes_exist(faiss_hashes)
+        self.faiss.add_embs(bvids, embeddings)
+        # faiss_hashes = self.bvids_to_faiss_hashes(bvids)
+        # self.redis.set_hashes_exist(faiss_hashes)
 
     def run(self):
-        batch_idx = 0
         # scan Redis, load from RocksDB, write to Faiss
-        for batch_bvids in self.scan_redis_keys():
-            batch_idx += 1
-            logger.note(f"> Processing batch {batch_idx} ...")
+        for redis_keys in self.redis.scan_keys(prefix=REDIS_PREFIX, batch_size=10000):
+            batch_bvids = self.redis_keys_to_bvids(redis_keys)
             valid_bvids, embeddings = self.load_embeddings_from_rocks(batch_bvids)
             self.write_to_faiss(valid_bvids, embeddings)
+        logger.okay(f"* Finished Redis scan")
         self.faiss.save()
+
+
+class FaissTester:
+    def __init__(self):
+        self.faiss = FaissOperator(FAISS_DB_PATH)
+        self.faiss.load_db()
+
+    def run(self):
+        eids, embs, sims = self.faiss.top(eid="BV111421S7uQ")
+        print(eids, embs, sims)
 
 
 class TrainerArgParser(argparse.ArgumentParser):
@@ -327,6 +232,7 @@ class TrainerArgParser(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
         self.add_argument("-cc", "--calc", action="store_true")
         self.add_argument("-bf", "--build-faiss", action="store_true")
+        self.add_argument("-tf", "--test-faiss", action="store_true")
         self.args, _ = self.parse_known_args()
 
 
@@ -342,6 +248,10 @@ def main():
         builder = FaissBuilder()
         builder.run()
 
+    if args.test_faiss:
+        tester = FaissTester()
+        tester.run()
+
 
 if __name__ == "__main__":
     main()
@@ -352,3 +262,6 @@ if __name__ == "__main__":
 
     # Case: build faiss HNSW index from Redis and RocksDB
     # python -m models.tembed.train -bf
+
+    # Case: test faiss index
+    # python -m models.tembed.train -tf
