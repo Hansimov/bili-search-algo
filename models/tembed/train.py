@@ -178,42 +178,21 @@ class FaissBuilder:
     def redis_keys_to_bvids(self, keys: list[str]) -> list[str]:
         return [self.redis_key_to_bvid(key) for key in keys]
 
-    def load_embeddings_from_rocks(
-        self, bvids: list[str]
-    ) -> tuple[list[str], np.ndarray]:
-        """Load embeddings from RocksDB for given bvids.
-        Return: (valid_bvids, embs_arr)
-        """
-        raw_embs = self.rocks.mget(bvids)
-        # filter valid entries and collect indices
-        valid_pairs = [
-            (bvid, emb) for bvid, emb in zip(bvids, raw_embs) if emb is not None
-        ]
-        if not valid_pairs:
-            return [], np.array([], dtype="float32")
-        valid_bvids = [bvid for bvid, _ in valid_pairs]
-        # pre-allocate array and fill in one go
-        embs_arr = np.array([emb for _, emb in valid_pairs], dtype="float32")
-        return valid_bvids, embs_arr
-
     def bvids_to_faiss_hashes(self, bvids: list[str]) -> list[tuple[str, str]]:
         return [(f"{REDIS_PREFIX}{bvid}", FSS_FIELD) for bvid in bvids]
 
     def write_to_faiss(self, bvids: list[str], embeddings: np.ndarray):
-        """Write embeddings to Faiss index and mark in Redis"""
-        if len(bvids) == 0 or len(embeddings) == 0:
-            return
+        """Write embeddings to Faiss index and flag in Redis"""
         self.faiss.add_embs(bvids, embeddings)
         # faiss_hashes = self.bvids_to_faiss_hashes(bvids)
         # self.redis.set_hashes_exist(faiss_hashes)
 
     def run(self):
-        # scan Redis, load from RocksDB, write to Faiss
-        for redis_keys in self.redis.scan_keys(prefix=REDIS_PREFIX, batch_size=10000):
-            batch_bvids = self.redis_keys_to_bvids(redis_keys)
-            valid_bvids, embeddings = self.load_embeddings_from_rocks(batch_bvids)
-            self.write_to_faiss(valid_bvids, embeddings)
-        logger.okay(f"* Finished Redis scan")
+        # scan rocks, and write to Faiss
+        for rocks_items in self.rocks.iter_items(batch_size=10000):
+            bvids, embs = zip(*rocks_items)
+            self.write_to_faiss(bvids, embs)
+        logger.okay(f"* Finished Rocks scan")
         self.faiss.save()
 
 
@@ -223,8 +202,8 @@ class FaissTester:
         self.faiss.load_db()
 
     def run(self):
-        eids, embs, sims = self.faiss.top(eid="BV111421S7uQ")
-        print(eids, embs, sims)
+        res = self.faiss.top(eid="BV1114y1h7rj")
+        print(res)
 
 
 class TrainerArgParser(argparse.ArgumentParser):
@@ -260,7 +239,7 @@ if __name__ == "__main__":
     # python -m models.tembed.train -cc -ec -mn 10000
     # python -m models.tembed.train -cc
 
-    # Case: build faiss HNSW index from Redis and RocksDB
+    # Case: build faiss HNSW index from RocksDB
     # python -m models.tembed.train -bf
 
     # Case: test faiss index
