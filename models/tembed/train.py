@@ -1,5 +1,6 @@
 import argparse
 import numpy as np
+import pickle
 
 from pathlib import Path
 from typing import Iterator
@@ -7,11 +8,13 @@ from typing import Iterator
 from sedb import MongoDocsGenerator, MongoDocsGeneratorArgParser
 from sedb import RedisOperator, RocksOperator
 from sedb import FaissOperator, FaissClient, FAISS_PORT
-from tclogger import logger, dict_get, MergedArgParser
-from tclogger import raise_breakpoint, TCLogbar
+from tclogger import TCLogger, TCLogbar, logstr, dict_get, brk
+from tclogger import raise_breakpoint, MergedArgParser
 from tfmx import EmbedClient
 
 from configs.envs import REDIS_ENVS, MONGO_ENVS
+
+logger = TCLogger()
 
 
 TEXT_FIELDS = ["title", "tags", "desc", "owner.name"]
@@ -35,6 +38,8 @@ FAISS_DB = f"{BASE_NAME}.faiss"
 
 ROCKS_DB_PATH = STORAGE_DIR / ROCKS_DB
 FAISS_DB_PATH = STORAGE_DIR / FAISS_DB
+SAMPLES_DIR = STORAGE_DIR / "train_samples"
+MAX_SAMPLES = int(1e10)  # max samples count, used to determine idx_width in filenames
 
 REDIS_PREFIX = f"bv.emb:"
 REDIS_PT = f"{REDIS_PREFIX}*"
@@ -269,6 +274,7 @@ class TrainSamplesManager:
             mode: "read" for loading existing data, "write" for creating new data
         """
         self.data_dir = Path(data_dir)
+        self.batches_dir = self.data_dir / "batches"
         self.shards_dir = self.data_dir / "shards"
         self.mode = mode
 
@@ -291,18 +297,32 @@ class TrainSamplesManager:
         self._shard_cache = {}
         self._current_shard_idx = None
 
+        # calculate idx_width for filenames
+        self.idx_width = self._calc_idx_width()
+
         logger.note(f"> Loaded TrainSamplesManager:")
-        logger.mesg(f"  * {self.num_samples:,} samples in {self.num_shards} shards")
+        logger.mesg(f"  * {self.num_samples} samples in {self.num_shards} shards")
         logger.mesg(
             f"  * Group size: {self.group_size} (1 anchor + {self.num_positives} positives)"
         )
-        logger.mesg(f"  * Shard size: {self.shard_size:,} samples per shard")
+        logger.mesg(f"  * Shard size: {self.shard_size} samples per shard")
+
+    def _calc_idx_width(self) -> int:
+        """calculate index width for filenames based on MAX_SAMPLES and shard_size
+
+        e.g., if shard_size=1e5, max_shards=1e10/1e5=1e5, width=len('100000')=6
+        """
+        import math
+
+        max_shards = MAX_SAMPLES // self.shard_size
+        return len(str(max_shards))
 
     def _init_write_mode(
         self, num_positives: int, shard_size: int, save_batch_size: int
     ):
         """initialize for writing new data"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.batches_dir.mkdir(parents=True, exist_ok=True)
 
         self.num_positives = num_positives
         self.shard_size = shard_size
@@ -314,8 +334,11 @@ class TrainSamplesManager:
         self.embs = []
         self.batch_idx = 0
 
+        # calculate idx_width for filenames
+        self.idx_width = self._calc_idx_width()
+
         # queried eids cache (to avoid re-querying same bvids)
-        self.queried_cache_file = self.data_dir / "queried_eids.txt"
+        self.queried_cache_file = self.data_dir / "queried_eids.pkl"
         self.queried_eids = self._load_queried_cache()
 
     # ========== Write mode methods ==========
@@ -323,15 +346,14 @@ class TrainSamplesManager:
     def _load_queried_cache(self) -> set:
         """load cache of already queried eids"""
         if self.queried_cache_file.exists():
-            with open(self.queried_cache_file, "r") as f:
-                return set(line.strip() for line in f)
+            with open(self.queried_cache_file, "rb") as f:
+                return pickle.load(f)
         return set()
 
     def save_queried_cache(self):
         """save queried eids cache"""
-        with open(self.queried_cache_file, "w") as f:
-            for eid in sorted(self.queried_eids):
-                f.write(f"{eid}\n")
+        with open(self.queried_cache_file, "wb") as f:
+            pickle.dump(self.queried_eids, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     def mark_queried(self, eid: str):
         """mark an eid as queried"""
@@ -372,18 +394,13 @@ class TrainSamplesManager:
         if not self.eids:
             return self.batch_idx
 
-        batch_file = self.data_dir / f"batch_{self.batch_idx:06d}.npz"
+        batch_file = self.batches_dir / f"batch_{self.batch_idx:0{self.idx_width}d}.npz"
         np.savez_compressed(
             batch_file,
             eids=np.array(self.eids, dtype=object),
             embs=np.array(self.embs, dtype=np.float32),
             group_size=self.group_size,
             num_positives=self.num_positives,
-        )
-
-        num_samples = self.get_buffer_sample_count()
-        logger.mesg(
-            f"  * Saved batch {self.batch_idx}: {num_samples} samples ({len(self.eids)} items) to {batch_file.name}"
         )
 
         saved_batch_idx = self.batch_idx
@@ -402,14 +419,13 @@ class TrainSamplesManager:
         - shards/shard_000000.npz, shard_000001.npz, ...
         - train_meta.npz: metadata
         """
-        logger.note("> Merging batch files into shards...")
-
         # load all batches
-        batch_files = sorted(self.data_dir.glob("batch_*.npz"))
+        batch_files = sorted(self.batches_dir.glob("batch_*.npz"))
         if not batch_files:
-            logger.warn("No batch files found to merge")
+            logger.warn("* No batch files to merge")
             return
 
+        logger.note("> Merging batch files into shards...")
         all_eids = []
         all_embs = []
         for batch_file in batch_files:
@@ -435,15 +451,16 @@ class TrainSamplesManager:
             start_item = shard_idx * items_per_shard
             end_item = min((shard_idx + 1) * items_per_shard, total_items)
 
-            shard_file = self.shards_dir / f"shard_{shard_idx:06d}.npz"
+            shard_file = self.shards_dir / f"shard_{shard_idx:0{self.idx_width}d}.npz"
             np.savez_compressed(
                 shard_file,
                 eids=final_eids[start_item:end_item],
                 embs=final_embs[start_item:end_item],
             )
-
             shard_samples = (end_item - start_item) // self.group_size
-            logger.mesg(f"  * Saved shard {shard_idx}: {shard_samples} samples")
+            logger.mesg(
+                f"  * Saved to shard {shard_idx}: {logstr.okay(brk(shard_samples))}"
+            )
 
         # save metadata
         np.savez(
@@ -458,6 +475,11 @@ class TrainSamplesManager:
         # update instance state for potential read operations
         self.num_samples = num_samples
         self.num_shards = num_shards
+
+        # clean up batch files after successful merge
+        for batch_file in batch_files:
+            batch_file.unlink()
+        logger.mesg(f"  * Cleaned up {len(batch_files)} batch files")
 
         logger.okay(f"> Created {num_shards} shards with {num_samples} total samples")
         logger.mesg(f"  * Shard size: {self.shard_size} samples per shard")
@@ -485,7 +507,7 @@ class TrainSamplesManager:
         if shard_idx in self._shard_cache:
             return
 
-        shard_file = self.shards_dir / f"shard_{shard_idx:06d}.npz"
+        shard_file = self.shards_dir / f"shard_{shard_idx:0{self.idx_width}d}.npz"
         data = np.load(shard_file, allow_pickle=True)
         self._shard_cache[shard_idx] = {
             "eids": data["eids"],
@@ -622,17 +644,17 @@ class TrainSamplesConstructor:
     def __init__(
         self,
         manager: TrainSamplesManager,
-        target_pairs: int = 1_000_000,
+        samples_count: int = 1_000_000,
         query_batch_size: int = 50,
     ):
         """
         Args:
             manager: TrainSamplesManager instance for data storage
-            target_pairs: target number of training tuples to generate
+            samples_count: number of training samples to generate
             query_batch_size: batch size for querying Faiss tops() (default: 50)
         """
         self.manager = manager
-        self.target_pairs = target_pairs
+        self.samples_count = samples_count
         self.num_positives = manager.num_positives
         self.topk = self.num_positives + 1  # top1 (anchor) + num_positives
         self.query_batch_size = query_batch_size
@@ -645,7 +667,8 @@ class TrainSamplesConstructor:
         """build and append training sample from top-k results
 
         Args:
-            top_results: list of tuples (eid, score, emb) from Faiss top-k query with return_emb=True
+            top_results: list of dicts {'eid': ..., 'emb': ..., 'sim': ...}
+                from FaissClient.tops() with return_emb=True
 
         Returns:
             True if sample was successfully built and appended
@@ -655,12 +678,13 @@ class TrainSamplesConstructor:
             return False
 
         # top1 is anchor, top2/top3/... are positives
-        # each result is (eid, score, emb) when return_emb=True
         group_eids = []
         group_embs = []
 
         for i in range(self.num_positives + 1):  # anchor + positives
-            eid, score, emb = top_results[i]
+            item = top_results[i]
+            eid = item["eid"]
+            emb = item["emb"]
             if emb is None:
                 return False
             group_eids.append(eid)
@@ -701,8 +725,8 @@ class TrainSamplesConstructor:
         return built_count
 
     def _should_stop(self, total_samples: int) -> bool:
-        """check if target samples reached"""
-        return total_samples >= self.target_pairs
+        """check if reached samples_count"""
+        return total_samples >= self.samples_count
 
     def run(self):
         """main execution: construct training tuples"""
@@ -712,9 +736,10 @@ class TrainSamplesConstructor:
         total_built = 0
 
         # create progress bar
-        bar = TCLogbar(
-            total=self.target_pairs,
-            desc="Constructing samples",
+        self.total_batches = self.samples_count // self.manager.save_batch_size
+        self.bar = TCLogbar(
+            total=self.samples_count,
+            desc=logstr.note("* Constructing samples"),
             show_iter_per_second=True,
         )
 
@@ -722,48 +747,53 @@ class TrainSamplesConstructor:
         for batch_keys in self.redis.scan_keys(
             pattern=REDIS_PT, batch_size=self.query_batch_size
         ):
-            # convert keys to bvids and filter out already queried
+            all_bvids = redis_keys_to_bvids(batch_keys)
             bvid_batch = [
-                bvid
-                for bvid in redis_keys_to_bvids(batch_keys)
-                if not self.manager.is_queried(bvid)
+                bvid for bvid in all_bvids if not self.manager.is_queried(bvid)
             ]
+            # count already queried as built
+            already_queried = len(all_bvids) - len(bvid_batch)
+            total_built += already_queried
+            self.bar.update(increment=already_queried)
 
             if not bvid_batch:
+                if self._should_stop(total_built):
+                    break
                 continue
 
             # query Faiss and build samples
             built_in_batch = self._query_and_build_samples(bvid_batch)
             total_built += built_in_batch
+            self.bar.update(increment=built_in_batch)
 
-            # update progress bar
-            bar.update(increment=built_in_batch)
+            # update batch progress in desc (based on total_built, not saved batches)
+            current_batch = total_built // self.manager.save_batch_size
+            self.bar.update(desc=f"[batch:{current_batch}/{self.total_batches}]")
 
-            # save batch periodically
+            # save batch and cache periodically
             if self.manager.should_save_batch():
-                batch_idx = self.manager.save_batch()
-
-                # save cache periodically
-                if batch_idx % 10 == 0:
+                self.manager.save_batch()
+                if self.manager.batch_idx % 10 == 0:
                     self.manager.save_queried_cache()
 
-            # check if target reached
             if self._should_stop(total_built):
                 break
 
         # finalize
-        bar.update(increment=0, flush=True)
-        print()  # new line after progress bar
+        self.bar.update(increment=0, flush=True)
+        print()
 
         self._finalize(total_built)
 
     def _log_start_info(self):
         """log initialization information"""
-        logger.note(f"> Constructing {self.target_pairs:,} training tuples...")
+        logger.note(f"> Samples to construct: {logstr.file(brk(self.samples_count))} ")
         logger.mesg(f"  * Num positives: {self.num_positives}")
         logger.mesg(f"  * Query batch size: {self.query_batch_size}")
-        logger.mesg(f"  * Save dir: {self.manager.data_dir}")
-        logger.mesg(f"  * Already queried: {self.manager.get_queried_count():,} eids")
+        logger.mesg(f"  * data_dir: {logstr.file(brk(self.manager.data_dir))}")
+        logger.mesg(
+            f"  * Queried eids: {logstr.okay(self.manager.get_queried_count())}"
+        )
 
     def _finalize(self, total_built: int):
         """finalize construction: save remaining data and merge batches
@@ -776,12 +806,14 @@ class TrainSamplesConstructor:
 
         # log final statistics
         logger.okay(f"> Finished construction:")
-        logger.mesg(f"  * Total built: {total_built:,} samples")
-        logger.mesg(f"  * Total queried: {self.manager.get_queried_count():,} eids")
+        logger.mesg(f"  * Total built: {logstr.okay(brk(total_built))}")
+        logger.mesg(
+            f"  * Total queried: {logstr.okay(brk(self.manager.get_queried_count()))}"
+        )
         logger.mesg(
             f"  * Group size: {self.manager.group_size} (1 anchor + {self.num_positives} positives)"
         )
-        logger.mesg(f"  * Data saved to: {self.manager.data_dir}")
+        logger.mesg(f"  * Samples saved to: {logstr.okay(self.manager.data_dir)}")
 
 
 class TrainerArgParser(argparse.ArgumentParser):
@@ -790,18 +822,8 @@ class TrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-cc", "--calc", action="store_true")
         self.add_argument("-bf", "--build-faiss", action="store_true")
         self.add_argument("-tf", "--test-faiss", action="store_true")
-        self.add_argument(
-            "-cs",
-            "--construct-samples",
-            action="store_true",
-            help="Construct training samples",
-        )
-        self.add_argument(
-            "--target-pairs",
-            type=int,
-            default=1_000_000,
-            help="Target number of training tuples (default: 1M)",
-        )
+        self.add_argument("-cs", "--construct-samples", action="store_true")
+        self.add_argument("-sn", "--samples-count", type=int, default=1_000_000)
         self.args, _ = self.parse_known_args()
 
 
@@ -823,7 +845,7 @@ def main():
 
     if args.construct_samples:
         manager = TrainSamplesManager(
-            data_dir=STORAGE_DIR / "train_data",
+            data_dir=SAMPLES_DIR,
             num_positives=2,
             shard_size=100_000,
             save_batch_size=1000,
@@ -831,7 +853,7 @@ def main():
         )
         constructor = TrainSamplesConstructor(
             manager=manager,
-            target_pairs=args.target_pairs,
+            samples_count=args.samples_count,
         )
         constructor.run()
 
@@ -851,4 +873,4 @@ if __name__ == "__main__":
 
     # Case: construct training samples for contrastive learning
     # python -m models.tembed.train -cs
-    # python -m models.tembed.train -cs --target-pairs 1000000
+    # python -m models.tembed.train -cs -sn 10000
