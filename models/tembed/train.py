@@ -283,6 +283,7 @@ class TrainSamplesManager:
         self.data_dir = Path(data_dir)
         self.buffers_dir = self.data_dir / "buffers"
         self.shards_dir = self.data_dir / "shards"
+        self.meta_file = self.data_dir / "meta.npz"
         self.mode = mode
         self.shard_size = shard_size
         self.buffer_size = buffer_size
@@ -311,7 +312,7 @@ class TrainSamplesManager:
 
     def _init_read_mode(self):
         """initialize for reading existing data"""
-        meta_file = self.data_dir / "train_meta.npz"
+        meta_file = self.meta_file
         if not meta_file.exists():
             raise FileNotFoundError(f"Metadata file not found: {meta_file}")
 
@@ -331,10 +332,7 @@ class TrainSamplesManager:
         info_dict = {
             "num_samples": self.num_samples,
             "num_shards": self.num_shards,
-            "group_size": [
-                self.group_size,
-                f"1 anchor + {self.num_positives} positives",
-            ],
+            "group_size": self.group_size,
             "shard_size": self.shard_size,
         }
         logger.mesg(dict_to_str(info_dict), indent=2)
@@ -343,6 +341,7 @@ class TrainSamplesManager:
         """initialize for writing new data"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.buffers_dir.mkdir(parents=True, exist_ok=True)
+        self.shards_dir.mkdir(parents=True, exist_ok=True)
 
         self.num_positives = num_positives
         self.group_size = 1 + num_positives  # anchor + positives
@@ -352,11 +351,59 @@ class TrainSamplesManager:
         self.embs = []
         self.buffer_idx = 0
 
+        # load exist shard info for correct continuation
+        self._load_exist_shards_info()
+
         # queried eids cache (to avoid re-querying same bvids)
         self.queried_cache_file = self.data_dir / "queried_eids.pkl"
         self.queried_eids = self._load_queried_cache()
 
     # ========== Write mode methods ==========
+
+    def _load_exist_shards_info(self):
+        """load info from exist shards to enable correct continuation
+
+        Sets:
+            - exist_shards_count: number of exist shard files
+            - exist_samples_count: total samples in exist shards
+            - last_shard_samples: samples in the last shard (for merge detection)
+        """
+        self.exist_shards_count = 0
+        self.exist_samples_count = 0
+        self.last_shard_samples = 0
+
+        # check if shards directory exists and has shard files
+        if not self.shards_dir.exists():
+            return
+
+        exist_shard_files = sorted(self.shards_dir.glob("shard_*.npz"))
+        if not exist_shard_files:
+            return
+
+        self.exist_shards_count = len(exist_shard_files)
+
+        # count samples in exist shards
+        for shard_file in exist_shard_files:
+            try:
+                data = np.load(shard_file, allow_pickle=True)
+                # each group has group_size items
+                shard_items = len(data["eids"])
+                shard_samples = shard_items // self.group_size
+                self.exist_samples_count += shard_samples
+                # track last shard's sample count
+                self.last_shard_samples = shard_samples
+            except Exception as e:
+                logger.warn(f"Error reading shard file {shard_file}: {e}")
+
+        if self.exist_shards_count > 0:
+            logger.note(f"> Found exist shards:")
+            shard_ratio = round(self.last_shard_samples / self.shard_size * 100, 1)
+            info_dict = {
+                "exist_shards_count": self.exist_shards_count,
+                "exist_samples_count": self.exist_samples_count,
+                "last_shard_samples": f"{self.last_shard_samples} ({shard_ratio}%)",
+            }
+            logger.mesg(dict_to_str(info_dict), indent=2)
 
     def _load_queried_cache(self) -> set:
         """load cache of already queried eids"""
@@ -421,9 +468,7 @@ class TrainSamplesManager:
         if not self.eids:
             return self.buffer_idx
 
-        buffer_file = (
-            self.buffers_dir / f"buffer_{self.buffer_idx:0{self.buffer_idx_width}d}.npz"
-        )
+        buffer_file = self.get_buffer_file(self.buffer_idx)
         np.savez_compressed(
             buffer_file,
             eids=np.array(self.eids, dtype=object),
@@ -446,7 +491,10 @@ class TrainSamplesManager:
 
         Creates sharded NPZ files:
         - shards/shard_00000.npz, shard_00001.npz, ...
-        - train_meta.npz: metadata
+        - meta.npz: metadata
+
+        Note: Continues from exist shards if present, doesn't overwrite them.
+        If the last shard is not full, new data will be merged into it.
         """
         # load all buffers
         buffer_files = sorted(self.buffers_dir.glob("buffer_*.npz"))
@@ -462,27 +510,57 @@ class TrainSamplesManager:
             all_eids.append(data["eids"])
             all_embs.append(data["embs"])
 
-        # concatenate all data
-        final_eids = np.concatenate(all_eids)
-        final_embs = np.concatenate(all_embs)
+        # concatenate all buffer data
+        new_eids = np.concatenate(all_eids)
+        new_embs = np.concatenate(all_embs)
+
+        # check if we need to merge with the last exist shard
+        merge_with_last = (
+            self.exist_shards_count > 0 and self.last_shard_samples < self.shard_size
+        )
+
+        if merge_with_last:
+            # load last shard data to merge
+            last_shard_idx = self.exist_shards_count - 1
+            last_shard_file = self.get_shard_file(last_shard_idx)
+            last_shard_data = np.load(last_shard_file, allow_pickle=True)
+            last_eids = last_shard_data["eids"]
+            last_embs = last_shard_data["embs"]
+
+            # prepend last shard data to new data
+            final_eids = np.concatenate([last_eids, new_eids])
+            final_embs = np.concatenate([last_embs, new_embs])
+
+            # adjust counts: remove last shard from existing counts since we'll rewrite it
+            start_shard_idx = last_shard_idx
+            base_samples = self.exist_samples_count - self.last_shard_samples
+
+            logger.mesg(
+                f"  * Merge with last shard {self.shard_idx_to_suffix(last_shard_idx)} "
+                f"({self.last_shard_samples} samples)"
+            )
+        else:
+            final_eids = new_eids
+            final_embs = new_embs
+            start_shard_idx = self.exist_shards_count
+            base_samples = self.exist_samples_count
 
         # calculate totals
         total_items = len(final_eids)
-        num_samples = total_items // self.group_size
+        merged_samples = total_items // self.group_size
         items_per_shard = self.shard_size * self.group_size
-        num_shards = (total_items + items_per_shard - 1) // items_per_shard
+        num_new_shards = (total_items + items_per_shard - 1) // items_per_shard
 
         # create shards directory
         self.shards_dir.mkdir(parents=True, exist_ok=True)
 
-        # save shards
-        for shard_idx in range(num_shards):
-            start_item = shard_idx * items_per_shard
-            end_item = min((shard_idx + 1) * items_per_shard, total_items)
+        # save shards (starting from appropriate index)
+        for i in range(num_new_shards):
+            shard_idx = start_shard_idx + i
+            start_item = i * items_per_shard
+            end_item = min((i + 1) * items_per_shard, total_items)
 
-            shard_file = (
-                self.shards_dir / f"shard_{shard_idx:0{self.shard_idx_width}d}.npz"
-            )
+            shard_file = self.get_shard_file(shard_idx)
             np.savez_compressed(
                 shard_file,
                 eids=final_eids[start_item:end_item],
@@ -490,22 +568,32 @@ class TrainSamplesManager:
             )
             shard_samples = (end_item - start_item) // self.group_size
             logger.mesg(
-                f"  * Saved to shard {shard_idx}: {logstr.okay(brk(shard_samples))}"
+                f"  * Saved to shard {self.shard_idx_to_suffix(shard_idx)}: {logstr.okay(brk(shard_samples))}"
             )
+            # track the last shard's sample count
+            self.last_shard_samples = shard_samples
 
-        # save metadata
+        # update exist counts
+        self.exist_shards_count = start_shard_idx + num_new_shards
+        self.exist_samples_count = base_samples + merged_samples
+
+        # total counts
+        total_samples = self.exist_samples_count
+        total_shards = self.exist_shards_count
+
+        # save metadata (reflects total state)
         np.savez(
-            self.data_dir / "train_meta.npz",
+            self.meta_file,
             group_size=self.group_size,
             num_positives=self.num_positives,
-            num_samples=num_samples,
-            num_shards=num_shards,
+            num_samples=total_samples,
+            num_shards=total_shards,
             shard_size=self.shard_size,
         )
 
         # update instance state for potential read operations
-        self.num_samples = num_samples
-        self.num_shards = num_shards
+        self.num_samples = total_samples
+        self.num_shards = total_shards
 
         # clean up buffer files after successful merge
         for buffer_file in buffer_files:
@@ -515,13 +603,15 @@ class TrainSamplesManager:
         # reset buffer index for next round of buffers
         self.buffer_idx = 0
 
-        logger.okay(f"> Created {num_shards} shards with {num_samples} total samples")
+        # calculate new samples added in this merge
+        new_samples_count = len(new_eids) // self.group_size
+
         info_dict = {
+            "new_samples": new_samples_count,
+            "total_shards": total_shards,
+            "total_samples": total_samples,
             "shard_size": self.shard_size,
-            "group_size": [
-                self.group_size,
-                f"1 anchor + {self.num_positives} positives",
-            ],
+            "group_size": self.group_size,
         }
         logger.mesg(dict_to_str(info_dict), indent=2)
 
@@ -551,6 +641,18 @@ class TrainSamplesManager:
             self._load_shard(shard_idx)
         self.MAX_CACHED_SHARDS = original_max
 
+    def get_buffer_file(self, buffer_idx: int) -> Path:
+        """get buffer file path for a given buffer index"""
+        return self.buffers_dir / f"buffer_{buffer_idx:0{self.buffer_idx_width}d}.npz"
+
+    def shard_idx_to_suffix(self, shard_idx: int) -> str:
+        """convert shard index to zero-padded suffix string"""
+        return f"{shard_idx:0{self.shard_idx_width}d}"
+
+    def get_shard_file(self, shard_idx: int) -> Path:
+        """get shard file path for a given shard index"""
+        return self.shards_dir / f"shard_{self.shard_idx_to_suffix(shard_idx)}.npz"
+
     def _load_shard(self, shard_idx: int):
         """load a shard into cache with LRU eviction"""
         if shard_idx in self._shard_cache:
@@ -568,7 +670,7 @@ class TrainSamplesManager:
             )
             del self._shard_cache[lru_idx]
 
-        shard_file = self.shards_dir / f"shard_{shard_idx:0{self.shard_idx_width}d}.npz"
+        shard_file = self.get_shard_file(shard_idx)
         if not shard_file.exists():
             raise FileNotFoundError(f"Shard file not found: {shard_file}")
 
@@ -928,7 +1030,7 @@ class TrainSamplesConstructor:
         logger.okay(f"> Construct complete:")
         info_dict = {
             "total_built": total_built,
-            "tuple_size": f"3 (1 anchor + {self.num_positives} positives)",
+            "group_size": f"3 (1 anchor + {self.num_positives} positives)",
             "samples_path": str(self.manager.data_dir),
             "stats": {
                 "scanned_count": self.stats["scanned_count"],
