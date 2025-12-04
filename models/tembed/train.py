@@ -446,7 +446,7 @@ class TrainSamplesManager:
             logger.warn("* No batch files to merge")
             return
 
-        logger.note("> Merging batch files into shards...")
+        logger.note("> Merge batch files into shards:")
         all_eids = []
         all_embs = []
         for batch_file in batch_files:
@@ -500,7 +500,7 @@ class TrainSamplesManager:
         # clean up batch files after successful merge
         for batch_file in batch_files:
             batch_file.unlink()
-        logger.mesg(f"  * Cleaned up {len(batch_files)} batch files")
+        logger.mesg(f"  * Cleared batch files: {len(batch_files)} ")
 
         logger.okay(f"> Created {num_shards} shards with {num_samples} total samples")
         info_dict = {
@@ -745,7 +745,8 @@ class TrainSamplesConstructor:
 
         # statistics
         self.stats = {
-            "total_queried": 0,
+            "scanned_count": 0,
+            "queried_count": 0,
             "built_count": 0,
             "failed_count": 0,
             "skip_count": 0,
@@ -806,7 +807,7 @@ class TrainSamplesConstructor:
 
             # build sample for each query result
             for query_bvid, top_results in zip(bvid_batch, batch_results):
-                self.stats["total_queried"] += 1
+                self.stats["queried_count"] += 1
 
                 # build sample (top1=anchor, top2/top3=positives)
                 if self._build_sample(top_results):
@@ -825,9 +826,9 @@ class TrainSamplesConstructor:
 
         return built_count, failed_count
 
-    def _should_stop(self, total_samples: int) -> bool:
-        """check if reached samples_count"""
-        return total_samples >= self.samples_count
+    def _should_stop(self) -> bool:
+        """check if scanned eids count reached samples_count"""
+        return self.stats["scanned_count"] >= self.samples_count
 
     def run(self):
         """main execution: construct training tuples"""
@@ -836,8 +837,7 @@ class TrainSamplesConstructor:
         # initialize state
         total_built = 0
 
-        # create progress bar
-        self.total_batches = self.samples_count // self.manager.save_batch_size
+        # create progress bar (tracks scanned count, not built count)
         self.bar = TCLogbar(
             total=self.samples_count,
             desc=logstr.note("* Construct samples"),
@@ -849,27 +849,28 @@ class TrainSamplesConstructor:
             pattern=REDIS_PT, batch_size=self.query_batch_size
         ):
             all_bvids = redis_keys_to_bvids(batch_keys)
+
+            # update scanned count (all eids, including queried)
+            self.stats["scanned_count"] += len(all_bvids)
+            self.bar.update(increment=len(all_bvids))
+
+            # filter out already queried eids
             bvid_batch = [
                 bvid for bvid in all_bvids if not self.manager.is_queried(bvid)
             ]
 
-            # count already queried as skipped (don't count towards built)
+            # count already queried as skipped
             already_queried = len(all_bvids) - len(bvid_batch)
             self.stats["skip_count"] += already_queried
 
             if not bvid_batch:
-                if self._should_stop(total_built):
+                if self._should_stop():
                     break
                 continue
 
             # query Faiss and build samples
             built_in_batch, _ = self._query_and_build_samples(bvid_batch)
             total_built += built_in_batch
-            self.bar.update(increment=built_in_batch)
-
-            # update batch progress in desc (based on total_built, not saved batches)
-            current_batch = total_built // self.manager.save_batch_size
-            self.bar.update(desc=f"[batch:{current_batch}/{self.total_batches}]")
 
             # save batch and cache periodically
             if self.manager.should_save_batch():
@@ -877,7 +878,7 @@ class TrainSamplesConstructor:
                 if self.manager.batch_idx % 10 == 0:
                     self.manager.save_queried_cache()
 
-            if self._should_stop(total_built):
+            if self._should_stop():
                 break
 
         # finalize
@@ -908,18 +909,19 @@ class TrainSamplesConstructor:
         self.manager.finalize()
 
         # log final statistics
-        logger.okay(f"> Finished construction:")
+        logger.okay(f"> Construct complete:")
         info_dict = {
             "total_built": total_built,
             "tuple_size": f"3 (1 anchor + {self.num_positives} positives)",
             "samples_path": str(self.manager.data_dir),
             "stats": {
-                "total_queried": self.stats["total_queried"],
+                "scanned_count": self.stats["scanned_count"],
+                "skip_count": self.stats["skip_count"],
+                "queried_count": self.stats["queried_count"],
                 "built_count": self.stats["built_count"],
                 "failed_count": self.stats["failed_count"],
-                "skip_count": self.stats["skip_count"],
-                "success_rate": (
-                    f"{self.stats['built_count'] / max(1, self.stats['total_queried']) * 100:.2f}%"
+                "built_ratio": (
+                    f"{self.stats['built_count'] / max(1, self.stats['queried_count']) * 100:.2f}%"
                 ),
             },
         }
