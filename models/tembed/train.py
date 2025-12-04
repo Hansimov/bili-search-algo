@@ -8,7 +8,8 @@ from typing import Iterator
 from sedb import MongoDocsGenerator, MongoDocsGeneratorArgParser
 from sedb import RedisOperator, RocksOperator
 from sedb import FaissOperator, FaissClient, FAISS_PORT
-from tclogger import TCLogger, TCLogbar, logstr, dict_get, brk, dict_to_str
+from tclogger import TCLogger, TCLogbar, logstr
+from tclogger import dict_get, brk, dict_to_str, int_bits
 from tclogger import raise_breakpoint, MergedArgParser
 from tfmx import EmbedClient
 
@@ -39,7 +40,7 @@ FAISS_DB = f"{BASE_NAME}.faiss"
 ROCKS_DB_PATH = STORAGE_DIR / ROCKS_DB
 FAISS_DB_PATH = STORAGE_DIR / FAISS_DB
 SAMPLES_DIR = STORAGE_DIR / "train_samples"
-MAX_SAMPLES = int(1e10)  # max samples count, used to determine idx_width in filenames
+MAX_SAMPLES = int(1e10)
 
 REDIS_PREFIX = f"bv.emb:"
 REDIS_PT = f"{REDIS_PREFIX}*"
@@ -243,7 +244,7 @@ class TrainSamplesManager:
     """Manager for training samples storage and retrieval
 
     Handles both writing (during construction) and reading (during training):
-    - Writing: buffer samples, save batches, merge into shards
+    - Writing: buffer samples, flush to files, merge into shards
     - Reading: load shards on demand, provide unified access interface
 
     Storage layout (per shard):
@@ -268,7 +269,7 @@ class TrainSamplesManager:
         data_dir: str | Path,
         num_positives: int = 2,
         shard_size: int = 100_000,
-        save_batch_size: int = 1000,
+        buffer_size: int = 1000,
         mode: str = "read",
     ):
         """
@@ -276,18 +277,31 @@ class TrainSamplesManager:
             data_dir: directory for storing/loading training data
             num_positives: number of positive samples per anchor (for write mode)
             shard_size: number of samples per shard file (for write mode)
-            save_batch_size: buffer size before saving batch (for write mode)
+            buffer_size: buffer size before flushing to file (for write mode)
             mode: "read" for loading existing data, "write" for creating new data
         """
         self.data_dir = Path(data_dir)
-        self.batches_dir = self.data_dir / "batches"
+        self.buffers_dir = self.data_dir / "buffers"
         self.shards_dir = self.data_dir / "shards"
         self.mode = mode
+        self.shard_size = shard_size
+        self.buffer_size = buffer_size
+        self._calc_idx_width()
 
         if mode == "read":
             self._init_read_mode()
         else:
-            self._init_write_mode(num_positives, shard_size, save_batch_size)
+            self._init_write_mode(num_positives)
+
+    def _calc_idx_width(self) -> int:
+        """calculate index width for filenames based on MAX_SAMPLES and shard_size
+
+        e.g., shard_size=1e5, max_shards=1e10/1e5=1e5, width=len('100000')=6
+        """
+        max_shards = MAX_SAMPLES // self.shard_size + 1
+        self.shard_idx_width = int_bits(max_shards)
+        max_buffers = self.shard_size // self.buffer_size + 1
+        self.buffer_idx_width = int_bits(max_buffers)
 
     def is_read_mode(self) -> bool:
         return self.mode == "read"
@@ -313,9 +327,6 @@ class TrainSamplesManager:
         self._shard_cache = {}
         self._access_counter = 0
 
-        # calculate idx_width for filenames
-        self.idx_width = self._calc_idx_width()
-
         logger.note(f"> Loaded TrainSamplesManager:")
         info_dict = {
             "num_samples": self.num_samples,
@@ -328,35 +339,18 @@ class TrainSamplesManager:
         }
         logger.mesg(dict_to_str(info_dict), indent=2)
 
-    def _calc_idx_width(self) -> int:
-        """calculate index width for filenames based on MAX_SAMPLES and shard_size
-
-        e.g., if shard_size=1e5, max_shards=1e10/1e5=1e5, width=len('100000')=6
-        """
-        import math
-
-        max_shards = MAX_SAMPLES // self.shard_size
-        return len(str(max_shards))
-
-    def _init_write_mode(
-        self, num_positives: int, shard_size: int, save_batch_size: int
-    ):
+    def _init_write_mode(self, num_positives: int):
         """initialize for writing new data"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.batches_dir.mkdir(parents=True, exist_ok=True)
+        self.buffers_dir.mkdir(parents=True, exist_ok=True)
 
         self.num_positives = num_positives
-        self.shard_size = shard_size
-        self.save_batch_size = save_batch_size
         self.group_size = 1 + num_positives  # anchor + positives
 
         # write buffers
         self.eids = []
         self.embs = []
-        self.batch_idx = 0
-
-        # calculate idx_width for filenames
-        self.idx_width = self._calc_idx_width()
+        self.buffer_idx = 0
 
         # queried eids cache (to avoid re-querying same bvids)
         self.queried_cache_file = self.data_dir / "queried_eids.pkl"
@@ -402,55 +396,69 @@ class TrainSamplesManager:
         """get current number of samples in buffer"""
         return len(self.eids) // self.group_size
 
-    def should_save_batch(self) -> bool:
-        """check if current buffer should be saved"""
-        return self.get_buffer_sample_count() >= self.save_batch_size
+    def should_flush_buffer(self) -> bool:
+        """check if current buffer should be flushed to file"""
+        return self.get_buffer_sample_count() >= self.buffer_size
 
-    def save_batch(self) -> int:
-        """save current buffer to disk and clear buffer
+    def get_buffered_sample_count(self) -> int:
+        """get total number of samples in buffer files (not yet merged)"""
+        return self.buffer_idx * self.buffer_size
+
+    def should_merge_buffers(self) -> bool:
+        """check if buffer files should be merged into shards
+
+        This prevents buffer_idx overflow which would overwrite existing buffer files.
+        Merge when buffered samples reach shard_size.
+        """
+        return self.get_buffered_sample_count() >= self.shard_size
+
+    def flush_buffer(self) -> int:
+        """flush current buffer to file and clear buffer
 
         Returns:
-            batch index of saved batch
+            buffer index of saved buffer file
         """
         if not self.eids:
-            return self.batch_idx
+            return self.buffer_idx
 
-        batch_file = self.batches_dir / f"batch_{self.batch_idx:0{self.idx_width}d}.npz"
+        buffer_file = (
+            self.buffers_dir / f"buffer_{self.buffer_idx:0{self.buffer_idx_width}d}.npz"
+        )
         np.savez_compressed(
-            batch_file,
+            buffer_file,
             eids=np.array(self.eids, dtype=object),
             embs=np.array(self.embs, dtype=np.float32),
             group_size=self.group_size,
             num_positives=self.num_positives,
         )
 
-        saved_batch_idx = self.batch_idx
-        self.batch_idx += 1
+        saved_buffer_idx = self.buffer_idx
+        self.buffer_idx += 1
 
         # clear buffers
         self.eids.clear()
         self.embs.clear()
 
-        return saved_batch_idx
+        return saved_buffer_idx
 
-    def merge_batches(self):
-        """merge batch files into sharded training data files
+    def merge_buffers(self):
+        """merge buffer files into sharded training data files
 
         Creates sharded NPZ files:
-        - shards/shard_000000.npz, shard_000001.npz, ...
+        - shards/shard_00000.npz, shard_00001.npz, ...
         - train_meta.npz: metadata
         """
-        # load all batches
-        batch_files = sorted(self.batches_dir.glob("batch_*.npz"))
-        if not batch_files:
-            logger.warn("* No batch files to merge")
+        # load all buffers
+        buffer_files = sorted(self.buffers_dir.glob("buffer_*.npz"))
+        if not buffer_files:
+            logger.warn("* No buffer files to merge")
             return
 
-        logger.note("> Merge batch files into shards:")
+        logger.note("> Merge buffer files into shards:")
         all_eids = []
         all_embs = []
-        for batch_file in batch_files:
-            data = np.load(batch_file, allow_pickle=True)
+        for buffer_file in buffer_files:
+            data = np.load(buffer_file, allow_pickle=True)
             all_eids.append(data["eids"])
             all_embs.append(data["embs"])
 
@@ -472,7 +480,9 @@ class TrainSamplesManager:
             start_item = shard_idx * items_per_shard
             end_item = min((shard_idx + 1) * items_per_shard, total_items)
 
-            shard_file = self.shards_dir / f"shard_{shard_idx:0{self.idx_width}d}.npz"
+            shard_file = (
+                self.shards_dir / f"shard_{shard_idx:0{self.shard_idx_width}d}.npz"
+            )
             np.savez_compressed(
                 shard_file,
                 eids=final_eids[start_item:end_item],
@@ -497,10 +507,13 @@ class TrainSamplesManager:
         self.num_samples = num_samples
         self.num_shards = num_shards
 
-        # clean up batch files after successful merge
-        for batch_file in batch_files:
-            batch_file.unlink()
-        logger.mesg(f"  * Cleared batch files: {len(batch_files)} ")
+        # clean up buffer files after successful merge
+        for buffer_file in buffer_files:
+            buffer_file.unlink()
+        logger.mesg(f"  * Cleared buffer files: {len(buffer_files)} ")
+
+        # reset buffer index for next round of buffers
+        self.buffer_idx = 0
 
         logger.okay(f"> Created {num_shards} shards with {num_samples} total samples")
         info_dict = {
@@ -513,11 +526,11 @@ class TrainSamplesManager:
         logger.mesg(dict_to_str(info_dict), indent=2)
 
     def finalize(self):
-        """finalize writing: save remaining buffer and merge batches"""
+        """finalize writing: flush remaining buffer and merge buffers"""
         if self.eids:
-            self.save_batch()
+            self.flush_buffer()
         self.save_queried_cache()
-        self.merge_batches()
+        self.merge_buffers()
 
     # ========== Read mode methods ==========
 
@@ -555,7 +568,7 @@ class TrainSamplesManager:
             )
             del self._shard_cache[lru_idx]
 
-        shard_file = self.shards_dir / f"shard_{shard_idx:0{self.idx_width}d}.npz"
+        shard_file = self.shards_dir / f"shard_{shard_idx:0{self.shard_idx_width}d}.npz"
         if not shard_file.exists():
             raise FileNotFoundError(f"Shard file not found: {shard_file}")
 
@@ -872,10 +885,13 @@ class TrainSamplesConstructor:
             built_in_batch, _ = self._query_and_build_samples(bvid_batch)
             total_built += built_in_batch
 
-            # save batch and cache periodically
-            if self.manager.should_save_batch():
-                self.manager.save_batch()
-                if self.manager.batch_idx % 10 == 0:
+            # flush buffer and merge buffers periodically
+            if self.manager.should_flush_buffer():
+                self.manager.flush_buffer()
+                # merge buffers when buffered samples reach shard_size
+                if self.manager.should_merge_buffers():
+                    self.manager.merge_buffers()
+                if self.manager.buffer_idx % 10 == 0:
                     self.manager.save_queried_cache()
 
             if self._should_stop():
@@ -960,7 +976,7 @@ def main():
             data_dir=SAMPLES_DIR,
             num_positives=2,
             shard_size=100_000,
-            save_batch_size=1000,
+            buffer_size=1000,
             mode="write",
         )
         constructor = TrainSamplesConstructor(
