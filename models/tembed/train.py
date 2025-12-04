@@ -255,7 +255,13 @@ class TrainSamplesManager:
     - anchor: eids[idx], embs[idx]
     - positive j: eids[idx + j], embs[idx + j]  (j=1,2)
     - negative: use previous sample (i-1)'s anchor
+
+    Note: Valid sample indices are [1, num_samples), since sample 0 has no negative.
+    Use __len__ to get the number of valid samples (num_samples - 1).
     """
+
+    # Maximum shards to keep in memory (LRU cache)
+    MAX_CACHED_SHARDS = 3
 
     def __init__(
         self,
@@ -283,19 +289,29 @@ class TrainSamplesManager:
         else:
             self._init_write_mode(num_positives, shard_size, save_batch_size)
 
+    def is_read_mode(self) -> bool:
+        return self.mode == "read"
+
+    def is_write_mode(self) -> bool:
+        return self.mode == "write"
+
     def _init_read_mode(self):
         """initialize for reading existing data"""
+        meta_file = self.data_dir / "train_meta.npz"
+        if not meta_file.exists():
+            raise FileNotFoundError(f"Metadata file not found: {meta_file}")
+
         # load metadata
-        meta = np.load(self.data_dir / "train_meta.npz")
+        meta = np.load(meta_file)
         self.group_size = int(meta["group_size"])
         self.num_positives = int(meta["num_positives"])
         self.num_samples = int(meta["num_samples"])
         self.num_shards = int(meta["num_shards"])
         self.shard_size = int(meta["shard_size"])
 
-        # shard cache for reading
+        # LRU shard cache for reading: {shard_idx: {"eids": ..., "embs": ..., "access_order": int}}
         self._shard_cache = {}
-        self._current_shard_idx = None
+        self._access_counter = 0
 
         # calculate idx_width for filenames
         self.idx_width = self._calc_idx_width()
@@ -506,20 +522,49 @@ class TrainSamplesManager:
     # ========== Read mode methods ==========
 
     def preload_all(self):
-        """preload all shards into memory"""
+        """preload all shards into memory
+
+        Warning: This may consume a lot of memory for large datasets.
+        Consider using iter_samples() for memory-efficient sequential access.
+        """
+        logger.warn(
+            f"* Loading all {self.num_shards} shards into memory. "
+            f"Use iter_samples() for memory-efficient access."
+        )
+        # temporarily disable LRU eviction
+        original_max = self.MAX_CACHED_SHARDS
+        self.MAX_CACHED_SHARDS = self.num_shards + 1
         for shard_idx in range(self.num_shards):
             self._load_shard(shard_idx)
+        self.MAX_CACHED_SHARDS = original_max
 
     def _load_shard(self, shard_idx: int):
-        """load a shard into cache"""
+        """load a shard into cache with LRU eviction"""
         if shard_idx in self._shard_cache:
+            # update access order for LRU
+            self._access_counter += 1
+            self._shard_cache[shard_idx]["access_order"] = self._access_counter
             return
 
+        # LRU eviction if cache is full
+        while len(self._shard_cache) >= self.MAX_CACHED_SHARDS:
+            # find least recently used shard
+            lru_idx = min(
+                self._shard_cache.keys(),
+                key=lambda k: self._shard_cache[k]["access_order"],
+            )
+            del self._shard_cache[lru_idx]
+
         shard_file = self.shards_dir / f"shard_{shard_idx:0{self.idx_width}d}.npz"
+        if not shard_file.exists():
+            raise FileNotFoundError(f"Shard file not found: {shard_file}")
+
         data = np.load(shard_file, allow_pickle=True)
+        self._access_counter += 1
         self._shard_cache[shard_idx] = {
             "eids": data["eids"],
             "embs": data["embs"],
+            "access_order": self._access_counter,
         }
 
     def _get_shard_for_sample(self, sample_idx: int) -> tuple[int, int]:
@@ -532,35 +577,27 @@ class TrainSamplesManager:
         offset = (sample_idx % self.shard_size) * self.group_size
         return shard_idx, offset
 
-    def _ensure_shard_loaded(self, shard_idx: int, keep_only_current: bool = True):
-        """ensure a shard is loaded, optionally unload others to save memory"""
-        if shard_idx not in self._shard_cache:
-            # optionally clear cache to save memory
-            if keep_only_current and self._current_shard_idx is not None:
-                if self._current_shard_idx != shard_idx:
-                    self._shard_cache.pop(self._current_shard_idx, None)
-
-            self._load_shard(shard_idx)
-            self._current_shard_idx = shard_idx
-
     def __len__(self) -> int:
-        return self.num_samples
+        """return number of valid samples (excluding sample 0 which has no negative)"""
+        return self.num_samples - 1 if self.num_samples > 0 else 0
 
     def __getitem__(self, sample_idx: int) -> dict:
         """get training sample at index
 
+        Args:
+            sample_idx: valid range is [1, num_samples)
+
         Returns:
             dict with anchor, positives, and negative (from previous sample)
         """
-        # skip first sample (no previous for negative)
-        if sample_idx == 0:
-            sample_idx = 1
+        if not (0 < sample_idx < self.num_samples):
+            raise IndexError(
+                f"sample_idx {sample_idx} out of range [1, {self.num_samples})"
+            )
 
         # get shard info
         shard_idx, shard_offset = self._get_shard_for_sample(sample_idx)
-        self._ensure_shard_loaded(
-            shard_idx, keep_only_current=False
-        )  # may need prev shard
+        self._load_shard(shard_idx)
 
         shard = self._shard_cache[shard_idx]
 
@@ -579,7 +616,7 @@ class TrainSamplesManager:
         prev_shard_idx, prev_shard_offset = self._get_shard_for_sample(prev_sample_idx)
 
         if prev_shard_idx != shard_idx:
-            self._ensure_shard_loaded(prev_shard_idx, keep_only_current=False)
+            self._load_shard(prev_shard_idx)
             prev_shard = self._shard_cache[prev_shard_idx]
         else:
             prev_shard = shard
@@ -600,11 +637,21 @@ class TrainSamplesManager:
         """iterate through samples sequentially (memory efficient)
 
         Args:
-            start: starting sample index (default 1 to skip first)
+            start: starting sample index (default 1, since 0 has no negative)
             end: ending sample index (exclusive, default None for all)
+
+        Raises:
+            ValueError: if called in write mode
         """
+        if not self.is_read_mode():
+            raise ValueError("iter_samples() is only available in read mode")
+
         if end is None:
             end = self.num_samples
+
+        # validate range
+        start = max(1, start)  # ensure start >= 1
+        end = min(end, self.num_samples)
 
         for sample_idx in range(start, end):
             yield self[sample_idx]
@@ -612,8 +659,19 @@ class TrainSamplesManager:
     def iter_shard_samples(self, shard_idx: int) -> Iterator[dict]:
         """iterate through all samples in a specific shard
 
-        useful for parallel loading in distributed training
+        Useful for parallel loading in distributed training.
+
+        Raises:
+            ValueError: if called in write mode or shard_idx out of range
         """
+        if not self.is_read_mode():
+            raise ValueError("iter_shard_samples() is only available in read mode")
+
+        if shard_idx < 0 or shard_idx >= self.num_shards:
+            raise ValueError(
+                f"Shard index {shard_idx} out of range [0, {self.num_shards})"
+            )
+
         start_sample = shard_idx * self.shard_size
         end_sample = min((shard_idx + 1) * self.shard_size, self.num_samples)
 
@@ -628,11 +686,26 @@ class TrainSamplesManager:
         """get sample index range for a shard
 
         Returns:
-            (start_sample_idx, end_sample_idx)
+            (start_sample_idx, end_sample_idx) - note: start may be 1 for shard 0
         """
         start = shard_idx * self.shard_size
         end = min((shard_idx + 1) * self.shard_size, self.num_samples)
+        # adjust start for first shard (sample 0 is invalid)
+        if start == 0:
+            start = 1
         return start, end
+
+    def get_stats(self) -> dict:
+        """get statistics about the training data"""
+        return {
+            "num_samples": self.num_samples,
+            "num_shards": self.num_shards,
+            "shard_size": self.shard_size,
+            "group_size": self.group_size,
+            "num_positives": self.num_positives,
+            "cached_shards": len(self._shard_cache),
+            "max_cached_shards": self.MAX_CACHED_SHARDS,
+        }
 
 
 class TrainSamplesConstructor:
@@ -661,11 +734,22 @@ class TrainSamplesConstructor:
             samples_count: number of training samples to generate
             query_batch_size: batch size for querying Faiss tops() (default: 50)
         """
+        if not manager.is_write_mode():
+            raise ValueError("TrainSamplesConstructor requires manager in write mode")
+
         self.manager = manager
         self.samples_count = samples_count
         self.num_positives = manager.num_positives
         self.topk = self.num_positives + 1  # top1 (anchor) + num_positives
         self.query_batch_size = query_batch_size
+
+        # statistics
+        self.stats = {
+            "total_queried": 0,
+            "built_count": 0,
+            "failed_count": 0,
+            "skip_count": 0,
+        }
 
         # initialize processors
         self.redis = RedisOperator(configs=REDIS_ENVS, connect_cls=self.__class__)
@@ -682,7 +766,7 @@ class TrainSamplesConstructor:
             True if sample was successfully built and appended
         """
         # need at least 1 (anchor) + num_positives results
-        if len(top_results) < self.num_positives + 1:
+        if not top_results or len(top_results) < self.num_positives + 1:
             return False
 
         # top1 is anchor, top2/top3/... are positives
@@ -691,9 +775,9 @@ class TrainSamplesConstructor:
 
         for i in range(self.num_positives + 1):  # anchor + positives
             item = top_results[i]
-            eid = item["eid"]
-            emb = item["emb"]
-            if emb is None:
+            eid = item.get("eid")
+            emb = item.get("emb")
+            if eid is None or emb is None:
                 return False
             group_eids.append(eid)
             group_embs.append(emb)
@@ -702,16 +786,17 @@ class TrainSamplesConstructor:
         self.manager.append_sample(group_eids, group_embs)
         return True
 
-    def _query_and_build_samples(self, bvid_batch: list) -> int:
+    def _query_and_build_samples(self, bvid_batch: list) -> tuple[int, int]:
         """query Faiss for top-k and build training samples
 
         Args:
             bvid_batch: list of bvids to query
 
         Returns:
-            number of successfully built samples
+            tuple of (successfully built count, failed count)
         """
         built_count = 0
+        failed_count = 0
 
         try:
             # get top-k from Faiss in batch with embeddings
@@ -721,16 +806,24 @@ class TrainSamplesConstructor:
 
             # build sample for each query result
             for query_bvid, top_results in zip(bvid_batch, batch_results):
+                self.stats["total_queried"] += 1
+
                 # build sample (top1=anchor, top2/top3=positives)
                 if self._build_sample(top_results):
-                    # mark as queried
+                    # mark as queried only on success
                     self.manager.mark_queried(query_bvid)
                     built_count += 1
+                    self.stats["built_count"] += 1
+                else:
+                    failed_count += 1
+                    self.stats["failed_count"] += 1
 
         except Exception as e:
             logger.warn(f"Error querying Faiss batch: {e}")
+            failed_count = len(bvid_batch)
+            self.stats["failed_count"] += failed_count
 
-        return built_count
+        return built_count, failed_count
 
     def _should_stop(self, total_samples: int) -> bool:
         """check if reached samples_count"""
@@ -759,10 +852,10 @@ class TrainSamplesConstructor:
             bvid_batch = [
                 bvid for bvid in all_bvids if not self.manager.is_queried(bvid)
             ]
-            # count already queried as built
+
+            # count already queried as skipped (don't count towards built)
             already_queried = len(all_bvids) - len(bvid_batch)
-            total_built += already_queried
-            self.bar.update(increment=already_queried)
+            self.stats["skip_count"] += already_queried
 
             if not bvid_batch:
                 if self._should_stop(total_built):
@@ -770,7 +863,7 @@ class TrainSamplesConstructor:
                 continue
 
             # query Faiss and build samples
-            built_in_batch = self._query_and_build_samples(bvid_batch)
+            built_in_batch, _ = self._query_and_build_samples(bvid_batch)
             total_built += built_in_batch
             self.bar.update(increment=built_in_batch)
 
@@ -819,7 +912,16 @@ class TrainSamplesConstructor:
         info_dict = {
             "total_built": total_built,
             "tuple_size": f"3 (1 anchor + {self.num_positives} positives)",
-            "samples_path": self.manager.data_dir,
+            "samples_path": str(self.manager.data_dir),
+            "stats": {
+                "total_queried": self.stats["total_queried"],
+                "built_count": self.stats["built_count"],
+                "failed_count": self.stats["failed_count"],
+                "skip_count": self.stats["skip_count"],
+                "success_rate": (
+                    f"{self.stats['built_count'] / max(1, self.stats['total_queried']) * 100:.2f}%"
+                ),
+            },
         }
         logger.mesg(dict_to_str(info_dict), indent=2)
 
