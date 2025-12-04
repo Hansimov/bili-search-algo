@@ -3,7 +3,8 @@ import numpy as np
 
 from pathlib import Path
 from sedb import MongoDocsGenerator, MongoDocsGeneratorArgParser
-from sedb import RedisOperator, RocksOperator, FaissOperator
+from sedb import RedisOperator, RocksOperator
+from sedb import FaissOperator, FaissClient, FAISS_PORT
 from tclogger import logger, dict_get, MergedArgParser
 from tclogger import raise_breakpoint
 from tfmx import EmbedClient
@@ -198,12 +199,30 @@ class FaissBuilder:
 
 class FaissTester:
     def __init__(self):
-        self.faiss = FaissOperator(FAISS_DB_PATH)
-        self.faiss.load_db()
+        self.faiss = FaissClient(port=FAISS_PORT)
 
     def run(self):
-        res = self.faiss.top(eid="BV1114y1h7rj")
-        print(res)
+        logger.note(f"> total_count():")
+        result = self.faiss.total_count()
+        logger.okay(result)
+
+        eid = "BV1114y1h7rj"
+        logger.note(f"> get_emb_by_eid():")
+        result = self.faiss.get_emb_by_eid(eid=eid)
+        logger.okay(result)
+
+        logger.note(f"> top():")
+        result = self.faiss.top(eid=eid, topk=5)
+        logger.okay(result)
+
+        eids = ["BV1114y1h7rj", "BV112xVeuEqw"]
+        logger.note(f"> get_embs_by_eids():")
+        results = self.faiss.get_embs_by_eids(eids=eids)
+        logger.okay(results)
+
+        logger.note(f"> tops():")
+        results = self.faiss.tops(eids=eids, return_emb=False)
+        logger.okay(results)
 
 
 class TrainerArgParser(argparse.ArgumentParser):
