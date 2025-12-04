@@ -8,7 +8,7 @@ from typing import Iterator
 from sedb import MongoDocsGenerator, MongoDocsGeneratorArgParser
 from sedb import RedisOperator, RocksOperator
 from sedb import FaissOperator, FaissClient, FAISS_PORT
-from tclogger import TCLogger, TCLogbar, logstr, dict_get, brk
+from tclogger import TCLogger, TCLogbar, logstr, dict_get, brk, dict_to_str
 from tclogger import raise_breakpoint, MergedArgParser
 from tfmx import EmbedClient
 
@@ -301,11 +301,16 @@ class TrainSamplesManager:
         self.idx_width = self._calc_idx_width()
 
         logger.note(f"> Loaded TrainSamplesManager:")
-        logger.mesg(f"  * {self.num_samples} samples in {self.num_shards} shards")
-        logger.mesg(
-            f"  * Group size: {self.group_size} (1 anchor + {self.num_positives} positives)"
-        )
-        logger.mesg(f"  * Shard size: {self.shard_size} samples per shard")
+        info_dict = {
+            "num_samples": self.num_samples,
+            "num_shards": self.num_shards,
+            "group_size": [
+                self.group_size,
+                f"1 anchor + {self.num_positives} positives",
+            ],
+            "shard_size": self.shard_size,
+        }
+        logger.mesg(dict_to_str(info_dict), indent=2)
 
     def _calc_idx_width(self) -> int:
         """calculate index width for filenames based on MAX_SAMPLES and shard_size
@@ -482,11 +487,14 @@ class TrainSamplesManager:
         logger.mesg(f"  * Cleaned up {len(batch_files)} batch files")
 
         logger.okay(f"> Created {num_shards} shards with {num_samples} total samples")
-        logger.mesg(f"  * Shard size: {self.shard_size} samples per shard")
-        logger.mesg(
-            f"  * Layout: [{self.group_size} items per sample = 1 anchor + {self.num_positives} positives]"
-        )
-        logger.mesg(f"  * Negative: use previous sample during training (not stored)")
+        info_dict = {
+            "shard_size": self.shard_size,
+            "group_size": [
+                self.group_size,
+                f"1 anchor + {self.num_positives} positives",
+            ],
+        }
+        logger.mesg(dict_to_str(info_dict), indent=2)
 
     def finalize(self):
         """finalize writing: save remaining buffer and merge batches"""
@@ -739,7 +747,7 @@ class TrainSamplesConstructor:
         self.total_batches = self.samples_count // self.manager.save_batch_size
         self.bar = TCLogbar(
             total=self.samples_count,
-            desc=logstr.note("* Constructing samples"),
+            desc=logstr.note("* Construct samples"),
             show_iter_per_second=True,
         )
 
@@ -787,13 +795,15 @@ class TrainSamplesConstructor:
 
     def _log_start_info(self):
         """log initialization information"""
-        logger.note(f"> Samples to construct: {logstr.file(brk(self.samples_count))} ")
-        logger.mesg(f"  * Num positives: {self.num_positives}")
-        logger.mesg(f"  * Query batch size: {self.query_batch_size}")
-        logger.mesg(f"  * data_dir: {logstr.file(brk(self.manager.data_dir))}")
-        logger.mesg(
-            f"  * Queried eids: {logstr.okay(self.manager.get_queried_count())}"
-        )
+        logger.note(f"> Constructing samples:")
+        info_dict = {
+            "samples_count": self.samples_count,
+            "num_positives": self.num_positives,
+            "query_batch_size": self.query_batch_size,
+            "data_dir": self.manager.data_dir,
+            "queried_count": self.manager.get_queried_count(),
+        }
+        logger.mesg(dict_to_str(info_dict), indent=2)
 
     def _finalize(self, total_built: int):
         """finalize construction: save remaining data and merge batches
@@ -806,14 +816,12 @@ class TrainSamplesConstructor:
 
         # log final statistics
         logger.okay(f"> Finished construction:")
-        logger.mesg(f"  * Total built: {logstr.okay(brk(total_built))}")
-        logger.mesg(
-            f"  * Total queried: {logstr.okay(brk(self.manager.get_queried_count()))}"
-        )
-        logger.mesg(
-            f"  * Group size: {self.manager.group_size} (1 anchor + {self.num_positives} positives)"
-        )
-        logger.mesg(f"  * Samples saved to: {logstr.okay(self.manager.data_dir)}")
+        info_dict = {
+            "total_built": total_built,
+            "tuple_size": f"3 (1 anchor + {self.num_positives} positives)",
+            "samples_path": self.manager.data_dir,
+        }
+        logger.mesg(dict_to_str(info_dict), indent=2)
 
 
 class TrainerArgParser(argparse.ArgumentParser):
