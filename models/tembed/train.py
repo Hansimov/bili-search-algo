@@ -278,7 +278,7 @@ class TrainSamplesManager:
             num_positives: number of positive samples per anchor (for write mode)
             shard_size: number of samples per shard file (for write mode)
             buffer_size: buffer size before flushing to file (for write mode)
-            mode: "read" for loading existing data, "write" for creating new data
+            mode: "read" for loading exist data, "write" for creating new data
         """
         self.data_dir = Path(data_dir)
         self.buffers_dir = self.data_dir / "buffers"
@@ -311,7 +311,7 @@ class TrainSamplesManager:
         return self.mode == "write"
 
     def _init_read_mode(self):
-        """initialize for reading existing data"""
+        """initialize for reading exist data"""
         meta_file = self.meta_file
         if not meta_file.exists():
             raise FileNotFoundError(f"Metadata file not found: {meta_file}")
@@ -349,7 +349,9 @@ class TrainSamplesManager:
         # write buffers
         self.eids = []
         self.embs = []
-        self.buffer_idx = 0
+
+        # load exist buffer info for correct continuation
+        self._load_exist_buffers_info()
 
         # load exist shard info for correct continuation
         self._load_exist_shards_info()
@@ -359,6 +361,66 @@ class TrainSamplesManager:
         self.queried_eids = self._load_queried_cache()
 
     # ========== Write mode methods ==========
+
+    def _load_exist_buffers_info(self):
+        """load info from exist buffer files to continue from correct index
+
+        If the last buffer is not full, load its content into memory and
+        continue from that index (will overwrite it with merged data).
+
+        Sets:
+            - buffer_idx: buffer index to continue from
+            - eids, embs: loaded from last buffer if not full
+        """
+        self.buffer_idx = 0
+
+        if not self.buffers_dir.exists():
+            return
+
+        exist_buffer_files = sorted(self.buffers_dir.glob("buffer_*.npz"))
+        if not exist_buffer_files:
+            return
+
+        exist_buffer_count = len(exist_buffer_files)
+
+        # check if last buffer is full
+        last_buffer_file = exist_buffer_files[-1]
+        try:
+            data = np.load(last_buffer_file, allow_pickle=True)
+            last_buffer_eids = data["eids"]
+            last_buffer_samples = len(last_buffer_eids) // self.group_size
+        except Exception as e:
+            logger.warn(f"Error reading last buffer file {last_buffer_file}: {e}")
+            self.buffer_idx = exist_buffer_count
+            return
+
+        if last_buffer_samples < self.buffer_size:
+            # last buffer is not full, load it and continue from this index
+            self.buffer_idx = exist_buffer_count - 1
+            self.eids = list(last_buffer_eids)
+            self.embs = list(data["embs"])
+
+            logger.note(f"> Found exist buffers (last is partial):")
+            buffer_ratio = round(last_buffer_samples / self.buffer_size * 100, 1)
+            info_dict = {
+                "exist_buffer_count": exist_buffer_count,
+                "last_buffer_samples": f"{last_buffer_samples} ({buffer_ratio}%)",
+                "continue_buffer_idx": self.buffer_idx,
+            }
+        else:
+            # last buffer is full or over-full, start from next index
+            # (over-full can happen if program was interrupted mid-batch)
+            self.buffer_idx = exist_buffer_count
+
+            logger.note(f"> Found exist buffers:")
+            buffer_ratio = round(last_buffer_samples / self.buffer_size * 100, 1)
+            info_dict = {
+                "exist_buffer_count": exist_buffer_count,
+                "last_buffer_samples": f"{last_buffer_samples} ({buffer_ratio}%)",
+                "next_buffer_idx": self.buffer_idx,
+            }
+
+        logger.mesg(dict_to_str(info_dict), indent=2)
 
     def _load_exist_shards_info(self):
         """load info from exist shards to enable correct continuation
@@ -435,9 +497,18 @@ class TrainSamplesManager:
         Args:
             group_eids: list of eids [anchor, pos1, pos2, ...]
             group_embs: list of embeddings [anchor_emb, pos1_emb, pos2_emb, ...]
+
+        Returns:
+            True if buffer was flushed after appending
         """
         self.eids.extend(group_eids)
         self.embs.extend(group_embs)
+
+        # auto flush when buffer is full
+        if self.should_flush_buffer():
+            self.flush_buffer()
+            return True
+        return False
 
     def get_buffer_sample_count(self) -> int:
         """get current number of samples in buffer"""
@@ -454,7 +525,7 @@ class TrainSamplesManager:
     def should_merge_buffers(self) -> bool:
         """check if buffer files should be merged into shards
 
-        This prevents buffer_idx overflow which would overwrite existing buffer files.
+        This prevents buffer_idx overflow which would overwrite exist buffer files.
         Merge when buffered samples reach shard_size.
         """
         return self.get_buffered_sample_count() >= self.shard_size
@@ -531,7 +602,7 @@ class TrainSamplesManager:
             final_eids = np.concatenate([last_eids, new_eids])
             final_embs = np.concatenate([last_embs, new_embs])
 
-            # adjust counts: remove last shard from existing counts since we'll rewrite it
+            # adjust counts: remove last shard from exist counts since we'll rewrite it
             start_shard_idx = last_shard_idx
             base_samples = self.exist_samples_count - self.last_shard_samples
 
@@ -898,8 +969,12 @@ class TrainSamplesConstructor:
             group_eids.append(eid)
             group_embs.append(emb)
 
-        # append to manager
-        self.manager.append_sample(group_eids, group_embs)
+        # append to manager (may auto-flush if buffer is full)
+        flushed = self.manager.append_sample(group_eids, group_embs)
+        if flushed:
+            self.manager.save_queried_cache()
+            if self.manager.should_merge_buffers():
+                self.manager.merge_buffers()
         return True
 
     def _query_and_build_samples(self, bvid_batch: list) -> tuple[int, int]:
@@ -984,17 +1059,9 @@ class TrainSamplesConstructor:
                 continue
 
             # query Faiss and build samples
+            # (buffer flush, queried cache save, and merge are handled inside)
             built_in_batch, _ = self._query_and_build_samples(bvid_batch)
             total_built += built_in_batch
-
-            # flush buffer and merge buffers periodically
-            if self.manager.should_flush_buffer():
-                self.manager.flush_buffer()
-                # merge buffers when buffered samples reach shard_size
-                if self.manager.should_merge_buffers():
-                    self.manager.merge_buffers()
-                if self.manager.buffer_idx % 10 == 0:
-                    self.manager.save_queried_cache()
 
             if self._should_stop():
                 break
