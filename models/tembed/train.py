@@ -260,12 +260,12 @@ class BuffersTracker:
         self.buffers_dir = buffers_dir
         self.group_size = group_size
         self.buffer_size = buffer_size
-        self.json_file = buffers_dir / "buffers.json"
+        self.json_file = buffers_dir.parent / "buffers.json"
 
         # tracked state
         self.file_count: int = 0
         self.last_file: str = ""
-        self.last_file_items: int = 0
+        self.last_file_samples: int = 0
 
     def load(self) -> "BuffersTracker":
         """Load tracker state from JSON file"""
@@ -275,7 +275,7 @@ class BuffersTracker:
                     data = json.load(f)
                 self.file_count = data.get("file_count", 0)
                 self.last_file = data.get("last_file", "")
-                self.last_file_items = data.get("last_file_items", 0)
+                self.last_file_samples = data.get("last_file_samples", 0)
             except Exception as e:
                 logger.warn(f"Error loading buffers.json: {e}")
         return self
@@ -286,19 +286,15 @@ class BuffersTracker:
         data = {
             "file_count": self.file_count,
             "last_file": self.last_file,
-            "last_file_items": self.last_file_items,
+            "last_file_samples": self.last_file_samples,
         }
         with open(self.json_file, "w") as f:
             json.dump(data, f, indent=2)
         return self
 
-    def get_last_file_samples(self) -> int:
-        """Get number of samples in the last buffer file"""
-        return self.last_file_items // self.group_size
-
     def is_last_file_full(self) -> bool:
         """Check if the last buffer file is full"""
-        return self.get_last_file_samples() >= self.buffer_size
+        return self.last_file_samples >= self.buffer_size
 
     def get_next_buffer_idx(self) -> int:
         """Get the next buffer index to use
@@ -312,34 +308,29 @@ class BuffersTracker:
             return self.file_count
         return self.file_count - 1
 
-    def get_total_items(self) -> int:
-        """Get total number of items across all buffer files"""
-        if self.file_count == 0:
-            return 0
-        # (file_count - 1) full buffers + last buffer items
-        full_buffers = self.file_count - 1
-        return full_buffers * self.buffer_size * self.group_size + self.last_file_items
-
     def get_total_samples(self) -> int:
         """Get total number of samples across all buffer files"""
-        return self.get_total_items() // self.group_size
+        if self.file_count == 0:
+            return 0
+        # (file_count - 1) full buffers + last buffer samples
+        full_buffers = self.file_count - 1
+        return full_buffers * self.buffer_size + self.last_file_samples
 
-    def update(self, file_count: int, last_file: str, last_file_items: int):
+    def update(self, file_count: int, last_file: str, last_file_samples: int):
         """Update tracker state"""
         self.file_count = file_count
         self.last_file = last_file
-        self.last_file_items = last_file_items
+        self.last_file_samples = last_file_samples
 
     def log_info(self):
         """Log tracker information"""
         if self.file_count > 0:
-            samples = self.get_last_file_samples()
-            ratio = round(samples / self.buffer_size * 100, 1)
+            ratio = round(self.last_file_samples / self.buffer_size * 100, 1)
             logger.note(f"> BuffersTracker:")
             info_dict = {
                 "file_count": self.file_count,
                 "last_file": self.last_file,
-                "last_file_samples": f"{samples} ({ratio}%)",
+                "last_file_samples": f"{self.last_file_samples} ({ratio}%)",
                 "next_buffer_idx": self.get_next_buffer_idx(),
             }
             logger.mesg(dict_to_str(info_dict), indent=2)
@@ -365,12 +356,12 @@ class ShardsTracker:
         self.shards_dir = shards_dir
         self.group_size = group_size
         self.shard_size = shard_size
-        self.json_file = shards_dir / "shards.json"
+        self.json_file = shards_dir.parent / "shards.json"
 
         # tracked state
         self.file_count: int = 0
         self.last_file: str = ""
-        self.last_file_items: int = 0
+        self.last_file_samples: int = 0
         self.total_samples: int = 0
 
     def load(self) -> "ShardsTracker":
@@ -381,7 +372,7 @@ class ShardsTracker:
                     data = json.load(f)
                 self.file_count = data.get("file_count", 0)
                 self.last_file = data.get("last_file", "")
-                self.last_file_items = data.get("last_file_items", 0)
+                self.last_file_samples = data.get("last_file_samples", 0)
                 self.total_samples = data.get("total_samples", 0)
             except Exception as e:
                 logger.warn(f"Error loading shards.json: {e}")
@@ -393,20 +384,16 @@ class ShardsTracker:
         data = {
             "file_count": self.file_count,
             "last_file": self.last_file,
-            "last_file_items": self.last_file_items,
+            "last_file_samples": self.last_file_samples,
             "total_samples": self.total_samples,
         }
         with open(self.json_file, "w") as f:
             json.dump(data, f, indent=2)
         return self
 
-    def get_last_file_samples(self) -> int:
-        """Get number of samples in the last shard file"""
-        return self.last_file_items // self.group_size
-
     def is_last_file_full(self) -> bool:
         """Check if the last shard file is full"""
-        return self.get_last_file_samples() >= self.shard_size
+        return self.last_file_samples >= self.shard_size
 
     def get_fill_target(self) -> int:
         """Get number of samples needed to fill the last shard
@@ -416,7 +403,7 @@ class ShardsTracker:
         """
         if self.file_count == 0 or self.is_last_file_full():
             return 0
-        return self.shard_size - self.get_last_file_samples()
+        return self.shard_size - self.last_file_samples
 
     def is_filling_mode(self) -> bool:
         """Check if we need to fill the last partial shard"""
@@ -426,25 +413,24 @@ class ShardsTracker:
         self,
         file_count: int,
         last_file: str,
-        last_file_items: int,
+        last_file_samples: int,
         total_samples: int,
     ):
         """Update tracker state"""
         self.file_count = file_count
         self.last_file = last_file
-        self.last_file_items = last_file_items
+        self.last_file_samples = last_file_samples
         self.total_samples = total_samples
 
     def log_info(self):
         """Log tracker information"""
         if self.file_count > 0:
-            samples = self.get_last_file_samples()
-            ratio = round(samples / self.shard_size * 100, 1)
+            ratio = round(self.last_file_samples / self.shard_size * 100, 1)
             logger.note(f"> ShardsTracker:")
             info_dict = {
                 "file_count": self.file_count,
                 "last_file": self.last_file,
-                "last_file_samples": f"{samples} ({ratio}%)",
+                "last_file_samples": f"{self.last_file_samples} ({ratio}%)",
                 "total_samples": self.total_samples,
                 "fill_target": self.get_fill_target(),
             }
@@ -569,7 +555,7 @@ class BuffersWriter:
         self.tracker.update(
             file_count=self.buffer_idx + 1,
             last_file=buffer_file.name,
-            last_file_items=len(self.eids),
+            last_file_samples=len(self.eids) // self.group_size,
         )
         self.tracker.save()
 
@@ -610,7 +596,7 @@ class BuffersWriter:
 
         # reset buffer index and tracker
         self.buffer_idx = 0
-        self.tracker.update(file_count=0, last_file="", last_file_items=0)
+        self.tracker.update(file_count=0, last_file="", last_file_samples=0)
         self.tracker.save()
 
 
@@ -700,14 +686,14 @@ class ShardsWriter:
         total_shard_samples = len(filled_eids) // self.group_size
         logger.mesg(
             f"  * Filled last shard {self.shard_idx_to_suffix(last_shard_idx)}: "
-            f"{self.tracker.get_last_file_samples()} + {filled_samples} = {logstr.okay(brk(total_shard_samples))}"
+            f"{self.tracker.last_file_samples} + {filled_samples} = {logstr.okay(brk(total_shard_samples))}"
         )
 
         # update tracker
         self.tracker.update(
             file_count=self.tracker.file_count,
             last_file=last_shard_file.name,
-            last_file_items=len(filled_eids),
+            last_file_samples=total_shard_samples,
             total_samples=self.tracker.total_samples + filled_samples,
         )
 
@@ -718,7 +704,7 @@ class ShardsWriter:
         eids: np.ndarray,
         embs: np.ndarray,
         force: bool = False,
-    ) -> int:
+    ) -> tuple[int, int]:
         """Write new shards from data
 
         Args:
@@ -727,11 +713,11 @@ class ShardsWriter:
             force: if True, write partial shard; if False, only write full shards
 
         Returns:
-            number of samples written
+            tuple of (written_samples, consumed_items)
         """
         num_samples = len(eids) // self.group_size
         if num_samples == 0:
-            return 0
+            return 0, 0
 
         items_per_shard = self.shard_size * self.group_size
         num_full_shards = num_samples // self.shard_size
@@ -748,7 +734,7 @@ class ShardsWriter:
                 logger.mesg(
                     f"  * Not enough data for full shard, keeping {remainder_samples} samples in buffer"
                 )
-            return 0
+            return 0, 0
 
         written_samples = 0
         start_shard_idx = self.tracker.file_count
@@ -775,11 +761,12 @@ class ShardsWriter:
             self.tracker.update(
                 file_count=shard_idx + 1,
                 last_file=shard_file.name,
-                last_file_items=end_item - start_item,
+                last_file_samples=shard_samples,
                 total_samples=self.tracker.total_samples + shard_samples,
             )
 
-        return written_samples
+        consumed_items = written_samples * self.group_size
+        return written_samples, consumed_items
 
 
 class ShardsReader:
@@ -930,7 +917,7 @@ class TrainSamplesManager:
             mode: "read" for loading exist data, "write" for creating new data
         """
         self.data_dir = Path(data_dir)
-        self.meta_file = self.data_dir / "meta.npz"
+        self.meta_file = self.data_dir / "meta.json"
         self.mode = mode
 
         if mode == "read":
@@ -951,7 +938,8 @@ class TrainSamplesManager:
             raise FileNotFoundError(f"Metadata file not found: {meta_file}")
 
         # load metadata
-        meta = np.load(meta_file)
+        with open(meta_file, "r") as f:
+            meta = json.load(f)
         self.group_size = int(meta["group_size"])
         self.num_positives = int(meta["num_positives"])
         self.num_samples = int(meta["num_samples"])
@@ -1052,7 +1040,7 @@ class TrainSamplesManager:
 
         Creates sharded NPZ files:
         - shards/shard_00000.npz, shard_00001.npz, ...
-        - meta.npz: metadata
+        - meta.json: metadata
 
         Args:
             force: if True, write all data including partial shard (used in finalize)
@@ -1068,7 +1056,7 @@ class TrainSamplesManager:
         logger.note("> Merge buffer files into shards:")
 
         written_samples = 0
-        consumed_items = 0
+        total_consumed_items = 0
 
         # Step 2: Fill partial last shard if in filling mode
         if self.shards_writer.tracker.is_filling_mode():
@@ -1076,43 +1064,62 @@ class TrainSamplesManager:
                 new_eids, new_embs
             )
             written_samples += filled_samples
+            total_consumed_items += consumed_items
 
         # Step 3: Write remaining data into new shards
-        remaining_eids = new_eids[consumed_items:]
-        remaining_embs = new_embs[consumed_items:]
-        written_samples += self.shards_writer.write_new_shards(
-            remaining_eids, remaining_embs, force=force
+        remaining_eids = new_eids[total_consumed_items:]
+        remaining_embs = new_embs[total_consumed_items:]
+        shard_written_samples, shard_consumed_items = (
+            self.shards_writer.write_new_shards(
+                remaining_eids, remaining_embs, force=force
+            )
         )
+        written_samples += shard_written_samples
+        total_consumed_items += shard_consumed_items
 
         # Step 4: Save shards tracker and metadata
         self.shards_writer.tracker.save()
         self._save_metadata()
 
-        # Step 5: Clear buffer files
+        # Step 5: Handle remaining data not written to shards
+        leftover_eids = new_eids[total_consumed_items:]
+        leftover_embs = new_embs[total_consumed_items:]
+        leftover_samples = len(leftover_eids) // self.group_size
+
+        # Step 6: Clear buffer files
         self.buffers_writer.clear_files(buffer_files)
 
-        # Step 6: Log summary
+        # Step 7: If there's leftover data, save it back to buffer
+        if leftover_samples > 0:
+            self.buffers_writer.eids = list(leftover_eids)
+            self.buffers_writer.embs = list(leftover_embs)
+            self.buffers_writer.flush()
+            logger.mesg(f"  * Saved {leftover_samples} leftover samples back to buffer")
+
+        # Step 8: Log summary
         tracker = self.shards_writer.tracker
         info_dict = {
             "new_samples": new_samples,
             "written_samples": written_samples,
+            "leftover_samples": leftover_samples,
             "total_shards": tracker.file_count,
             "total_samples": tracker.total_samples,
-            "last_shard_samples": f"{tracker.get_last_file_samples()} ({round(tracker.get_last_file_samples() / self.shard_size * 100, 1)}%)",
+            "last_shard_samples": f"{tracker.last_file_samples} ({round(tracker.last_file_samples / self.shard_size * 100, 1)}%)",
         }
         logger.mesg(dict_to_str(info_dict), indent=2)
 
     def _save_metadata(self):
         """Save metadata file with current state"""
         tracker = self.shards_writer.tracker
-        np.savez(
-            self.meta_file,
-            group_size=self.group_size,
-            num_positives=self.num_positives,
-            num_samples=tracker.total_samples,
-            num_shards=tracker.file_count,
-            shard_size=self.shard_size,
-        )
+        meta = {
+            "group_size": self.group_size,
+            "num_positives": self.num_positives,
+            "num_samples": tracker.total_samples,
+            "num_shards": tracker.file_count,
+            "shard_size": self.shard_size,
+        }
+        with open(self.meta_file, "w") as f:
+            json.dump(meta, f, indent=2)
         # update instance state
         self.num_samples = tracker.total_samples
         self.num_shards = tracker.file_count
@@ -1287,7 +1294,7 @@ class TrainSamplesConstructor:
         """
         Args:
             manager: TrainSamplesManager instance for data storage
-            samples_count: target total number of training samples (including existing)
+            samples_count: target total number of training samples (including exist)
             query_batch_size: batch size for querying Faiss tops() (default: 50)
         """
         if not manager.is_write_mode():
@@ -1299,8 +1306,8 @@ class TrainSamplesConstructor:
         self.topk = self.num_positives + 1  # top1 (anchor) + num_positives
         self.query_batch_size = query_batch_size
 
-        # get existing samples count from shards tracker
-        self.existing_samples = manager.shards_writer.tracker.total_samples
+        # get exist samples count from shards tracker
+        self.exist_samples = manager.shards_writer.tracker.total_samples
 
         # statistics
         self.stats = {
@@ -1390,8 +1397,8 @@ class TrainSamplesConstructor:
         return built_count, failed_count
 
     def _get_current_total_samples(self) -> int:
-        """Get current total samples (existing + built in this run)"""
-        return self.existing_samples + self.stats["built_count"]
+        """Get current total samples (exist + built in this run)"""
+        return self.exist_samples + self.stats["built_count"]
 
     def _get_remaining_samples(self) -> int:
         """Get number of samples still needed to reach target"""
@@ -1408,7 +1415,7 @@ class TrainSamplesConstructor:
         # check if already at target
         if self._should_stop():
             logger.note(
-                f"> Already have {self.existing_samples} samples, "
+                f"> Already have {self.exist_samples} samples, "
                 f"target is {self.samples_count}. Nothing to do."
             )
             return
@@ -1426,7 +1433,9 @@ class TrainSamplesConstructor:
 
         # scan and process Redis keys in batches
         for batch_keys in self.redis.scan_keys(
-            pattern=REDIS_PT, batch_size=self.query_batch_size
+            pattern=REDIS_PT,
+            batch_size=self.query_batch_size,
+            max_count=self.samples_count,
         ):
             all_bvids = redis_keys_to_bvids(batch_keys)
 
@@ -1474,7 +1483,7 @@ class TrainSamplesConstructor:
         logger.note(f"> Constructing samples:")
         info_dict = {
             "target_samples": self.samples_count,
-            "existing_samples": self.existing_samples,
+            "exist_samples": self.exist_samples,
             "samples_to_build": self._get_remaining_samples(),
             "num_positives": self.num_positives,
             "query_batch_size": self.query_batch_size,
