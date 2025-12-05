@@ -796,22 +796,16 @@ class ShardsReader:
         shards_dir: Path,
         group_size: int,
         shard_size: int,
-        num_shards: int,
-        num_samples: int,
     ):
         """
         Args:
             shards_dir: directory for shard files
             group_size: number of items per sample (1 anchor + num_positives)
             shard_size: number of samples per shard file
-            num_shards: total number of shard files
-            num_samples: total number of samples across all shards
         """
         self.shards_dir = shards_dir
         self.group_size = group_size
         self.shard_size = shard_size
-        self.num_shards = num_shards
-        self.num_samples = num_samples
         # calculate idx_width: max shards = MAX_SAMPLES / shard_size + 1
         max_shards = MAX_SAMPLES // shard_size + 1
         self.idx_width = int_bits(max_shards)
@@ -876,19 +870,24 @@ class ShardsReader:
         self.load_shard(shard_idx)
         return self._shard_cache[shard_idx]
 
+    def get_num_shards(self) -> int:
+        """Get total number of shard files by scanning the directory"""
+        return len(list(self.shards_dir.glob("shard_*.npz")))
+
     def preload_all(self):
         """Preload all shards into memory
 
         Warning: This may consume a lot of memory for large datasets.
         """
+        num_shards = self.get_num_shards()
         logger.warn(
-            f"* Loading all {self.num_shards} shards into memory. "
+            f"* Loading all {num_shards} shards into memory. "
             f"Use iter_samples() for memory-efficient access."
         )
         # temporarily disable LRU eviction
         original_max = self.MAX_CACHED_SHARDS
-        self.MAX_CACHED_SHARDS = self.num_shards + 1
-        for shard_idx in range(self.num_shards):
+        self.MAX_CACHED_SHARDS = num_shards + 1
+        for shard_idx in range(num_shards):
             self.load_shard(shard_idx)
         self.MAX_CACHED_SHARDS = original_max
 
@@ -965,8 +964,6 @@ class TrainSamplesManager:
             shards_dir,
             self.group_size,
             self.shard_size,
-            self.num_shards,
-            self.num_samples,
         )
 
         logger.note(f"> Loaded TrainSamplesManager:")
@@ -1171,7 +1168,9 @@ class TrainSamplesManager:
 
         # negative (previous sample's anchor) - may be in different shard
         prev_sample_idx = sample_idx - 1
-        prev_shard_idx, prev_shard_offset = self.shards_reader.get_shard_for_sample(prev_sample_idx)
+        prev_shard_idx, prev_shard_offset = self.shards_reader.get_shard_for_sample(
+            prev_sample_idx
+        )
 
         if prev_shard_idx != shard_idx:
             prev_shard = self.shards_reader.get_shard_data(prev_shard_idx)
@@ -1288,7 +1287,7 @@ class TrainSamplesConstructor:
         """
         Args:
             manager: TrainSamplesManager instance for data storage
-            samples_count: number of training samples to generate
+            samples_count: target total number of training samples (including existing)
             query_batch_size: batch size for querying Faiss tops() (default: 50)
         """
         if not manager.is_write_mode():
@@ -1299,6 +1298,9 @@ class TrainSamplesConstructor:
         self.num_positives = manager.num_positives
         self.topk = self.num_positives + 1  # top1 (anchor) + num_positives
         self.query_batch_size = query_batch_size
+
+        # get existing samples count from shards tracker
+        self.existing_samples = manager.shards_writer.tracker.total_samples
 
         # statistics
         self.stats = {
@@ -1387,20 +1389,37 @@ class TrainSamplesConstructor:
 
         return built_count, failed_count
 
+    def _get_current_total_samples(self) -> int:
+        """Get current total samples (existing + built in this run)"""
+        return self.existing_samples + self.stats["built_count"]
+
+    def _get_remaining_samples(self) -> int:
+        """Get number of samples still needed to reach target"""
+        return max(0, self.samples_count - self._get_current_total_samples())
+
     def _should_stop(self) -> bool:
-        """check if scanned eids count reached samples_count"""
-        return self.stats["scanned_count"] >= self.samples_count
+        """Check if total samples count reached samples_count target"""
+        return self._get_current_total_samples() >= self.samples_count
 
     def run(self):
         """main execution: construct training tuples"""
         self._log_start_info()
 
+        # check if already at target
+        if self._should_stop():
+            logger.note(
+                f"> Already have {self.existing_samples} samples, "
+                f"target is {self.samples_count}. Nothing to do."
+            )
+            return
+
         # initialize state
         total_built = 0
+        samples_to_build = self._get_remaining_samples()
 
-        # create progress bar (tracks scanned count, not built count)
+        # create progress bar (tracks built count towards target)
         self.bar = TCLogbar(
-            total=self.samples_count,
+            total=samples_to_build,
             desc=logstr.note("* Construct samples"),
             show_iter_per_second=True,
         )
@@ -1413,12 +1432,16 @@ class TrainSamplesConstructor:
 
             # update scanned count (all eids, including queried)
             self.stats["scanned_count"] += len(all_bvids)
-            self.bar.update(increment=len(all_bvids))
 
             # filter out already queried eids
             bvid_batch = [
                 bvid for bvid in all_bvids if not self.manager.is_queried(bvid)
             ]
+
+            # truncate batch if it would exceed target samples
+            remaining = self._get_remaining_samples()
+            if len(bvid_batch) > remaining:
+                bvid_batch = bvid_batch[:remaining]
 
             # count already queried as skipped
             already_queried = len(all_bvids) - len(bvid_batch)
@@ -1434,6 +1457,9 @@ class TrainSamplesConstructor:
             built_in_batch, _ = self._query_and_build_samples(bvid_batch)
             total_built += built_in_batch
 
+            # update progress bar based on built samples
+            self.bar.update(increment=built_in_batch)
+
             if self._should_stop():
                 break
 
@@ -1447,7 +1473,9 @@ class TrainSamplesConstructor:
         """log initialization information"""
         logger.note(f"> Constructing samples:")
         info_dict = {
-            "samples_count": self.samples_count,
+            "target_samples": self.samples_count,
+            "existing_samples": self.existing_samples,
+            "samples_to_build": self._get_remaining_samples(),
             "num_positives": self.num_positives,
             "query_batch_size": self.query_batch_size,
             "data_dir": self.manager.data_dir,
