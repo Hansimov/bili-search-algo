@@ -1,4 +1,5 @@
 import argparse
+import json
 import numpy as np
 import pickle
 
@@ -240,6 +241,658 @@ class FaissTester:
         logger.okay(results)
 
 
+class BuffersTracker:
+    """Tracker for buffer files status, persisted in buffers.json
+
+    Tracks:
+    - file_count: number of buffer files in the directory
+    - last_file: filename of the last buffer file
+    - last_file_items: number of items in the last buffer file
+    """
+
+    def __init__(self, buffers_dir: Path, group_size: int, buffer_size: int):
+        """
+        Args:
+            buffers_dir: directory containing buffer files
+            group_size: number of items per sample (1 anchor + num_positives)
+            buffer_size: number of samples per buffer file
+        """
+        self.buffers_dir = buffers_dir
+        self.group_size = group_size
+        self.buffer_size = buffer_size
+        self.json_file = buffers_dir / "buffers.json"
+
+        # tracked state
+        self.file_count: int = 0
+        self.last_file: str = ""
+        self.last_file_items: int = 0
+
+    def load(self) -> "BuffersTracker":
+        """Load tracker state from JSON file"""
+        if self.json_file.exists():
+            try:
+                with open(self.json_file, "r") as f:
+                    data = json.load(f)
+                self.file_count = data.get("file_count", 0)
+                self.last_file = data.get("last_file", "")
+                self.last_file_items = data.get("last_file_items", 0)
+            except Exception as e:
+                logger.warn(f"Error loading buffers.json: {e}")
+        return self
+
+    def save(self) -> "BuffersTracker":
+        """Save tracker state to JSON file"""
+        self.buffers_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "file_count": self.file_count,
+            "last_file": self.last_file,
+            "last_file_items": self.last_file_items,
+        }
+        with open(self.json_file, "w") as f:
+            json.dump(data, f, indent=2)
+        return self
+
+    def get_last_file_samples(self) -> int:
+        """Get number of samples in the last buffer file"""
+        return self.last_file_items // self.group_size
+
+    def is_last_file_full(self) -> bool:
+        """Check if the last buffer file is full"""
+        return self.get_last_file_samples() >= self.buffer_size
+
+    def get_next_buffer_idx(self) -> int:
+        """Get the next buffer index to use
+
+        If last file is not full, return (file_count - 1) to overwrite it.
+        Otherwise, return file_count to create a new file.
+        """
+        if self.file_count == 0:
+            return 0
+        if self.is_last_file_full():
+            return self.file_count
+        return self.file_count - 1
+
+    def get_total_items(self) -> int:
+        """Get total number of items across all buffer files"""
+        if self.file_count == 0:
+            return 0
+        # (file_count - 1) full buffers + last buffer items
+        full_buffers = self.file_count - 1
+        return full_buffers * self.buffer_size * self.group_size + self.last_file_items
+
+    def get_total_samples(self) -> int:
+        """Get total number of samples across all buffer files"""
+        return self.get_total_items() // self.group_size
+
+    def update(self, file_count: int, last_file: str, last_file_items: int):
+        """Update tracker state"""
+        self.file_count = file_count
+        self.last_file = last_file
+        self.last_file_items = last_file_items
+
+    def log_info(self):
+        """Log tracker information"""
+        if self.file_count > 0:
+            samples = self.get_last_file_samples()
+            ratio = round(samples / self.buffer_size * 100, 1)
+            logger.note(f"> BuffersTracker:")
+            info_dict = {
+                "file_count": self.file_count,
+                "last_file": self.last_file,
+                "last_file_samples": f"{samples} ({ratio}%)",
+                "next_buffer_idx": self.get_next_buffer_idx(),
+            }
+            logger.mesg(dict_to_str(info_dict), indent=2)
+
+
+class ShardsTracker:
+    """Tracker for shard files status, persisted in shards.json
+
+    Tracks:
+    - file_count: number of shard files in the directory
+    - last_file: filename of the last shard file
+    - last_file_items: number of items in the last shard file
+    - total_samples: total samples across all shards
+    """
+
+    def __init__(self, shards_dir: Path, group_size: int, shard_size: int):
+        """
+        Args:
+            shards_dir: directory containing shard files
+            group_size: number of items per sample (1 anchor + num_positives)
+            shard_size: number of samples per shard file
+        """
+        self.shards_dir = shards_dir
+        self.group_size = group_size
+        self.shard_size = shard_size
+        self.json_file = shards_dir / "shards.json"
+
+        # tracked state
+        self.file_count: int = 0
+        self.last_file: str = ""
+        self.last_file_items: int = 0
+        self.total_samples: int = 0
+
+    def load(self) -> "ShardsTracker":
+        """Load tracker state from JSON file"""
+        if self.json_file.exists():
+            try:
+                with open(self.json_file, "r") as f:
+                    data = json.load(f)
+                self.file_count = data.get("file_count", 0)
+                self.last_file = data.get("last_file", "")
+                self.last_file_items = data.get("last_file_items", 0)
+                self.total_samples = data.get("total_samples", 0)
+            except Exception as e:
+                logger.warn(f"Error loading shards.json: {e}")
+        return self
+
+    def save(self) -> "ShardsTracker":
+        """Save tracker state to JSON file"""
+        self.shards_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "file_count": self.file_count,
+            "last_file": self.last_file,
+            "last_file_items": self.last_file_items,
+            "total_samples": self.total_samples,
+        }
+        with open(self.json_file, "w") as f:
+            json.dump(data, f, indent=2)
+        return self
+
+    def get_last_file_samples(self) -> int:
+        """Get number of samples in the last shard file"""
+        return self.last_file_items // self.group_size
+
+    def is_last_file_full(self) -> bool:
+        """Check if the last shard file is full"""
+        return self.get_last_file_samples() >= self.shard_size
+
+    def get_fill_target(self) -> int:
+        """Get number of samples needed to fill the last shard
+
+        Returns:
+            Number of samples needed, or 0 if last shard is full or no shards exist
+        """
+        if self.file_count == 0 or self.is_last_file_full():
+            return 0
+        return self.shard_size - self.get_last_file_samples()
+
+    def is_filling_mode(self) -> bool:
+        """Check if we need to fill the last partial shard"""
+        return self.get_fill_target() > 0
+
+    def update(
+        self,
+        file_count: int,
+        last_file: str,
+        last_file_items: int,
+        total_samples: int,
+    ):
+        """Update tracker state"""
+        self.file_count = file_count
+        self.last_file = last_file
+        self.last_file_items = last_file_items
+        self.total_samples = total_samples
+
+    def log_info(self):
+        """Log tracker information"""
+        if self.file_count > 0:
+            samples = self.get_last_file_samples()
+            ratio = round(samples / self.shard_size * 100, 1)
+            logger.note(f"> ShardsTracker:")
+            info_dict = {
+                "file_count": self.file_count,
+                "last_file": self.last_file,
+                "last_file_samples": f"{samples} ({ratio}%)",
+                "total_samples": self.total_samples,
+                "fill_target": self.get_fill_target(),
+            }
+            logger.mesg(dict_to_str(info_dict), indent=2)
+
+
+class BuffersWriter:
+    """Writer for buffer files with tracking support"""
+
+    def __init__(
+        self,
+        buffers_dir: Path,
+        group_size: int,
+        buffer_size: int,
+        shard_size: int,
+    ):
+        """
+        Args:
+            buffers_dir: directory for buffer files
+            group_size: number of items per sample (1 anchor + num_positives)
+            buffer_size: number of samples per buffer file
+            shard_size: number of samples per shard file (used for idx_width calculation)
+        """
+        self.buffers_dir = buffers_dir
+        self.group_size = group_size
+        self.buffer_size = buffer_size
+        self.shard_size = shard_size
+        # calculate idx_width: max buffers = shard_size / buffer_size + 1
+        max_buffers = shard_size // buffer_size + 1
+        self.idx_width = int_bits(max_buffers)
+
+        # in-memory buffer
+        self.eids: list = []
+        self.embs: list = []
+
+        # tracker
+        self.tracker = BuffersTracker(buffers_dir, group_size, buffer_size).load()
+        self.tracker.log_info()
+
+        # current buffer index
+        self.buffer_idx = self.tracker.get_next_buffer_idx()
+
+        # load partial last buffer if exists
+        self._load_partial_last_buffer()
+
+    def _load_partial_last_buffer(self):
+        """Load partial last buffer into memory if it exists and is not full"""
+        if self.tracker.file_count == 0:
+            return
+
+        if self.tracker.is_last_file_full():
+            return
+
+        last_buffer_file = self.buffers_dir / self.tracker.last_file
+        if last_buffer_file.exists():
+            try:
+                data = np.load(last_buffer_file, allow_pickle=True)
+                self.eids = list(data["eids"])
+                self.embs = list(data["embs"])
+                logger.note(
+                    f"> Loaded partial buffer: {len(self.eids) // self.group_size} samples"
+                )
+            except Exception as e:
+                logger.warn(f"Error loading partial buffer: {e}")
+
+    def get_buffer_file(self, buffer_idx: int) -> Path:
+        """Get buffer file path for a given buffer index"""
+        return self.buffers_dir / f"buffer_{buffer_idx:0{self.idx_width}d}.npz"
+
+    def get_memory_sample_count(self) -> int:
+        """Get current number of samples in memory buffer"""
+        return len(self.eids) // self.group_size
+
+    def get_total_sample_count(self) -> int:
+        """Get total number of samples in buffer files + memory"""
+        return self.tracker.get_total_samples() + self.get_memory_sample_count()
+
+    def next_flush_size(self) -> int:
+        """Calculate the target number of samples to trigger next buffer flush"""
+        return self.buffer_size
+
+    def should_flush(self) -> bool:
+        """Check if current in-memory buffer should be flushed to file"""
+        return self.get_memory_sample_count() >= self.next_flush_size()
+
+    def append(self, group_eids: list[str], group_embs: list[np.ndarray]) -> bool:
+        """Append a training sample to buffer
+
+        Args:
+            group_eids: list of eids [anchor, pos1, pos2, ...]
+            group_embs: list of embeddings [anchor_emb, pos1_emb, pos2_emb, ...]
+
+        Returns:
+            True if buffer was flushed after appending
+        """
+        self.eids.extend(group_eids)
+        self.embs.extend(group_embs)
+
+        if self.should_flush():
+            self.flush()
+            return True
+        return False
+
+    def flush(self) -> int:
+        """Flush current in-memory buffer to file and clear buffer
+
+        Returns:
+            buffer index of saved buffer file
+        """
+        if not self.eids:
+            return self.buffer_idx
+
+        buffer_file = self.get_buffer_file(self.buffer_idx)
+        np.savez_compressed(
+            buffer_file,
+            eids=np.array(self.eids, dtype=object),
+            embs=np.array(self.embs, dtype=np.float32),
+            group_size=self.group_size,
+        )
+
+        # update tracker
+        self.tracker.update(
+            file_count=self.buffer_idx + 1,
+            last_file=buffer_file.name,
+            last_file_items=len(self.eids),
+        )
+        self.tracker.save()
+
+        saved_buffer_idx = self.buffer_idx
+        self.buffer_idx += 1
+
+        # clear in-memory buffers
+        self.eids.clear()
+        self.embs.clear()
+
+        return saved_buffer_idx
+
+    def load_all(self) -> tuple[np.ndarray, np.ndarray, list[Path]] | None:
+        """Load and concatenate all buffer files
+
+        Returns:
+            tuple of (eids, embs, buffer_files) or None if no buffers
+        """
+        buffer_files = sorted(self.buffers_dir.glob("buffer_*.npz"))
+        if not buffer_files:
+            logger.warn("* No buffer files to merge")
+            return None
+
+        all_eids = []
+        all_embs = []
+        for buffer_file in buffer_files:
+            data = np.load(buffer_file, allow_pickle=True)
+            all_eids.append(data["eids"])
+            all_embs.append(data["embs"])
+
+        return np.concatenate(all_eids), np.concatenate(all_embs), buffer_files
+
+    def clear_files(self, buffer_files: list[Path]):
+        """Clear buffer files and reset tracker"""
+        for buffer_file in buffer_files:
+            buffer_file.unlink()
+        logger.mesg(f"  * Cleared buffer files: {len(buffer_files)}")
+
+        # reset buffer index and tracker
+        self.buffer_idx = 0
+        self.tracker.update(file_count=0, last_file="", last_file_items=0)
+        self.tracker.save()
+
+
+class ShardsWriter:
+    """Writer for shard files with tracking support"""
+
+    def __init__(
+        self,
+        shards_dir: Path,
+        group_size: int,
+        shard_size: int,
+    ):
+        """
+        Args:
+            shards_dir: directory for shard files
+            group_size: number of items per sample (1 anchor + num_positives)
+            shard_size: number of samples per shard file
+        """
+        self.shards_dir = shards_dir
+        self.group_size = group_size
+        self.shard_size = shard_size
+        # calculate idx_width: max shards = MAX_SAMPLES / shard_size + 1
+        max_shards = MAX_SAMPLES // shard_size + 1
+        self.idx_width = int_bits(max_shards)
+
+        # tracker
+        self.tracker = ShardsTracker(shards_dir, group_size, shard_size).load()
+        self.tracker.log_info()
+
+    def shard_idx_to_suffix(self, shard_idx: int) -> str:
+        """Convert shard index to zero-padded suffix string"""
+        return f"{shard_idx:0{self.idx_width}d}"
+
+    def get_shard_file(self, shard_idx: int) -> Path:
+        """Get shard file path for a given shard index"""
+        return self.shards_dir / f"shard_{self.shard_idx_to_suffix(shard_idx)}.npz"
+
+    def next_merge_size(self) -> int:
+        """Calculate the target number of samples to trigger next shard merge
+
+        In filling mode: need (shard_size - last_shard_samples) to fill the last shard
+        In normal mode: need shard_size for a new full shard
+
+        Returns:
+            Number of buffered samples that will trigger the next merge
+        """
+        fill_target = self.tracker.get_fill_target()
+        if fill_target > 0:
+            return fill_target
+        return self.shard_size
+
+    def fill_partial_shard(
+        self, new_eids: np.ndarray, new_embs: np.ndarray
+    ) -> tuple[int, int]:
+        """Fill up the last partial shard with new data
+
+        Args:
+            new_eids: new eids data from buffers
+            new_embs: new embs data from buffers
+
+        Returns:
+            tuple of (written_samples, consumed_items)
+        """
+        last_shard_idx = self.tracker.file_count - 1
+        samples_needed = self.tracker.get_fill_target()
+        items_needed = samples_needed * self.group_size
+
+        # load last shard
+        last_shard_file = self.get_shard_file(last_shard_idx)
+        last_shard_data = np.load(last_shard_file, allow_pickle=True)
+        last_eids = last_shard_data["eids"]
+        last_embs = last_shard_data["embs"]
+
+        # fill up the last shard
+        actual_items = min(items_needed, len(new_eids))
+        filled_eids = np.concatenate([last_eids, new_eids[:actual_items]])
+        filled_embs = np.concatenate([last_embs, new_embs[:actual_items]])
+
+        # overwrite the last shard
+        np.savez_compressed(
+            last_shard_file,
+            eids=filled_eids,
+            embs=filled_embs,
+        )
+
+        filled_samples = actual_items // self.group_size
+        total_shard_samples = len(filled_eids) // self.group_size
+        logger.mesg(
+            f"  * Filled last shard {self.shard_idx_to_suffix(last_shard_idx)}: "
+            f"{self.tracker.get_last_file_samples()} + {filled_samples} = {logstr.okay(brk(total_shard_samples))}"
+        )
+
+        # update tracker
+        self.tracker.update(
+            file_count=self.tracker.file_count,
+            last_file=last_shard_file.name,
+            last_file_items=len(filled_eids),
+            total_samples=self.tracker.total_samples + filled_samples,
+        )
+
+        return filled_samples, actual_items
+
+    def write_new_shards(
+        self,
+        eids: np.ndarray,
+        embs: np.ndarray,
+        force: bool = False,
+    ) -> int:
+        """Write new shards from data
+
+        Args:
+            eids: eids data to write
+            embs: embs data to write
+            force: if True, write partial shard; if False, only write full shards
+
+        Returns:
+            number of samples written
+        """
+        num_samples = len(eids) // self.group_size
+        if num_samples == 0:
+            return 0
+
+        items_per_shard = self.shard_size * self.group_size
+        num_full_shards = num_samples // self.shard_size
+        remainder_samples = num_samples % self.shard_size
+
+        # decide how many shards to write
+        if force and remainder_samples > 0:
+            num_shards_to_write = num_full_shards + 1
+        else:
+            num_shards_to_write = num_full_shards
+
+        if num_shards_to_write == 0:
+            if remainder_samples > 0:
+                logger.mesg(
+                    f"  * Not enough data for full shard, keeping {remainder_samples} samples in buffer"
+                )
+            return 0
+
+        written_samples = 0
+        start_shard_idx = self.tracker.file_count
+
+        for i in range(num_shards_to_write):
+            shard_idx = start_shard_idx + i
+            start_item = i * items_per_shard
+            end_item = min((i + 1) * items_per_shard, len(eids))
+
+            shard_file = self.get_shard_file(shard_idx)
+            np.savez_compressed(
+                shard_file,
+                eids=eids[start_item:end_item],
+                embs=embs[start_item:end_item],
+            )
+
+            shard_samples = (end_item - start_item) // self.group_size
+            logger.mesg(
+                f"  * Saved to shard {self.shard_idx_to_suffix(shard_idx)}: {logstr.okay(brk(shard_samples))}"
+            )
+            written_samples += shard_samples
+
+            # update tracker after each shard
+            self.tracker.update(
+                file_count=shard_idx + 1,
+                last_file=shard_file.name,
+                last_file_items=end_item - start_item,
+                total_samples=self.tracker.total_samples + shard_samples,
+            )
+
+        return written_samples
+
+
+class ShardsReader:
+    """Reader for shard files with LRU caching
+
+    Handles loading shards on demand with memory-efficient LRU cache.
+    """
+
+    # Maximum shards to keep in memory (LRU cache)
+    MAX_CACHED_SHARDS = 3
+
+    def __init__(
+        self,
+        shards_dir: Path,
+        group_size: int,
+        shard_size: int,
+        num_shards: int,
+        num_samples: int,
+    ):
+        """
+        Args:
+            shards_dir: directory for shard files
+            group_size: number of items per sample (1 anchor + num_positives)
+            shard_size: number of samples per shard file
+            num_shards: total number of shard files
+            num_samples: total number of samples across all shards
+        """
+        self.shards_dir = shards_dir
+        self.group_size = group_size
+        self.shard_size = shard_size
+        self.num_shards = num_shards
+        self.num_samples = num_samples
+        # calculate idx_width: max shards = MAX_SAMPLES / shard_size + 1
+        max_shards = MAX_SAMPLES // shard_size + 1
+        self.idx_width = int_bits(max_shards)
+
+        # LRU shard cache: {shard_idx: {"eids": ..., "embs": ..., "access_order": int}}
+        self._shard_cache = {}
+        self._access_counter = 0
+
+    def shard_idx_to_suffix(self, shard_idx: int) -> str:
+        """Convert shard index to zero-padded suffix string"""
+        return f"{shard_idx:0{self.idx_width}d}"
+
+    def get_shard_file(self, shard_idx: int) -> Path:
+        """Get shard file path for a given shard index"""
+        return self.shards_dir / f"shard_{self.shard_idx_to_suffix(shard_idx)}.npz"
+
+    def load_shard(self, shard_idx: int):
+        """Load a shard into cache with LRU eviction"""
+        if shard_idx in self._shard_cache:
+            # update access order for LRU
+            self._access_counter += 1
+            self._shard_cache[shard_idx]["access_order"] = self._access_counter
+            return
+
+        # LRU eviction if cache is full
+        while len(self._shard_cache) >= self.MAX_CACHED_SHARDS:
+            # find least recently used shard
+            lru_idx = min(
+                self._shard_cache.keys(),
+                key=lambda k: self._shard_cache[k]["access_order"],
+            )
+            del self._shard_cache[lru_idx]
+
+        shard_file = self.get_shard_file(shard_idx)
+        if not shard_file.exists():
+            raise FileNotFoundError(f"Shard file not found: {shard_file}")
+
+        data = np.load(shard_file, allow_pickle=True)
+        self._access_counter += 1
+        self._shard_cache[shard_idx] = {
+            "eids": data["eids"],
+            "embs": data["embs"],
+            "access_order": self._access_counter,
+        }
+
+    def get_shard_for_sample(self, sample_idx: int) -> tuple[int, int]:
+        """Get shard index and item offset for a sample
+
+        Returns:
+            (shard_idx, item_offset_in_shard)
+        """
+        shard_idx = sample_idx // self.shard_size
+        offset = (sample_idx % self.shard_size) * self.group_size
+        return shard_idx, offset
+
+    def get_shard_data(self, shard_idx: int) -> dict:
+        """Get shard data, loading if necessary
+
+        Returns:
+            dict with "eids" and "embs" arrays
+        """
+        self.load_shard(shard_idx)
+        return self._shard_cache[shard_idx]
+
+    def preload_all(self):
+        """Preload all shards into memory
+
+        Warning: This may consume a lot of memory for large datasets.
+        """
+        logger.warn(
+            f"* Loading all {self.num_shards} shards into memory. "
+            f"Use iter_samples() for memory-efficient access."
+        )
+        # temporarily disable LRU eviction
+        original_max = self.MAX_CACHED_SHARDS
+        self.MAX_CACHED_SHARDS = self.num_shards + 1
+        for shard_idx in range(self.num_shards):
+            self.load_shard(shard_idx)
+        self.MAX_CACHED_SHARDS = original_max
+
+
 class TrainSamplesManager:
     """Manager for training samples storage and retrieval
 
@@ -261,9 +914,6 @@ class TrainSamplesManager:
     Use __len__ to get the number of valid samples (num_samples - 1).
     """
 
-    # Maximum shards to keep in memory (LRU cache)
-    MAX_CACHED_SHARDS = 3
-
     def __init__(
         self,
         data_dir: str | Path,
@@ -281,28 +931,13 @@ class TrainSamplesManager:
             mode: "read" for loading exist data, "write" for creating new data
         """
         self.data_dir = Path(data_dir)
-        self.buffers_dir = self.data_dir / "buffers"
-        self.shards_dir = self.data_dir / "shards"
         self.meta_file = self.data_dir / "meta.npz"
         self.mode = mode
-        self.shard_size = shard_size
-        self.buffer_size = buffer_size
-        self._calc_idx_width()
 
         if mode == "read":
             self._init_read_mode()
         else:
-            self._init_write_mode(num_positives)
-
-    def _calc_idx_width(self) -> int:
-        """calculate index width for filenames based on MAX_SAMPLES and shard_size
-
-        e.g., shard_size=1e5, max_shards=1e10/1e5=1e5, width=len('100000')=6
-        """
-        max_shards = MAX_SAMPLES // self.shard_size + 1
-        self.shard_idx_width = int_bits(max_shards)
-        max_buffers = self.shard_size // self.buffer_size + 1
-        self.buffer_idx_width = int_bits(max_buffers)
+            self._init_write_mode(num_positives, shard_size, buffer_size)
 
     def is_read_mode(self) -> bool:
         return self.mode == "read"
@@ -324,9 +959,15 @@ class TrainSamplesManager:
         self.num_shards = int(meta["num_shards"])
         self.shard_size = int(meta["shard_size"])
 
-        # LRU shard cache for reading: {shard_idx: {"eids": ..., "embs": ..., "access_order": int}}
-        self._shard_cache = {}
-        self._access_counter = 0
+        # initialize shard reader
+        shards_dir = self.data_dir / "shards"
+        self.shards_reader = ShardsReader(
+            shards_dir,
+            self.group_size,
+            self.shard_size,
+            self.num_shards,
+            self.num_samples,
+        )
 
         logger.note(f"> Loaded TrainSamplesManager:")
         info_dict = {
@@ -337,135 +978,36 @@ class TrainSamplesManager:
         }
         logger.mesg(dict_to_str(info_dict), indent=2)
 
-    def _init_write_mode(self, num_positives: int):
+    def _init_write_mode(self, num_positives: int, shard_size: int, buffer_size: int):
         """initialize for writing new data"""
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.buffers_dir.mkdir(parents=True, exist_ok=True)
-        self.shards_dir.mkdir(parents=True, exist_ok=True)
+        buffers_dir = self.data_dir / "buffers"
+        shards_dir = self.data_dir / "shards"
+        buffers_dir.mkdir(parents=True, exist_ok=True)
+        shards_dir.mkdir(parents=True, exist_ok=True)
 
         self.num_positives = num_positives
         self.group_size = 1 + num_positives  # anchor + positives
+        self.shard_size = shard_size
 
-        # write buffers
-        self.eids = []
-        self.embs = []
-
-        # load exist buffer info for correct continuation
-        self._load_exist_buffers_info()
-
-        # load exist shard info for correct continuation
-        self._load_exist_shards_info()
+        # initialize writers
+        self.buffers_writer = BuffersWriter(
+            buffers_dir,
+            self.group_size,
+            buffer_size,
+            shard_size,
+        )
+        self.shards_writer = ShardsWriter(
+            shards_dir,
+            self.group_size,
+            shard_size,
+        )
 
         # queried eids cache (to avoid re-querying same bvids)
         self.queried_cache_file = self.data_dir / "queried_eids.pkl"
         self.queried_eids = self._load_queried_cache()
 
     # ========== Write mode methods ==========
-
-    def _load_exist_buffers_info(self):
-        """load info from exist buffer files to continue from correct index
-
-        If the last buffer is not full, load its content into memory and
-        continue from that index (will overwrite it with merged data).
-
-        Sets:
-            - buffer_idx: buffer index to continue from
-            - eids, embs: loaded from last buffer if not full
-        """
-        self.buffer_idx = 0
-
-        if not self.buffers_dir.exists():
-            return
-
-        exist_buffer_files = sorted(self.buffers_dir.glob("buffer_*.npz"))
-        if not exist_buffer_files:
-            return
-
-        exist_buffer_count = len(exist_buffer_files)
-
-        # check if last buffer is full
-        last_buffer_file = exist_buffer_files[-1]
-        try:
-            data = np.load(last_buffer_file, allow_pickle=True)
-            last_buffer_eids = data["eids"]
-            last_buffer_samples = len(last_buffer_eids) // self.group_size
-        except Exception as e:
-            logger.warn(f"Error reading last buffer file {last_buffer_file}: {e}")
-            self.buffer_idx = exist_buffer_count
-            return
-
-        if last_buffer_samples < self.buffer_size:
-            # last buffer is not full, load it and continue from this index
-            self.buffer_idx = exist_buffer_count - 1
-            self.eids = list(last_buffer_eids)
-            self.embs = list(data["embs"])
-
-            logger.note(f"> Found exist buffers (last is partial):")
-            buffer_ratio = round(last_buffer_samples / self.buffer_size * 100, 1)
-            info_dict = {
-                "exist_buffer_count": exist_buffer_count,
-                "last_buffer_samples": f"{last_buffer_samples} ({buffer_ratio}%)",
-                "continue_buffer_idx": self.buffer_idx,
-            }
-        else:
-            # last buffer is full or over-full, start from next index
-            # (over-full can happen if program was interrupted mid-batch)
-            self.buffer_idx = exist_buffer_count
-
-            logger.note(f"> Found exist buffers:")
-            buffer_ratio = round(last_buffer_samples / self.buffer_size * 100, 1)
-            info_dict = {
-                "exist_buffer_count": exist_buffer_count,
-                "last_buffer_samples": f"{last_buffer_samples} ({buffer_ratio}%)",
-                "next_buffer_idx": self.buffer_idx,
-            }
-
-        logger.mesg(dict_to_str(info_dict), indent=2)
-
-    def _load_exist_shards_info(self):
-        """load info from exist shards to enable correct continuation
-
-        Sets:
-            - exist_shards_count: number of exist shard files
-            - exist_samples_count: total samples in exist shards
-            - last_shard_samples: samples in the last shard (for merge detection)
-        """
-        self.exist_shards_count = 0
-        self.exist_samples_count = 0
-        self.last_shard_samples = 0
-
-        # check if shards directory exists and has shard files
-        if not self.shards_dir.exists():
-            return
-
-        exist_shard_files = sorted(self.shards_dir.glob("shard_*.npz"))
-        if not exist_shard_files:
-            return
-
-        self.exist_shards_count = len(exist_shard_files)
-
-        # count samples in exist shards
-        for shard_file in exist_shard_files:
-            try:
-                data = np.load(shard_file, allow_pickle=True)
-                # each group has group_size items
-                shard_items = len(data["eids"])
-                shard_samples = shard_items // self.group_size
-                self.exist_samples_count += shard_samples
-                # track last shard's sample count
-                self.last_shard_samples = shard_samples
-            except Exception as e:
-                logger.warn(f"Error reading shard file {shard_file}: {e}")
-
-        if self.exist_shards_count > 0:
-            logger.note(f"> Found exist shards:")
-            shard_ratio = round(self.last_shard_samples / self.shard_size * 100, 1)
-            info_dict = {
-                "exist_shards_count": self.exist_shards_count,
-                "exist_samples_count": self.exist_samples_count,
-                "last_shard_samples": f"{self.last_shard_samples} ({shard_ratio}%)",
-            }
-            logger.mesg(dict_to_str(info_dict), indent=2)
 
     def _load_queried_cache(self) -> set:
         """load cache of already queried eids"""
@@ -501,197 +1043,89 @@ class TrainSamplesManager:
         Returns:
             True if buffer was flushed after appending
         """
-        self.eids.extend(group_eids)
-        self.embs.extend(group_embs)
-
-        # auto flush when buffer is full
-        if self.should_flush_buffer():
-            self.flush_buffer()
-            return True
-        return False
-
-    def get_buffer_sample_count(self) -> int:
-        """get current number of samples in buffer"""
-        return len(self.eids) // self.group_size
-
-    def should_flush_buffer(self) -> bool:
-        """check if current buffer should be flushed to file"""
-        return self.get_buffer_sample_count() >= self.buffer_size
-
-    def get_buffered_sample_count(self) -> int:
-        """get total number of samples in buffer files (not yet merged)"""
-        return self.buffer_idx * self.buffer_size
+        return self.buffers_writer.append(group_eids, group_embs)
 
     def should_merge_buffers(self) -> bool:
-        """check if buffer files should be merged into shards
+        """check if buffer files should be merged into shards"""
+        buffered_samples = self.buffers_writer.get_total_sample_count()
+        return buffered_samples >= self.shards_writer.next_merge_size()
 
-        This prevents buffer_idx overflow which would overwrite exist buffer files.
-        Merge when buffered samples reach shard_size.
-        """
-        return self.get_buffered_sample_count() >= self.shard_size
-
-    def flush_buffer(self) -> int:
-        """flush current buffer to file and clear buffer
-
-        Returns:
-            buffer index of saved buffer file
-        """
-        if not self.eids:
-            return self.buffer_idx
-
-        buffer_file = self.get_buffer_file(self.buffer_idx)
-        np.savez_compressed(
-            buffer_file,
-            eids=np.array(self.eids, dtype=object),
-            embs=np.array(self.embs, dtype=np.float32),
-            group_size=self.group_size,
-            num_positives=self.num_positives,
-        )
-
-        saved_buffer_idx = self.buffer_idx
-        self.buffer_idx += 1
-
-        # clear buffers
-        self.eids.clear()
-        self.embs.clear()
-
-        return saved_buffer_idx
-
-    def merge_buffers(self):
+    def merge_buffers(self, force: bool = False):
         """merge buffer files into sharded training data files
 
         Creates sharded NPZ files:
         - shards/shard_00000.npz, shard_00001.npz, ...
         - meta.npz: metadata
 
-        Note: Continues from exist shards if present, doesn't overwrite them.
-        If the last shard is not full, new data will be merged into it.
+        Args:
+            force: if True, write all data including partial shard (used in finalize)
+                   if False, only write full shards
         """
-        # load all buffers
-        buffer_files = sorted(self.buffers_dir.glob("buffer_*.npz"))
-        if not buffer_files:
-            logger.warn("* No buffer files to merge")
+        # Step 1: Load all buffers
+        result = self.buffers_writer.load_all()
+        if result is None:
             return
+        new_eids, new_embs, buffer_files = result
+        new_samples = len(new_eids) // self.group_size
 
         logger.note("> Merge buffer files into shards:")
-        all_eids = []
-        all_embs = []
-        for buffer_file in buffer_files:
-            data = np.load(buffer_file, allow_pickle=True)
-            all_eids.append(data["eids"])
-            all_embs.append(data["embs"])
 
-        # concatenate all buffer data
-        new_eids = np.concatenate(all_eids)
-        new_embs = np.concatenate(all_embs)
+        written_samples = 0
+        consumed_items = 0
 
-        # check if we need to merge with the last exist shard
-        merge_with_last = (
-            self.exist_shards_count > 0 and self.last_shard_samples < self.shard_size
+        # Step 2: Fill partial last shard if in filling mode
+        if self.shards_writer.tracker.is_filling_mode():
+            filled_samples, consumed_items = self.shards_writer.fill_partial_shard(
+                new_eids, new_embs
+            )
+            written_samples += filled_samples
+
+        # Step 3: Write remaining data into new shards
+        remaining_eids = new_eids[consumed_items:]
+        remaining_embs = new_embs[consumed_items:]
+        written_samples += self.shards_writer.write_new_shards(
+            remaining_eids, remaining_embs, force=force
         )
 
-        if merge_with_last:
-            # load last shard data to merge
-            last_shard_idx = self.exist_shards_count - 1
-            last_shard_file = self.get_shard_file(last_shard_idx)
-            last_shard_data = np.load(last_shard_file, allow_pickle=True)
-            last_eids = last_shard_data["eids"]
-            last_embs = last_shard_data["embs"]
+        # Step 4: Save shards tracker and metadata
+        self.shards_writer.tracker.save()
+        self._save_metadata()
 
-            # prepend last shard data to new data
-            final_eids = np.concatenate([last_eids, new_eids])
-            final_embs = np.concatenate([last_embs, new_embs])
+        # Step 5: Clear buffer files
+        self.buffers_writer.clear_files(buffer_files)
 
-            # adjust counts: remove last shard from exist counts since we'll rewrite it
-            start_shard_idx = last_shard_idx
-            base_samples = self.exist_samples_count - self.last_shard_samples
+        # Step 6: Log summary
+        tracker = self.shards_writer.tracker
+        info_dict = {
+            "new_samples": new_samples,
+            "written_samples": written_samples,
+            "total_shards": tracker.file_count,
+            "total_samples": tracker.total_samples,
+            "last_shard_samples": f"{tracker.get_last_file_samples()} ({round(tracker.get_last_file_samples() / self.shard_size * 100, 1)}%)",
+        }
+        logger.mesg(dict_to_str(info_dict), indent=2)
 
-            logger.mesg(
-                f"  * Merge with last shard {self.shard_idx_to_suffix(last_shard_idx)} "
-                f"({self.last_shard_samples} samples)"
-            )
-        else:
-            final_eids = new_eids
-            final_embs = new_embs
-            start_shard_idx = self.exist_shards_count
-            base_samples = self.exist_samples_count
-
-        # calculate totals
-        total_items = len(final_eids)
-        merged_samples = total_items // self.group_size
-        items_per_shard = self.shard_size * self.group_size
-        num_new_shards = (total_items + items_per_shard - 1) // items_per_shard
-
-        # create shards directory
-        self.shards_dir.mkdir(parents=True, exist_ok=True)
-
-        # save shards (starting from appropriate index)
-        for i in range(num_new_shards):
-            shard_idx = start_shard_idx + i
-            start_item = i * items_per_shard
-            end_item = min((i + 1) * items_per_shard, total_items)
-
-            shard_file = self.get_shard_file(shard_idx)
-            np.savez_compressed(
-                shard_file,
-                eids=final_eids[start_item:end_item],
-                embs=final_embs[start_item:end_item],
-            )
-            shard_samples = (end_item - start_item) // self.group_size
-            logger.mesg(
-                f"  * Saved to shard {self.shard_idx_to_suffix(shard_idx)}: {logstr.okay(brk(shard_samples))}"
-            )
-            # track the last shard's sample count
-            self.last_shard_samples = shard_samples
-
-        # update exist counts
-        self.exist_shards_count = start_shard_idx + num_new_shards
-        self.exist_samples_count = base_samples + merged_samples
-
-        # total counts
-        total_samples = self.exist_samples_count
-        total_shards = self.exist_shards_count
-
-        # save metadata (reflects total state)
+    def _save_metadata(self):
+        """Save metadata file with current state"""
+        tracker = self.shards_writer.tracker
         np.savez(
             self.meta_file,
             group_size=self.group_size,
             num_positives=self.num_positives,
-            num_samples=total_samples,
-            num_shards=total_shards,
+            num_samples=tracker.total_samples,
+            num_shards=tracker.file_count,
             shard_size=self.shard_size,
         )
-
-        # update instance state for potential read operations
-        self.num_samples = total_samples
-        self.num_shards = total_shards
-
-        # clean up buffer files after successful merge
-        for buffer_file in buffer_files:
-            buffer_file.unlink()
-        logger.mesg(f"  * Cleared buffer files: {len(buffer_files)} ")
-
-        # reset buffer index for next round of buffers
-        self.buffer_idx = 0
-
-        # calculate new samples added in this merge
-        new_samples_count = len(new_eids) // self.group_size
-
-        info_dict = {
-            "new_samples": new_samples_count,
-            "total_shards": total_shards,
-            "total_samples": total_samples,
-            "shard_size": self.shard_size,
-            "group_size": self.group_size,
-        }
-        logger.mesg(dict_to_str(info_dict), indent=2)
+        # update instance state
+        self.num_samples = tracker.total_samples
+        self.num_shards = tracker.file_count
 
     def finalize(self):
         """finalize writing: flush remaining buffer and merge buffers"""
-        if self.eids:
-            self.flush_buffer()
+        if self.buffers_writer.eids:
+            self.buffers_writer.flush()
         self.save_queried_cache()
-        self.merge_buffers()
+        self.merge_buffers(force=True)
 
     # ========== Read mode methods ==========
 
@@ -701,67 +1135,7 @@ class TrainSamplesManager:
         Warning: This may consume a lot of memory for large datasets.
         Consider using iter_samples() for memory-efficient sequential access.
         """
-        logger.warn(
-            f"* Loading all {self.num_shards} shards into memory. "
-            f"Use iter_samples() for memory-efficient access."
-        )
-        # temporarily disable LRU eviction
-        original_max = self.MAX_CACHED_SHARDS
-        self.MAX_CACHED_SHARDS = self.num_shards + 1
-        for shard_idx in range(self.num_shards):
-            self._load_shard(shard_idx)
-        self.MAX_CACHED_SHARDS = original_max
-
-    def get_buffer_file(self, buffer_idx: int) -> Path:
-        """get buffer file path for a given buffer index"""
-        return self.buffers_dir / f"buffer_{buffer_idx:0{self.buffer_idx_width}d}.npz"
-
-    def shard_idx_to_suffix(self, shard_idx: int) -> str:
-        """convert shard index to zero-padded suffix string"""
-        return f"{shard_idx:0{self.shard_idx_width}d}"
-
-    def get_shard_file(self, shard_idx: int) -> Path:
-        """get shard file path for a given shard index"""
-        return self.shards_dir / f"shard_{self.shard_idx_to_suffix(shard_idx)}.npz"
-
-    def _load_shard(self, shard_idx: int):
-        """load a shard into cache with LRU eviction"""
-        if shard_idx in self._shard_cache:
-            # update access order for LRU
-            self._access_counter += 1
-            self._shard_cache[shard_idx]["access_order"] = self._access_counter
-            return
-
-        # LRU eviction if cache is full
-        while len(self._shard_cache) >= self.MAX_CACHED_SHARDS:
-            # find least recently used shard
-            lru_idx = min(
-                self._shard_cache.keys(),
-                key=lambda k: self._shard_cache[k]["access_order"],
-            )
-            del self._shard_cache[lru_idx]
-
-        shard_file = self.get_shard_file(shard_idx)
-        if not shard_file.exists():
-            raise FileNotFoundError(f"Shard file not found: {shard_file}")
-
-        data = np.load(shard_file, allow_pickle=True)
-        self._access_counter += 1
-        self._shard_cache[shard_idx] = {
-            "eids": data["eids"],
-            "embs": data["embs"],
-            "access_order": self._access_counter,
-        }
-
-    def _get_shard_for_sample(self, sample_idx: int) -> tuple[int, int]:
-        """get shard index and item offset for a sample
-
-        Returns:
-            (shard_idx, item_offset_in_shard)
-        """
-        shard_idx = sample_idx // self.shard_size
-        offset = (sample_idx % self.shard_size) * self.group_size
-        return shard_idx, offset
+        self.shards_reader.preload_all()
 
     def __len__(self) -> int:
         """return number of valid samples (excluding sample 0 which has no negative)"""
@@ -782,10 +1156,8 @@ class TrainSamplesManager:
             )
 
         # get shard info
-        shard_idx, shard_offset = self._get_shard_for_sample(sample_idx)
-        self._load_shard(shard_idx)
-
-        shard = self._shard_cache[shard_idx]
+        shard_idx, shard_offset = self.shards_reader.get_shard_for_sample(sample_idx)
+        shard = self.shards_reader.get_shard_data(shard_idx)
 
         # anchor (first in group)
         anchor_eid = shard["eids"][shard_offset]
@@ -799,11 +1171,10 @@ class TrainSamplesManager:
 
         # negative (previous sample's anchor) - may be in different shard
         prev_sample_idx = sample_idx - 1
-        prev_shard_idx, prev_shard_offset = self._get_shard_for_sample(prev_sample_idx)
+        prev_shard_idx, prev_shard_offset = self.shards_reader.get_shard_for_sample(prev_sample_idx)
 
         if prev_shard_idx != shard_idx:
-            self._load_shard(prev_shard_idx)
-            prev_shard = self._shard_cache[prev_shard_idx]
+            prev_shard = self.shards_reader.get_shard_data(prev_shard_idx)
         else:
             prev_shard = shard
 
