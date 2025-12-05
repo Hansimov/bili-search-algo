@@ -997,9 +997,54 @@ class TrainSamplesManager:
     def _load_queried_cache(self) -> set:
         """load cache of already queried eids"""
         if self.queried_cache_file.exists():
-            with open(self.queried_cache_file, "rb") as f:
-                return pickle.load(f)
+            try:
+                with open(self.queried_cache_file, "rb") as f:
+                    return pickle.load(f)
+            except (EOFError, pickle.UnpicklingError) as e:
+                logger.warn(f"× Error loading queried_eids.pkl: {e}, rebuilding ...")
+                return self._rebuild_queried_cache()
         return set()
+
+    def _rebuild_queried_cache(self) -> set:
+        """Rebuild queried eids cache from exist samples count"""
+        # get total samples from shards and buffers
+        total_samples = (
+            self.shards_writer.tracker.total_samples
+            + self.buffers_writer.tracker.get_total_samples()
+        )
+        if total_samples == 0:
+            logger.mesg("  * No exist samples, starting fresh")
+            return set()
+
+        logger.note(
+            f"> Rebuilding queried_eids from exist samples: {logstr.file(brk(total_samples))}"
+        )
+
+        # scan redis keys to get first N bvids
+        redis = RedisOperator(configs=REDIS_ENVS, connect_cls=self.__class__)
+        queried_eids = set()
+        for batch_keys in redis.scan_keys(
+            pattern=REDIS_PT,
+            batch_size=1000,
+            max_count=total_samples,
+        ):
+            bvids = redis_keys_to_bvids(batch_keys)
+            queried_eids.update(bvids)
+            if len(queried_eids) >= total_samples:
+                break
+
+        # truncate to exact count (scan may return slightly more)
+        if len(queried_eids) > total_samples:
+            queried_eids = set(list(queried_eids)[:total_samples])
+
+        print()
+        logger.okay(f"+ Rebuilt  queried eids: {brk(len(queried_eids))}")
+
+        # save rebuilt cache
+        with open(self.queried_cache_file, "wb") as f:
+            pickle.dump(queried_eids, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        return queried_eids
 
     def save_queried_cache(self):
         """save queried eids cache"""
@@ -1043,8 +1088,9 @@ class TrainSamplesManager:
         - meta.json: metadata
 
         Args:
-            force: if True, write all data including partial shard (used in finalize)
-                   if False, only write full shards
+            force:
+            - if True, write all data including partial shard (used in finalize)
+            - if False, only write full shards
         """
         # Step 1: Load all buffers
         result = self.buffers_writer.load_all()
@@ -1053,6 +1099,10 @@ class TrainSamplesManager:
         new_eids, new_embs, buffer_files = result
         new_samples = len(new_eids) // self.group_size
 
+        logger.store_indent()
+        logger.indent(2)
+
+        print()
         logger.note("> Merge buffer files into shards:")
 
         written_samples = 0
@@ -1107,6 +1157,7 @@ class TrainSamplesManager:
             "last_shard_samples": f"{tracker.last_file_samples} ({round(tracker.last_file_samples / self.shard_size * 100, 1)}%)",
         }
         logger.mesg(dict_to_str(info_dict), indent=2)
+        logger.restore_indent()
 
     def _save_metadata(self):
         """Save metadata file with current state"""
