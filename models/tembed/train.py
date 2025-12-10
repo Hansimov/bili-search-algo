@@ -773,6 +773,12 @@ class ShardsReader:
     """Reader for shard files with LRU caching
 
     Handles loading shards on demand with memory-efficient LRU cache.
+
+    Implementation Details:
+    - Shards contain groups of (anchor, pos1, pos2, ...) stored sequentially
+    - Sample indexing is 0-based for shard storage but 1-based for external API
+    - LRU cache prevents memory overflow when dataset has many shards
+    - Each shard contains shard_size samples, each sample has group_size items
     """
 
     # Maximum shards to keep in memory (LRU cache)
@@ -840,6 +846,16 @@ class ShardsReader:
 
     def get_shard_for_sample(self, sample_idx: int) -> tuple[int, int]:
         """Get shard index and item offset for a sample
+
+        The mapping formula:
+        - shard_idx = sample_idx // shard_size (which shard file)
+        - offset = (sample_idx % shard_size) * group_size (item position within shard)
+
+        Note: offset is in ITEMS not SAMPLES, because each sample has group_size items
+
+        Example: shard_size=100000, group_size=3, sample_idx=250000
+        - shard_idx = 250000 // 100000 = 2 (third shard file)
+        - offset = (250000 % 100000) * 3 = 50000 * 3 = 150000 (item index in shard)
 
         Returns:
             (shard_idx, item_offset_in_shard)
@@ -945,6 +961,7 @@ class TrainSamplesManager:
         self.num_samples = int(meta["num_samples"])
         self.num_shards = int(meta["num_shards"])
         self.shard_size = int(meta["shard_size"])
+        self.emb_dim = int(meta["emb_dim"])
 
         # initialize shard reader
         shards_dir = self.data_dir / "shards"
@@ -1168,6 +1185,7 @@ class TrainSamplesManager:
             "num_samples": tracker.total_samples,
             "num_shards": tracker.file_count,
             "shard_size": self.shard_size,
+            "emb_dim": self.emb_dim,
         }
         with open(self.meta_file, "w") as f:
             json.dump(meta, f, indent=2)
@@ -1193,21 +1211,34 @@ class TrainSamplesManager:
         self.shards_reader.preload_all()
 
     def __len__(self) -> int:
-        """return number of valid samples (excluding sample 0 which has no negative)"""
-        return self.num_samples - 1 if self.num_samples > 0 else 0
+        """return number of valid samples (all samples including 0)"""
+        return self.num_samples
 
     def __getitem__(self, sample_idx: int) -> dict:
         """get training sample at index
 
+        Index Convention:
+        - Uses 0-based indexing: valid range [0, num_samples)
+        - All samples are valid, including sample 0
+
+        Sample Structure:
+        - anchor: first item in group (offset + 0)
+        - positives: items 1 to group_size-1 (offset + 1, offset + 2, ...)
+        - negative: previous sample's anchor, or sample 1's anchor for sample 0
+
+        Special Case:
+        - sample_idx=0: uses sample 1's anchor as negative (safe since num_samples >= 2)
+        - This is the ONLY place where sample 0 is handled specially
+
         Args:
-            sample_idx: valid range is [1, num_samples)
+            sample_idx: valid range is [0, num_samples)
 
         Returns:
-            dict with anchor, positives, and negative (from previous sample)
+            dict with anchor, positives, and negative
         """
-        if not (0 < sample_idx < self.num_samples):
+        if not (0 <= sample_idx < self.num_samples):
             raise IndexError(
-                f"sample_idx {sample_idx} out of range [1, {self.num_samples})"
+                f"sample_idx {sample_idx} out of range [0, {self.num_samples})"
             )
 
         # get shard info
@@ -1224,19 +1255,21 @@ class TrainSamplesManager:
             [shard["embs"][shard_offset + j] for j in range(1, self.group_size)]
         )
 
-        # negative (previous sample's anchor) - may be in different shard
-        prev_sample_idx = sample_idx - 1
-        prev_shard_idx, prev_shard_offset = self.shards_reader.get_shard_for_sample(
-            prev_sample_idx
+        # special case is sample 0, which uses sample 1's anchor,
+        # others use previous sample's anchor
+        neg_sample_idx = 1 if sample_idx == 0 else sample_idx - 1
+        neg_shard_idx, neg_shard_offset = self.shards_reader.get_shard_for_sample(
+            neg_sample_idx
         )
 
-        if prev_shard_idx != shard_idx:
-            prev_shard = self.shards_reader.get_shard_data(prev_shard_idx)
+        # load negative shard if different from current shard
+        if neg_shard_idx != shard_idx:
+            neg_shard = self.shards_reader.get_shard_data(neg_shard_idx)
         else:
-            prev_shard = shard
+            neg_shard = shard
 
-        neg_eid = prev_shard["eids"][prev_shard_offset]
-        neg_emb = prev_shard["embs"][prev_shard_offset]
+        neg_eid = neg_shard["eids"][neg_shard_offset]
+        neg_emb = neg_shard["embs"][neg_shard_offset]
 
         return {
             "anchor_eid": anchor_eid,
@@ -1247,11 +1280,19 @@ class TrainSamplesManager:
             "neg_emb": neg_emb,
         }
 
-    def iter_samples(self, start: int = 1, end: int = None) -> Iterator[dict]:
+    def iter_samples(self, start: int = 0, end: int = None) -> Iterator[dict]:
         """iterate through samples sequentially (memory efficient)
 
+        This method efficiently iterates through samples by leveraging the LRU cache
+        in ShardsReader. Sequential access ensures optimal cache hit rate.
+
+        Index Convention:
+        - Uses 0-based indexing (consistent with __getitem__)
+        - Default start=0 to include all samples
+        - end is exclusive (Python convention)
+
         Args:
-            start: starting sample index (default 1, since 0 has no negative)
+            start: starting sample index (default 0 for all samples)
             end: ending sample index (exclusive, default None for all)
 
         Raises:
@@ -1264,7 +1305,7 @@ class TrainSamplesManager:
             end = self.num_samples
 
         # validate range
-        start = max(1, start)  # ensure start >= 1
+        start = max(0, start)
         end = min(end, self.num_samples)
 
         for sample_idx in range(start, end):
@@ -1273,7 +1314,13 @@ class TrainSamplesManager:
     def iter_shard_samples(self, shard_idx: int) -> Iterator[dict]:
         """iterate through all samples in a specific shard
 
-        Useful for parallel loading in distributed training.
+        Useful for parallel loading in distributed training where each worker
+        processes a specific shard.
+
+        Example: shard_size=100000, num_samples=3000000
+        - Shard 0: samples [0, 100000)
+        - Shard 1: samples [100000, 200000)
+        - Shard 2: samples [200000, 300000)
 
         Raises:
             ValueError: if called in write mode or shard_idx out of range
@@ -1289,10 +1336,6 @@ class TrainSamplesManager:
         start_sample = shard_idx * self.shard_size
         end_sample = min((shard_idx + 1) * self.shard_size, self.num_samples)
 
-        # skip first sample if it's the very first
-        if start_sample == 0:
-            start_sample = 1
-
         for sample_idx in range(start_sample, end_sample):
             yield self[sample_idx]
 
@@ -1300,13 +1343,10 @@ class TrainSamplesManager:
         """get sample index range for a shard
 
         Returns:
-            (start_sample_idx, end_sample_idx) - note: start may be 1 for shard 0
+            (start_sample_idx, end_sample_idx) - both 0-based
         """
         start = shard_idx * self.shard_size
         end = min((shard_idx + 1) * self.shard_size, self.num_samples)
-        # adjust start for first shard (sample 0 is invalid)
-        if start == 0:
-            start = 1
         return start, end
 
     def get_stats(self) -> dict:
@@ -1317,8 +1357,8 @@ class TrainSamplesManager:
             "shard_size": self.shard_size,
             "group_size": self.group_size,
             "num_positives": self.num_positives,
-            "cached_shards": len(self._shard_cache),
-            "max_cached_shards": self.MAX_CACHED_SHARDS,
+            "cached_shards": len(self.shards_reader._shard_cache),
+            "max_cached_shards": self.shards_reader.MAX_CACHED_SHARDS,
         }
 
 
@@ -1572,6 +1612,267 @@ class TrainSamplesConstructor:
         logger.mesg(dict_to_str(info_dict), indent=2)
 
 
+class TrainSamplesManagerTester:
+    """Test class for TrainSamplesManager read/iteration functionality
+
+    Tests:
+    - Random access via __getitem__
+    - Sequential iteration via iter_samples
+    - Shard iteration via iter_shard_samples
+    - Sample 0 special handling (uses sample 1's anchor as negative)
+    - Cross-shard access patterns
+    - EID and embedding consistency
+    """
+
+    def __init__(self, data_dir: str | Path):
+        """
+        Args:
+            data_dir: directory containing training data
+        """
+        self.data_dir = Path(data_dir)
+        self.manager = TrainSamplesManager(data_dir=data_dir, mode="read")
+
+    def run_all_tests(self):
+        """Run all test cases"""
+        logger.note("> Running TrainSamplesManager Tests:")
+        self._test_basic_info()
+        self._test_random_access()
+        self._test_sample_zero()
+        self._test_sequential_iteration()
+        self._test_shard_iteration()
+        self._test_cross_shard_access()
+        self._test_boundary_cases()
+        logger.okay("✓ All tests passed!")
+
+    def _test_basic_info(self):
+        """Test basic manager properties"""
+        logger.mesg("* Test 1: Basic Info")
+        stats = self.manager.get_stats()
+        logger.mesg(dict_to_str(stats), indent=2)
+        assert self.manager.num_samples > 0, "num_samples should be > 0"
+        assert (
+            len(self.manager) == self.manager.num_samples
+        ), "__len__ should match num_samples"
+        assert (
+            self.manager.group_size == 1 + self.manager.num_positives
+        ), "group_size mismatch"
+
+        logger.okay(
+            f"✓ Passed: {self.manager.num_samples} samples, {self.manager.num_shards} shards"
+        )
+        print()
+
+    def _test_random_access(self):
+        """Test __getitem__ random access"""
+        logger.mesg("* Test 2: Random Access (__getitem__)")
+
+        # test first sample (index 1 to avoid sample 0 special case)
+        if self.manager.num_samples > 1:
+            sample_idx = 1
+            sample = self.manager[sample_idx]
+            info_dict = {
+                "sample_idx": sample_idx,
+                "anchor_eid": sample["anchor_eid"],
+                "anchor_emb_shape": sample["anchor_emb"].shape,
+                "pos_eids": sample["pos_eids"],
+                "pos_embs_shape": sample["pos_embs"].shape,
+                "neg_eid": sample["neg_eid"],
+                "neg_emb_shape": sample["neg_emb"].shape,
+            }
+            logger.mesg(dict_to_str(info_dict), indent=2)
+
+            # validate structure
+            assert isinstance(sample["anchor_eid"], str), "anchor_eid should be string"
+            assert sample["anchor_emb"].shape == (
+                self.manager.emb_dim,
+            ), "anchor_emb shape mismatch"
+            assert (
+                len(sample["pos_eids"]) == self.manager.num_positives
+            ), "pos_eids count mismatch"
+            assert sample["pos_embs"].shape == (
+                self.manager.num_positives,
+                self.manager.emb_dim,
+            ), "pos_embs shape mismatch"
+            assert sample["neg_emb"].shape == (
+                self.manager.emb_dim,
+            ), "neg_emb shape mismatch"
+
+            logger.okay(f"✓ Passed: structure validated")
+        else:
+            logger.warn(f"- Skipped: only {self.manager.num_samples} sample(s)")
+        print()
+
+    def _test_sample_zero(self):
+        """Test sample 0 special handling (uses sample 1's anchor as negative)"""
+        logger.mesg("* Test 3: Sample 0 (Uses Sample 1 Anchor as Negative)")
+
+        sample_0 = self.manager[0]
+        info_dict = {
+            "sample_idx": 0,
+            "anchor_eid": sample_0["anchor_eid"],
+            "anchor_emb_shape": sample_0["anchor_emb"].shape,
+            "pos_eids": sample_0["pos_eids"],
+            "pos_embs_shape": sample_0["pos_embs"].shape,
+            "neg_eid": sample_0["neg_eid"],
+            "neg_emb_shape": sample_0["neg_emb"].shape,
+        }
+        logger.mesg(dict_to_str(info_dict), indent=2)
+
+        # validate special handling: sample 0 uses sample 1's anchor as negative
+        sample_1 = self.manager[1]
+        assert (
+            sample_0["neg_eid"] == sample_1["anchor_eid"]
+        ), "sample 0 neg_eid should match sample 1's anchor_eid"
+        assert np.allclose(
+            sample_0["neg_emb"], sample_1["anchor_emb"]
+        ), "sample 0 neg_emb should match sample 1's anchor_emb"
+        assert sample_0["neg_emb"].shape == (
+            self.manager.emb_dim,
+        ), "sample 0 neg_emb shape mismatch"
+
+        logger.mesg(
+            f"  * Verified: neg matches sample 1 anchor ({sample_1['anchor_eid']})"
+        )
+        logger.okay(f"✓ Passed: sample 0 uses sample 1's anchor as negative")
+        print()
+
+    def _test_sequential_iteration(self):
+        """Test iter_samples sequential iteration"""
+        logger.mesg("* Test 4: Sequential Iteration (iter_samples)")
+
+        # iterate through first 10 samples (or all if fewer)
+        num_to_iterate = min(10, self.manager.num_samples)
+        logger.mesg(f"  * Iterating first {num_to_iterate} samples:")
+        count = 0
+        prev_neg_eid = None
+        for i, sample in enumerate(
+            self.manager.iter_samples(start=0, end=num_to_iterate)
+        ):
+            if i == 0:
+                # sample 0: verify negative from sample 1
+                assert (
+                    sample["neg_eid"] == self.manager[1]["anchor_eid"]
+                ), f"sample 0 negative mismatch"
+            else:
+                # sample i (i > 0): negative should be previous anchor
+                assert (
+                    sample["neg_eid"] == prev_neg_eid
+                ), f"sample {i} negative mismatch"
+
+            prev_neg_eid = sample["anchor_eid"]
+            count += 1
+            # print first 3 samples
+            if i >= 3:
+                continue
+            logger.mesg(
+                f"  - [{i}] anchor={sample['anchor_eid']}, neg={sample['neg_eid']}"
+            )
+
+        assert count == num_to_iterate, "iteration count mismatch"
+        logger.okay(
+            f"✓ Passed: {count} samples iterated, negative consistency verified"
+        )
+        print()
+
+    def _test_shard_iteration(self):
+        """Test iter_shard_samples for specific shard"""
+        logger.mesg("* Test 5: Shard Iteration (iter_shard_samples)")
+
+        # test first shard
+        shard_idx = 0
+        start_sample, end_sample = self.manager.get_shard_range(shard_idx)
+        logger.mesg(f"  * Shard {shard_idx} range: [{start_sample}, {end_sample})")
+
+        count = 0
+        first_eid = None
+        last_eid = None
+        for sample in self.manager.iter_shard_samples(shard_idx):
+            if count == 0:
+                first_eid = sample["anchor_eid"]
+            last_eid = sample["anchor_eid"]
+            count += 1
+
+        expected_count = end_sample - start_sample
+        assert (
+            count == expected_count
+        ), f"shard iteration count mismatch: {count} != {expected_count}"
+
+        info_dict = {
+            "shard_idx": shard_idx,
+            "expected_count": expected_count,
+            "actual_count": count,
+            "first_eid": first_eid,
+            "last_eid": last_eid,
+        }
+        logger.mesg(dict_to_str(info_dict), indent=2)
+
+        logger.okay(f"✓ Passed: {count} samples in shard {shard_idx}")
+        print()
+
+    def _test_cross_shard_access(self):
+        """Test accessing samples across shard boundaries"""
+        logger.mesg("* Test 6: Cross-Shard Access")
+
+        if self.manager.num_shards < 2:
+            logger.warn(f"- Skipped: only {self.manager.num_shards} shard(s)")
+            print()
+            return
+
+        # access sample at boundary of first two shards
+        boundary_idx = self.manager.shard_size
+        if boundary_idx < self.manager.num_samples:
+            sample_before = self.manager[boundary_idx - 1]
+            sample_after = self.manager[boundary_idx]
+
+            logger.mesg(f"  * Boundary at sample {boundary_idx}:")
+            info_dict = {
+                "sample_before_idx": boundary_idx - 1,
+                "sample_before_anchor_eid": sample_before["anchor_eid"],
+                "sample_after_idx": boundary_idx,
+                "sample_after_anchor_eid": sample_after["anchor_eid"],
+                "sample_after_neg_eid": sample_after["neg_eid"],
+            }
+            logger.mesg(dict_to_str(info_dict), indent=2)
+
+            # verify cross-shard negative reference
+            assert (
+                sample_after["neg_eid"] == sample_before["anchor_eid"]
+            ), "cross-shard negative mismatch"
+
+            logger.okay(f"✓ Passed: cross-shard negative reference correct")
+        else:
+            logger.warn(
+                f"- Skipped: boundary_idx {boundary_idx} >= num_samples {self.manager.num_samples}"
+            )
+        print()
+
+    def _test_boundary_cases(self):
+        """Test boundary cases and error handling"""
+        logger.mesg("* Test 7: Boundary Cases")
+
+        # test valid boundaries
+        first_sample = self.manager[0]
+        last_sample = self.manager[self.manager.num_samples - 1]
+        logger.mesg(f"  * First sample (0): {first_sample['anchor_eid']}")
+        logger.mesg(
+            f"  * Last sample ({self.manager.num_samples - 1}): {last_sample['anchor_eid']}"
+        )
+
+        # test out-of-bounds
+        try:
+            _ = self.manager[-1]
+            logger.fail(f"✗ Failed: should raise IndexError for negative index")
+        except IndexError:
+            logger.okay(f"✓ Passed: negative index raises IndexError")
+
+        try:
+            _ = self.manager[self.manager.num_samples]
+            logger.fail(f"✗ Failed: should raise IndexError for index >= num_samples")
+        except IndexError:
+            logger.okay(f"✓ Passed: index >= num_samples raises IndexError")
+        print()
+
+
 class TrainerArgParser(argparse.ArgumentParser):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1579,6 +1880,7 @@ class TrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-bf", "--build-faiss", action="store_true")
         self.add_argument("-tf", "--test-faiss", action="store_true")
         self.add_argument("-cs", "--construct-samples", action="store_true")
+        self.add_argument("-ts", "--test-samples", action="store_true")
         self.add_argument("-sn", "--samples-count", type=int, default=1_000_000)
         self.args, _ = self.parse_known_args()
 
@@ -1613,6 +1915,10 @@ def main():
         )
         constructor.run()
 
+    if args.test_samples:
+        tester = TrainSamplesManagerTester(data_dir=SAMPLES_DIR)
+        tester.run_all_tests()
+
 
 if __name__ == "__main__":
     main()
@@ -1630,3 +1936,6 @@ if __name__ == "__main__":
     # Case: construct training samples for contrastive learning
     # python -m models.tembed.train -cs
     # python -m models.tembed.train -cs -sn 10000
+
+    # Case: test training samples read/iteration functionality
+    # python -m models.tembed.train -ts
