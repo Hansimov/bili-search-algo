@@ -43,11 +43,26 @@ class EmbToHashNet(nn.Module):
         self.hash_bits = hash_bits
         self.hidden_dim = hidden_dim
         self.dropout = dropout
-        # TODO
+        self.net = nn.Sequential(
+            nn.LayerNorm(self.input_dim),
+            nn.Linear(self.input_dim, self.hidden_dim, bias=True),
+            nn.GELU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.hidden_dim, self.hidden_dim, bias=True),
+            nn.GELU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.hidden_dim, self.hash_bits, bias=True),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # TODO
-        pass
+        if x.ndim != 2:
+            raise ValueError(
+                f"Expected 2D tensor (batch, dim), got shape={tuple(x.shape)}"
+            )
+        if x.shape[1] != self.input_dim:
+            raise ValueError(f"Expected input_dim={self.input_dim}, got {x.shape[1]}")
+        # Use tanh to keep outputs in (-1, 1), matching test-time {-1,1} similarity.
+        return torch.tanh(self.net(x))
 
     def get_hash_codes(self, x: torch.Tensor) -> torch.Tensor:
         with torch.no_grad():
@@ -57,8 +72,108 @@ class EmbToHashNet(nn.Module):
 
 
 class HashLoss(nn.Module):
-    pass
-    # TODO
+    """Loss for learned binary hashing.
+
+    Goals:
+    1) Preserve original cosine similarity ordering via triplet loss in hash space.
+    2) Encourage near-binary outputs (quantization).
+    3) Encourage balanced bits (~50% ones).
+    4) Encourage decorrelated bits (reduce redundancy).
+    """
+
+    def __init__(
+        self,
+        margin: float = 0.2,
+        w_distill: float = 1.0,
+        w_triplet: float = 1.0,
+        w_quant: float = 0.05,
+        w_balance: float = 0.01,
+        w_decor: float = 0.01,
+        eps: float = 1e-8,
+    ):
+        super().__init__()
+        self.margin = float(margin)
+        self.w_distill = float(w_distill)
+        self.w_triplet = float(w_triplet)
+        self.w_quant = float(w_quant)
+        self.w_balance = float(w_balance)
+        self.w_decor = float(w_decor)
+        self.eps = float(eps)
+
+    def _signed_cos(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        a = torch.nn.functional.normalize(a, dim=-1, eps=self.eps)
+        b = torch.nn.functional.normalize(b, dim=-1, eps=self.eps)
+        return torch.sum(a * b, dim=-1)
+
+    def _quant_loss(self, h: torch.Tensor) -> torch.Tensor:
+        # For tanh outputs in (-1,1), encourage saturation toward {-1,+1}
+        return torch.mean((1.0 - torch.abs(h)) ** 2)
+
+    def _balance_loss(self, h: torch.Tensor) -> torch.Tensor:
+        # center each bit to have mean ~0 across batch (=> 50/50 after sign)
+        return torch.mean(torch.mean(h, dim=0) ** 2)
+
+    def _decor_loss(self, h: torch.Tensor) -> torch.Tensor:
+        # decorrelate bits using correlation matrix of tanh outputs
+        z = h
+        z = z - torch.mean(z, dim=0, keepdim=True)
+        z = z / (torch.std(z, dim=0, keepdim=True) + self.eps)
+        c = (z.T @ z) / (z.shape[0] + self.eps)  # [B,Bits] -> [Bits,Bits]
+        off_diag = c - torch.diag(torch.diag(c))
+        return torch.mean(off_diag**2)
+
+    def forward(
+        self,
+        anchor_hash: torch.Tensor,
+        pos_hash: torch.Tensor,
+        neg_hash: torch.Tensor,
+        anchor_emb: torch.Tensor | None = None,
+        pos_emb: torch.Tensor | None = None,
+        neg_emb: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        # Similarity in hash space (continuous) using cosine
+        sim_ap = self._signed_cos(anchor_hash, pos_hash)
+        sim_an = self._signed_cos(anchor_hash, neg_hash)
+
+        # Triplet ranking: want sim_ap >= sim_an + margin
+        triplet = torch.relu(self.margin - (sim_ap - sim_an))
+        loss_triplet = torch.mean(triplet)
+
+        # Distillation: match hash-space similarities to embedding-space cosine
+        loss_distill = torch.tensor(0.0, device=anchor_hash.device)
+        if anchor_emb is not None and pos_emb is not None and neg_emb is not None:
+            t_ap = self._signed_cos(anchor_emb, pos_emb).detach()
+            t_an = self._signed_cos(anchor_emb, neg_emb).detach()
+            # Smooth L1 is robust and keeps scale comparable
+            loss_distill = torch.nn.functional.smooth_l1_loss(
+                sim_ap, t_ap
+            ) + torch.nn.functional.smooth_l1_loss(sim_an, t_an)
+
+        loss_quant = (
+            self._quant_loss(anchor_hash)
+            + self._quant_loss(pos_hash)
+            + self._quant_loss(neg_hash)
+        )
+        loss_bal = self._balance_loss(anchor_hash)
+        loss_decor = self._decor_loss(anchor_hash)
+
+        total = (
+            self.w_distill * loss_distill
+            + self.w_triplet * loss_triplet
+            + self.w_quant * loss_quant
+            + self.w_balance * loss_bal
+            + self.w_decor * loss_decor
+        )
+
+        loss_dict = {
+            "total": float(total.detach().cpu().item()),
+            "sim": float(loss_triplet.detach().cpu().item()),
+            "distill": float(loss_distill.detach().cpu().item()),
+            "quant": float(loss_quant.detach().cpu().item()),
+            "bal": float(loss_bal.detach().cpu().item()),
+            "decor": float(loss_decor.detach().cpu().item()),
+        }
+        return total, loss_dict
 
 
 class TrainSamplesDataset(Dataset):
@@ -189,14 +304,22 @@ class HasherTrainer:
 
         logger.note(f"> Loss weights:")
         loss_weights = {
-            # TODO
+            "distill": 1.0,
+            "triplet": 1.0,
+            "quant": 0.05,
+            "balance": 0.01,
+            "decor": 0.01,
+            "margin": 0.2,
         }
         logger.mesg(dict_to_str(loss_weights), indent=2)
 
     def _create_model(self):
         """Create and initialize the hash embedding model."""
         self.model = EmbToHashNet(
-            # TODO
+            input_dim=self.input_dim,
+            hash_bits=self.hash_bits,
+            hidden_dim=self.hidden_dim,
+            dropout=self.dropout,
         ).to(self.device)
 
     def _create_optimizer_and_criterion(self):
@@ -207,6 +330,14 @@ class HasherTrainer:
             weight_decay=self.weight_decay,
         )
         self.criterion = ...  # TODO
+        self.criterion = HashLoss(
+            margin=0.2,
+            w_distill=1.0,
+            w_triplet=1.0,
+            w_quant=0.05,
+            w_balance=0.01,
+            w_decor=0.01,
+        )
 
     def _generate_checkpoint_paths(self):
         """Generate checkpoint file paths based on model parameters."""
@@ -338,6 +469,7 @@ class HasherTrainer:
 
         if not ckpt_path.exists():
             logger.warn(f"  * No existed checkpoint, training from scratch")
+            return 0, float("inf")
 
         logger.mesg(f"  > Loading checkpoint from:")
         logger.file(f"    * {ckpt_path}")
@@ -356,7 +488,12 @@ class HasherTrainer:
         self.model.train()
 
         total_losses = {
-            # TODO
+            "total": 0.0,
+            "sim": 0.0,
+            "distill": 0.0,
+            "quant": 0.0,
+            "bal": 0.0,
+            "decor": 0.0,
         }
         num_batches = len(self.dataloader)
 
@@ -367,12 +504,19 @@ class HasherTrainer:
         for batch_idx, batch in enumerate(self.dataloader):
             anchor_emb = batch["anchor_emb"].to(self.device)
             positive_emb = batch["pos_emb"].to(self.device)
+            negative_emb = batch["neg_emb"].to(self.device)
             # calc hashes
             anchor_hash = self.model(anchor_emb)
             positive_hash = self.model(positive_emb)
+            negative_hash = self.model(negative_emb)
             # calc loss
             loss, loss_dict = self.criterion(
-                # TODO
+                anchor_hash,
+                positive_hash,
+                negative_hash,
+                anchor_emb=anchor_emb,
+                pos_emb=positive_emb,
+                neg_emb=negative_emb,
             )
             # backward pass with gradient clipping
             self.optimizer.zero_grad()
@@ -383,7 +527,10 @@ class HasherTrainer:
             for k, v in loss_dict.items():
                 total_losses[k] += v
             # update progress
-            desc = f"loss={loss_dict['total']:.3f} (s={loss_dict['sim']:.3f})"
+            desc = (
+                f"loss={loss_dict['total']:.3f} "
+                f"(d={loss_dict.get('distill', 0.0):.3f}, s={loss_dict['sim']:.3f})"
+            )
             bar.update(1, desc=desc)
         bar.update(flush=True, linebreak=True)
 
@@ -427,7 +574,9 @@ class HasherTrainer:
         # Learning rate scheduler
         remaining_epochs = epochs - start_epoch
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            # TODO
+            self.optimizer,
+            T_max=max(1, remaining_epochs),
+            eta_min=self.learning_rate * 0.05,
         )
 
         for epoch in range(start_epoch + 1, epochs + 1):
