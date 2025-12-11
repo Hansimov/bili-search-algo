@@ -833,11 +833,17 @@ class EmbeddingBenchmarkScorer:
             "overall": {emb_type: avg_score}
         }
         """
-        # calc scores for each query
         query_scores = {}
         emb_scores_all: dict[str, list[float]] = defaultdict(list)
-        bar = TCLogbar(total=len(bm_data), desc="* scoring")
-        for query, query_data in bm_data.items():
+
+        total_count = len(list(bm_data.items()))
+        if self.max_count:
+            total_count = min(self.max_count, total_count)
+
+        bar = TCLogbar(total=total_count, desc="* scoring")
+        for idx, (query, query_data) in enumerate(bm_data.items()):
+            if idx >= total_count:
+                break
             bar.update(increment=1, desc=f"{chars_slice(query, end=10)}")
             scores = self.calc_query_scores(query_data, field_name)
             query_scores[query] = scores
