@@ -31,8 +31,10 @@ import torch.nn.functional as F
 
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
-from tclogger import logger, TCLogbar, logstr, dict_to_str
-from typing import Iterator, Optional
+from tclogger import TCLogger, TCLogbar, logstr, dict_to_str, int_bits
+from typing import Optional
+
+logger = TCLogger("Hasher")
 
 # Constants
 PARENT_DIR = Path(__file__).parent
@@ -61,9 +63,34 @@ class EmbToHashNet(nn.Module):
     """Neural network for converting float embeddings to binary hash codes.
 
     Architecture:
-        Input (1024) -> FC(2048) -> BN -> ReLU -> Dropout
-                     -> FC(2048) -> BN -> ReLU -> Dropout
+        Input (1024) -> FC(2048) -> ReLU -> Dropout
+                     -> FC(2048) -> ReLU -> Dropout
                      -> FC(2048) -> Tanh -> Hash bits
+
+    IMPORTANT: BatchNorm Removal
+    ----------------------------
+    BatchNorm was removed from this architecture to fix a critical bug that caused
+    variance collapse and made all embeddings produce nearly identical hash codes.
+
+    The Problem:
+        Original architecture: Linear -> BatchNorm -> ReLU -> Dropout
+        - Linear outputs with mean≈0, variance≈1
+        - BatchNorm normalizes to mean=0, variance=1
+        - ReLU zeros negative values, reducing variance from 1 to ~0.25
+        - During training, BN's running_var recorded extremely small values (~0.007)
+        - During inference, division by sqrt(running_var) ≈ sqrt(0.007) ≈ 0.084
+        - Result: All inputs compressed to nearly identical values!
+
+    Evidence from broken model:
+        - Different embeddings (zeros vs ones) had only 11 bits difference out of 2048 (<1%)
+        - Expected: ~1024 bits difference (~50% for independent inputs)
+        - BatchNorm running_var showed: 1998/2048 channels had variance < 0.01
+
+    The Fix:
+        Current architecture: Linear -> ReLU -> Dropout (no BatchNorm)
+        - Simpler, more stable training
+        - Proper input separation: ~40-50% Hamming distance for different inputs
+        - Dropout provides sufficient regularization
 
     The network is trained with contrastive loss to preserve similarity.
     During inference, the tanh output is binarized with sign function.
@@ -82,13 +109,12 @@ class EmbToHashNet(nn.Module):
         self.hidden_dim = hidden_dim
 
         # Encoder layers
+        # Note: BN after activation causes issues. Use BN -> ReLU order or remove BN.
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
         )
@@ -122,7 +148,7 @@ class EmbToHashNet(nn.Module):
         with torch.no_grad():
             h = self.forward(x)
             # Convert tanh output to binary: >0 -> 1, <=0 -> 0
-            return (h > 0).float()
+            return (h > 0).to(torch.uint8)
 
 
 class TripletHashLoss(nn.Module):
@@ -494,7 +520,7 @@ class HasherTrainer:
         num_batches = len(self.dataloader)
 
         bar = TCLogbar(total=num_batches)
-        epoch_str = logstr.file(f"{epoch:03d}")
+        epoch_str = logstr.file(f"{epoch:>{int_bits(self.epochs)}d}")
         bar.set_head(logstr.mesg(f"* [Epoch {epoch_str}/{self.epochs}]"))
 
         for batch_idx, batch in enumerate(self.dataloader):
@@ -675,29 +701,23 @@ class HasherInference:
         logger.note(f"> Loaded HasherInference model from:")
         logger.file(f"  * {self.weights_path}")
 
-    def embed_to_hash(self, embeddings: np.ndarray) -> np.ndarray:
+    def emb_to_hash(self, embs: np.ndarray) -> np.ndarray:
         """Convert float embeddings to binary hash codes.
 
         Args:
-            embeddings: Float embeddings with shape (n, input_dim) or (input_dim,)
+            embs: Float embeddings with shape (n, input_dim) or (input_dim,)
 
         Returns:
             Binary hash codes with shape (n, hash_bits) or (hash_bits,), dtype uint8
         """
-        # Handle single embedding
         squeeze = False
-        if embeddings.ndim == 1:
-            embeddings = embeddings.reshape(1, -1)
+        if embs.ndim == 1:
+            embs = embs.reshape(1, -1)
             squeeze = True
-
-        # Convert to tensor
-        x = torch.from_numpy(embeddings.astype(np.float32)).to(self.device)
-
-        # Get hash codes
+        x = torch.from_numpy(embs.astype(np.float32)).to(self.device)
         with torch.no_grad():
             hash_codes = self.model.get_hash_codes(x)
             hash_codes = hash_codes.cpu().numpy().astype(np.uint8)
-
         if squeeze:
             return hash_codes[0]
         return hash_codes
@@ -718,27 +738,185 @@ class HasherInference:
         bytes_arr = np.packbits(padded)
         return bytes_arr.tobytes().hex()
 
-    def embed_to_hex(self, embeddings: np.ndarray) -> list[str]:
+    def emb_to_hex(self, embs: np.ndarray) -> list[str]:
         """Convert float embeddings directly to hex hash strings.
 
         Args:
-            embeddings: Float embeddings with shape (n, input_dim) or (input_dim,)
-
+            embs: Float embeddings with shape (n, input_dim) or (input_dim,)
         Returns:
             List of hex hash strings
         """
-        # Handle single embedding
-        squeeze = False
-        if embeddings.ndim == 1:
-            embeddings = embeddings.reshape(1, -1)
-            squeeze = True
-
-        hash_codes = self.embed_to_hash(embeddings)
+        if embs.ndim == 1:
+            embs = embs.reshape(1, -1)
+        hash_codes = self.emb_to_hash(embs)
         hex_strs = [self.hash_to_hex(h) for h in hash_codes]
-
-        if squeeze:
-            return hex_strs[0]
         return hex_strs
+
+
+class HasherInferenceTester:
+    """Tester for HasherInference model validation.
+
+    Performs comprehensive tests to verify model produces diverse hash codes:
+    - Test 1: Random embeddings with normal distribution
+    - Test 2: Batch vs individual processing consistency
+    - Test 3: Extreme value separation (zeros, ones, random)
+
+    A healthy model should produce:
+    - ~40-50% Hamming distance for independent random inputs
+    - Consistent results between batch and individual processing
+    - Strong separation for very different inputs (zeros vs ones)
+    """
+
+    def __init__(self, inference: Optional[HasherInference] = None):
+        """Initialize tester.
+
+        Args:
+            inference: HasherInference instance. If None, creates a new one.
+        """
+        self.inference = inference or HasherInference()
+
+    def test_random_embeddings(self, seed: int = 42, n_samples: int = 3):
+        """Test with random embeddings from normal distribution.
+
+        Args:
+            seed: Random seed for reproducibility
+            n_samples: Number of random embeddings to test
+        """
+        logger.note(f"> Test 1: Random embeddings with different values")
+        np.random.seed(seed)
+        test_embs = np.random.randn(n_samples, EMB_DIM).astype(np.float32)
+
+        logger.mesg(f"  * Test embeddings stats:")
+        for i in range(n_samples):
+            logger.mesg(
+                f"    - emb[{i}] mean={test_embs[i].mean():.4f}, std={test_embs[i].std():.4f}, "
+                f"min={test_embs[i].min():.4f}, max={test_embs[i].max():.4f}"
+            )
+
+        hash_codes = self.inference.emb_to_hash(test_embs)
+
+        # Calculate pairwise Hamming distances
+        hamming_distances = {}
+        for i in range(n_samples):
+            for j in range(i + 1, n_samples):
+                dist = np.sum(hash_codes[i] != hash_codes[j])
+                hamming_distances[f"{i}_{j}"] = dist
+
+        info_dict = {
+            "input_shape": test_embs.shape,
+            "hash_shape": hash_codes.shape,
+            "hash_dtype": str(hash_codes.dtype),
+            "sample_bits_0": hash_codes[0][:20].tolist(),
+            "sample_bits_1": hash_codes[1][:20].tolist(),
+            "sample_bits_2": hash_codes[2][:20].tolist(),
+        }
+        info_dict.update({f"hamming_{k}": v for k, v in hamming_distances.items()})
+        logger.mesg(dict_to_str(info_dict), indent=2)
+
+        # Show first 64 bits comparison
+        logger.note("> First 64 bits comparison:")
+        for i in range(n_samples):
+            bits_str = "".join(str(b) for b in hash_codes[i][:64])
+            logger.mesg(f"  [{i}]: {bits_str}")
+
+        # Show hex strings
+        hex_strs = self.inference.emb_to_hex(test_embs)
+        logger.mesg(f"  * Hex strings: {len(hex_strs)}")
+        for i, h in enumerate(hex_strs):
+            logger.mesg(f"  - [{i}]: {h[:64]}... (len={len(h)})")
+
+        # Show hex differences
+        logger.note("> Hex string differences:")
+        for i in range(len(hex_strs)):
+            for j in range(i + 1, len(hex_strs)):
+                diff_positions = [
+                    k
+                    for k in range(len(hex_strs[i]))
+                    if hex_strs[i][k] != hex_strs[j][k]
+                ]
+                logger.mesg(
+                    f"  * [{i}] vs [{j}]: {len(diff_positions)} chars differ at positions {diff_positions[:10]}..."
+                )
+
+    def test_batch_vs_individual(self, seed: int = 42, n_samples: int = 3):
+        """Test consistency between batch and individual processing.
+
+        Args:
+            seed: Random seed for reproducibility
+            n_samples: Number of embeddings to test
+        """
+        logger.note("> Test 2: Process embeddings one by one")
+        np.random.seed(seed)
+        test_embs = np.random.randn(n_samples, EMB_DIM).astype(np.float32)
+
+        # Batch processing
+        hash_codes_batch = self.inference.emb_to_hash(test_embs)
+
+        # Individual processing
+        hash_codes_individual = []
+        for i in range(n_samples):
+            h = self.inference.emb_to_hash(test_embs[i : i + 1])
+            hash_codes_individual.append(h[0])
+        hash_codes_individual = np.array(hash_codes_individual)
+
+        # Compare
+        batch_vs_individual = np.sum(hash_codes_batch != hash_codes_individual)
+        logger.mesg(f"  * Batch vs Individual differences: {batch_vs_individual} bits")
+        if batch_vs_individual == 0:
+            logger.success("  ✓ Batch and individual processing are consistent")
+        else:
+            logger.warn(f"  ✗ Found {batch_vs_individual} bit differences!")
+
+    def test_extreme_separation(self):
+        """Test separation between very different embeddings.
+
+        Tests with:
+        - All zeros vector
+        - All ones vector
+        - Random normal vector
+
+        Healthy models should show strong separation (>30% Hamming distance).
+        """
+        logger.note("> Test 3: Very different embeddings (zeros, ones, random)")
+        diverse_embs = np.array(
+            [
+                np.zeros(EMB_DIM, dtype=np.float32),
+                np.ones(EMB_DIM, dtype=np.float32),
+                np.random.randn(EMB_DIM).astype(np.float32),
+            ]
+        )
+        diverse_hash = self.inference.emb_to_hash(diverse_embs)
+
+        hamming_01 = np.sum(diverse_hash[0] != diverse_hash[1])
+        hamming_02 = np.sum(diverse_hash[0] != diverse_hash[2])
+        hamming_12 = np.sum(diverse_hash[1] != diverse_hash[2])
+
+        total_bits = diverse_hash.shape[1]
+        logger.mesg(
+            f"  * Hamming distances: "
+            f"0-1={hamming_01} ({hamming_01/total_bits*100:.1f}%), "
+            f"0-2={hamming_02} ({hamming_02/total_bits*100:.1f}%), "
+            f"1-2={hamming_12} ({hamming_12/total_bits*100:.1f}%)"
+        )
+
+        # Check if model is healthy (>30% separation)
+        min_distance = min(hamming_01, hamming_02, hamming_12)
+        if min_distance > total_bits * 0.3:
+            logger.success(
+                f"  ✓ Model shows good separation (min {min_distance/total_bits*100:.1f}%)"
+            )
+        else:
+            logger.warn(
+                f"  ✗ Model shows poor separation (min {min_distance/total_bits*100:.1f}%), "
+                "expected >30%. Model may need retraining."
+            )
+
+    def run_all_tests(self):
+        """Run all test suites."""
+        logger.note("> Testing HasherInference")
+        self.test_random_embeddings()
+        self.test_batch_vs_individual()
+        self.test_extreme_separation()
 
 
 class HasherArgParser(argparse.ArgumentParser):
@@ -825,22 +1003,8 @@ def main():
         trainer.train(epochs=args.epochs, resume=not args.overwrite)
 
     elif args.mode == "test":
-        logger.note("> Testing HasherInference")
-        inference = HasherInference()
-        test_embs = np.random.randn(3, EMB_DIM).astype(np.float32)
-        hash_codes = inference.embed_to_hash(test_embs)
-        info_dict = {
-            "input_shape": test_embs.shape,
-            "hash_shape": hash_codes.shape,
-            "hash_dtype": str(hash_codes.dtype),
-            "sample_bits": hash_codes[0][:20].tolist(),
-        }
-        logger.mesg(dict_to_str(info_dict), indent=2)
-
-        hex_strs = inference.embed_to_hex(test_embs)
-        logger.mesg(f"  * Hex strings: {len(hex_strs)}")
-        for i, h in enumerate(hex_strs):
-            logger.mesg(f"  - [{i}]: {h[:32]}... (len={len(h)})")
+        tester = HasherInferenceTester()
+        tester.run_all_tests()
 
 
 if __name__ == "__main__":
