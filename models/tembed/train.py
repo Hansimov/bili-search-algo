@@ -782,7 +782,9 @@ class ShardsReader:
     """
 
     # Maximum shards to keep in memory (LRU cache)
-    MAX_CACHED_SHARDS = 3
+    # Each shard ~1GB, then 50 shards consume ~50GB memory
+    # This prevents constant shard eviction during shuffled batch loading
+    MAX_CACHED_SHARDS = 50
 
     def __init__(
         self,

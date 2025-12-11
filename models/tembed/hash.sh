@@ -5,8 +5,8 @@
 
 # Usage:
 # cd ~/repos/bili-search-algo
-# ./models/tembed/hash.sh [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-w]
-# Example: ./models/tembed/hash.sh -hd 2048 -hb 2048 -ms 100000 -ep 10 -w
+# SYNTAX : ./models/tembed/hash.sh [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-n max_count] [-w]
+# Example: ./models/tembed/hash.sh -hd 2048 -hb 2048 -ms 100000 -ep 10 -n 1000 -w
 
 # color codes
 RED='\033[1;31m'
@@ -32,11 +32,12 @@ echo_header() {
 }
 
 echo_params() {
-    echo -e "> ${MAGENTA}Training Parameters:${NC}"
+    echo -e "${MAGENTA}> Training Parameters:${NC}"
     echo -e "  * ${CYAN}hidden_dim${NC}   : ${GREEN}$HIDDEN_DIM${NC}"
     echo -e "  * ${CYAN}hash_bits${NC}    : ${GREEN}$HASH_BITS${NC}"
     echo -e "  * ${CYAN}max_samples${NC}  : ${GREEN}$MAX_SAMPLES${NC}"
     echo -e "  * ${CYAN}epochs${NC}       : ${GREEN}$EPOCHS${NC}"
+    echo -e "  * ${CYAN}max_count${NC}    : ${GREEN}$MAX_COUNT${NC}"
     echo -e "  * ${CYAN}overwrite${NC}    : ${GREEN}$OVERWRITE${NC}"
 }
 
@@ -46,7 +47,7 @@ echo_complete() {
 
 run_cmd() {
     local CMD="$1"
-    echo -e "> ${MAGENTA}Running${NC}: ${YELLOW}$CMD${NC}"
+    echo -e "${MAGENTA}> Running:${NC} ${YELLOW}$CMD${NC}"
     eval $CMD
 }
 
@@ -69,13 +70,17 @@ parse_args() {
                 EPOCHS="$2"
                 shift 2
                 ;;
+            -n|--max-count)
+                MAX_COUNT="$2"
+                shift 2
+                ;;
             -w|--overwrite)
                 OVERWRITE="true"
                 shift
                 ;;
             *)
                 echo -e "${RED}Unknown parameter: $1${NC}"
-                echo "Usage: $0 [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-w]"
+                echo "Usage: $0 [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-n max_count] [-w]"
                 exit 1
                 ;;
         esac
@@ -92,6 +97,7 @@ HASH_BITS=""
 HIDDEN_DIM=""
 MAX_SAMPLES=""
 EPOCHS=""
+MAX_COUNT=""
 OVERWRITE="false"
 parse_args "$@"
 
@@ -115,16 +121,21 @@ run_cmd "python -m models.tembed.hasher -m test"
 # [Pre-Calc]
 echo_header "Pre-Calc Learned Hash Embeddings"
 CALC_CMD="python -m models.tembed.calc -p -l"
+[[ -n "$MAX_COUNT" ]] && CALC_CMD="$CALC_CMD -n $MAX_COUNT"
 [[ "$OVERWRITE" == "true" ]] && CALC_CMD="$CALC_CMD -w"
 run_cmd "$CALC_CMD"
 
 # [Benchmark]
 echo_header "Build Benchmark Ranks (Learned Hash)"
-run_cmd "python -m models.tembed.calc -r -l"
+BENCH_CMD="python -m models.tembed.calc -r -l"
+[[ -n "$MAX_COUNT" ]] && BENCH_CMD="$BENCH_CMD -n $MAX_COUNT"
+run_cmd "$BENCH_CMD"
 
 # [Score]
 echo_header "Score Benchmark Ranks (Learned Hash)"
-run_cmd "python -m models.tembed.calc -s"
+SCORE_CMD="python -m models.tembed.calc -s"
+[[ -n "$MAX_COUNT" ]] && SCORE_CMD="$SCORE_CMD -n $MAX_COUNT"
+run_cmd "$SCORE_CMD"
 
 # [Complete]
 echo_complete

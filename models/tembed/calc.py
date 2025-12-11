@@ -227,7 +227,7 @@ class LearnedHashEmbedder(EmbedInterface):
         """Get embeddings from qwen3-0.6b and convert to learned hash strings."""
         embs = self.client.embed(texts)
         embs_np = np.array(embs, dtype=np.float32)
-        hash_strs = self.hasher.embed_to_hex(embs_np)
+        hash_strs = self.hasher.emb_to_hex(embs_np)
         return hash_strs
 
 
