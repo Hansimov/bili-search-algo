@@ -16,6 +16,7 @@ from typing import Literal, Optional, Union, Any
 from configs.envs import REDIS_ENVS
 from models.tembed.sample import PassageJsonManager
 from models.tembed.lsh import LSHConverter
+from models.tembed.hasher import HasherInference
 
 EmbedModelType = Literal["gte", "bge", "qwen3_06b"]
 EmbedKeyType = Literal["qr", "bv"]
@@ -191,7 +192,48 @@ class LSHEmbedder(EmbedInterface):
         return hash_strs
 
 
-EmbedClientType = Union[EmbedClient, RandomEmbedder, HashEmbedder, LSHEmbedder]
+class LearnedHashEmbedder(EmbedInterface):
+    """Convert float-type qwen3-0.6b embeddings to hash using trained neural network.
+
+    This embedder uses a neural network trained with contrastive learning to
+    convert 1024-dim float embeddings to 2048-bit hash codes while preserving
+    similarity relationships from the original embedding space.
+    """
+
+    def __init__(self, weights_path: str = None, device: str = None):
+        """Initialize learned hash embedder.
+
+        Args:
+            weights_path: Path to trained model weights (default: hasher_best.pt)
+            device: Device for inference (auto-detected if None)
+        """
+        self.init_client()
+        self.init_hasher(weights_path=weights_path, device=device)
+
+    def init_client(self):
+        # python -m tfmx.embed_server -t "tei" -m "Qwen/Qwen3-Embedding-0.6B" -p 28887 -b
+        self.client = EmbedClient(
+            endpoint=f"http://{EMB_HOST}:28887/embed",
+            api_format="tei",
+            res_format="list2d",
+            verbose=False,
+        )
+
+    def init_hasher(self, weights_path: str = None, device: str = None):
+        """Initialize the trained hasher model."""
+        self.hasher = HasherInference(weights_path=weights_path, device=device)
+
+    def embed(self, texts: StrsType) -> list[str]:
+        """Get embeddings from qwen3-0.6b and convert to learned hash strings."""
+        embs = self.client.embed(texts)
+        embs_np = np.array(embs, dtype=np.float32)
+        hash_strs = self.hasher.embed_to_hex(embs_np)
+        return hash_strs
+
+
+EmbedClientType = Union[
+    EmbedClient, RandomEmbedder, HashEmbedder, LSHEmbedder, LearnedHashEmbedder
+]
 
 
 class EmbeddingPreCalculator:
@@ -854,9 +896,10 @@ class CalculatorArgParser(argparse.ArgumentParser):
         self.add_argument("-s", "--scorer", action="store_true")
         # options: prettify_json
         self.add_argument("-j", "--prettify-json", action="store_true")
-        # models: baseline, compare
+        # models: baseline, compare, learned
         self.add_argument("-b", "--baseline", action="store_true")
         self.add_argument("-c", "--compare", action="store_true")
+        self.add_argument("-l", "--learned", action="store_true")
         self.args, _ = self.parse_known_args()
 
 
@@ -878,6 +921,10 @@ def main():
             lsh_embedder = LSHEmbedder(bitn=args.bitn, seed=args.seed)
             calculator.set_embed_clients({"lsh": lsh_embedder})
             calculator.run()
+        if args.learned:
+            learned_embedder = LearnedHashEmbedder()
+            calculator.set_embed_clients({"learned": learned_embedder})
+            calculator.run()
 
     if args.builder:
         benchmark_builder = EmbeddingBenchmarkBuilder(
@@ -889,6 +936,12 @@ def main():
         if args.compare:
             # embed_types = ["hash"]
             embed_types = ["lsh"]
+            benchmark_builder.set_embed_types(
+                embed_types, is_calc_rank_med=False, ele_type="hash"
+            )
+            benchmark_builder.run()
+        if args.learned:
+            embed_types = ["learned"]
             benchmark_builder.set_embed_types(
                 embed_types, is_calc_rank_med=False, ele_type="hash"
             )
@@ -908,12 +961,12 @@ if __name__ == "__main__":
     # python -m models.tembed.calc -r -b -n 10
     # python -m models.tembed.calc -r -b
 
-    # Case 3: (compare) pre-calc embeddings
+    # Case 3: (compare) pre-calc embeddings for LSH
     # python -m models.tembed.calc -p -c
     # python -m models.tembed.calc -p -c -wk
     # python -m models.tembed.calc -p -c -wk -sd 1
 
-    # Case 4: (compare) build benchmark ranks
+    # Case 4: (compare) build benchmark ranks for LSH
     # python -m models.tembed.calc -r -c -n 10
     # python -m models.tembed.calc -r -c
     # python -m models.tembed.calc -r -c -f
@@ -927,4 +980,16 @@ if __name__ == "__main__":
     # python -m models.tembed.calc -r -b -c
 
     # Case 6: score embeddings based on benchmark ranks
+    # python -m models.tembed.calc -s
+
+    # Case 7: (learned) pre-calc embeddings for LearnedHashEmbedder
+    # python -m models.tembed.calc -p -l
+
+    # Case 8: (learned) build benchmark ranks for LearnedHashEmbedder
+    # python -m models.tembed.calc -r -l -n 10
+    # python -m models.tembed.calc -r -l
+
+    # Case 9: run all (baseline + learned) and score
+    # python -m models.tembed.calc -p -b -l
+    # python -m models.tembed.calc -r -b -l
     # python -m models.tembed.calc -s
