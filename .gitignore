@@ -5,6 +5,7 @@ build
 data/
 logs/
 checkpoints/
+weights/
 cmteb_results/
 passages/
 benchmarks/
@@ -24,4 +25,5 @@ secrets.json
 *.out
 *.log
 *.lm
+*.chats
 *.rkdb
