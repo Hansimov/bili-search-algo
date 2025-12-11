@@ -44,7 +44,6 @@ class EmbToHashNet(nn.Module):
         self.hidden_dim = hidden_dim
         self.dropout = dropout
         self.net = nn.Sequential(
-            nn.LayerNorm(self.input_dim),
             nn.Linear(self.input_dim, self.hidden_dim, bias=True),
             nn.GELU(),
             nn.Dropout(self.dropout),
@@ -61,6 +60,8 @@ class EmbToHashNet(nn.Module):
             )
         if x.shape[1] != self.input_dim:
             raise ValueError(f"Expected input_dim={self.input_dim}, got {x.shape[1]}")
+        # Normalize input for cosine-geometry consistency (and avoid LayerNorm constant collapse).
+        x = torch.nn.functional.normalize(x, dim=-1)
         # Use tanh to keep outputs in (-1, 1), matching test-time {-1,1} similarity.
         return torch.tanh(self.net(x))
 
@@ -85,20 +86,26 @@ class HashLoss(nn.Module):
         self,
         margin: float = 0.2,
         w_distill: float = 1.0,
+        w_matrix: float = 0.25,
         w_triplet: float = 1.0,
-        w_quant: float = 0.05,
-        w_balance: float = 0.01,
-        w_decor: float = 0.01,
+        w_quant: float = 0.02,
+        w_balance: float = 0.02,
+        w_decor: float = 0.005,
         eps: float = 1e-8,
     ):
         super().__init__()
         self.margin = float(margin)
         self.w_distill = float(w_distill)
+        self.w_matrix = float(w_matrix)
         self.w_triplet = float(w_triplet)
         self.w_quant = float(w_quant)
         self.w_balance = float(w_balance)
         self.w_decor = float(w_decor)
         self.eps = float(eps)
+
+    def _cos_matrix(self, x: torch.Tensor) -> torch.Tensor:
+        x = torch.nn.functional.normalize(x, dim=-1, eps=self.eps)
+        return x @ x.T
 
     def _signed_cos(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         a = torch.nn.functional.normalize(a, dim=-1, eps=self.eps)
@@ -141,24 +148,33 @@ class HashLoss(nn.Module):
 
         # Distillation: match hash-space similarities to embedding-space cosine
         loss_distill = torch.tensor(0.0, device=anchor_hash.device)
+        loss_matrix = torch.tensor(0.0, device=anchor_hash.device)
         if anchor_emb is not None and pos_emb is not None and neg_emb is not None:
-            t_ap = self._signed_cos(anchor_emb, pos_emb).detach()
-            t_an = self._signed_cos(anchor_emb, neg_emb).detach()
+            anchor_emb_n = torch.nn.functional.normalize(anchor_emb, dim=-1, eps=self.eps)
+            pos_emb_n = torch.nn.functional.normalize(pos_emb, dim=-1, eps=self.eps)
+            neg_emb_n = torch.nn.functional.normalize(neg_emb, dim=-1, eps=self.eps)
+
+            t_ap = self._signed_cos(anchor_emb_n, pos_emb_n).detach()
+            t_an = self._signed_cos(anchor_emb_n, neg_emb_n).detach()
             # Smooth L1 is robust and keeps scale comparable
             loss_distill = torch.nn.functional.smooth_l1_loss(
                 sim_ap, t_ap
             ) + torch.nn.functional.smooth_l1_loss(sim_an, t_an)
 
-        loss_quant = (
-            self._quant_loss(anchor_hash)
-            + self._quant_loss(pos_hash)
-            + self._quant_loss(neg_hash)
-        )
+            # In-batch matrix distillation on anchors: preserve global neighborhood geometry.
+            # Use SmoothL1 on cosine similarity matrices.
+            s_mat = self._cos_matrix(anchor_hash)
+            t_mat = self._cos_matrix(anchor_emb_n).detach()
+            loss_matrix = torch.nn.functional.smooth_l1_loss(s_mat, t_mat)
+
+        # Regularize anchors only to reduce over-constraint and collapse risk.
+        loss_quant = self._quant_loss(anchor_hash)
         loss_bal = self._balance_loss(anchor_hash)
         loss_decor = self._decor_loss(anchor_hash)
 
         total = (
             self.w_distill * loss_distill
+            + self.w_matrix * loss_matrix
             + self.w_triplet * loss_triplet
             + self.w_quant * loss_quant
             + self.w_balance * loss_bal
@@ -169,6 +185,7 @@ class HashLoss(nn.Module):
             "total": float(total.detach().cpu().item()),
             "sim": float(loss_triplet.detach().cpu().item()),
             "distill": float(loss_distill.detach().cpu().item()),
+            "matrix": float(loss_matrix.detach().cpu().item()),
             "quant": float(loss_quant.detach().cpu().item()),
             "bal": float(loss_bal.detach().cpu().item()),
             "decor": float(loss_decor.detach().cpu().item()),
@@ -305,10 +322,11 @@ class HasherTrainer:
         logger.note(f"> Loss weights:")
         loss_weights = {
             "distill": 1.0,
+            "matrix": 0.25,
             "triplet": 1.0,
-            "quant": 0.05,
-            "balance": 0.01,
-            "decor": 0.01,
+            "quant": 0.02,
+            "balance": 0.02,
+            "decor": 0.005,
             "margin": 0.2,
         }
         logger.mesg(dict_to_str(loss_weights), indent=2)
@@ -333,10 +351,11 @@ class HasherTrainer:
         self.criterion = HashLoss(
             margin=0.2,
             w_distill=1.0,
+            w_matrix=0.25,
             w_triplet=1.0,
-            w_quant=0.05,
-            w_balance=0.01,
-            w_decor=0.01,
+            w_quant=0.02,
+            w_balance=0.02,
+            w_decor=0.005,
         )
 
     def _generate_checkpoint_paths(self):
@@ -491,6 +510,7 @@ class HasherTrainer:
             "total": 0.0,
             "sim": 0.0,
             "distill": 0.0,
+            "matrix": 0.0,
             "quant": 0.0,
             "bal": 0.0,
             "decor": 0.0,
@@ -505,6 +525,11 @@ class HasherTrainer:
             anchor_emb = batch["anchor_emb"].to(self.device)
             positive_emb = batch["pos_emb"].to(self.device)
             negative_emb = batch["neg_emb"].to(self.device)
+
+            # Normalize embeddings so teacher cosine is well-defined and stable.
+            anchor_emb = torch.nn.functional.normalize(anchor_emb, dim=-1)
+            positive_emb = torch.nn.functional.normalize(positive_emb, dim=-1)
+            negative_emb = torch.nn.functional.normalize(negative_emb, dim=-1)
             # calc hashes
             anchor_hash = self.model(anchor_emb)
             positive_hash = self.model(positive_emb)
@@ -529,7 +554,8 @@ class HasherTrainer:
             # update progress
             desc = (
                 f"loss={loss_dict['total']:.3f} "
-                f"(d={loss_dict.get('distill', 0.0):.3f}, s={loss_dict['sim']:.3f})"
+                f"(d={loss_dict.get('distill', 0.0):.3f}, "
+                f"m={loss_dict.get('matrix', 0.0):.3f}, s={loss_dict['sim']:.3f})"
             )
             bar.update(1, desc=desc)
         bar.update(flush=True, linebreak=True)
@@ -694,6 +720,7 @@ class HasherInference:
             embs = embs.reshape(1, -1)
             squeeze = True
         x = torch.from_numpy(embs.astype(np.float32)).to(self.device)
+        x = torch.nn.functional.normalize(x, dim=-1)
         with torch.no_grad():
             hash_codes = self.model.get_hash_codes(x)
             hash_codes = hash_codes.cpu().numpy().astype(np.uint8)
@@ -816,11 +843,11 @@ class HasherInferenceTester:
         info_dict.update({f"hamming_{k}": v for k, v in hamming_distances.items()})
         logger.mesg(dict_to_str(info_dict), indent=2)
 
-        # compare first 64 bits
-        logger.note(f"  * First 64 bits comparison:")
+        # log hex strings
+        logger.note(f"  * Hex strings:")
         for i in range(n_samples):
-            bits_str = "".join(str(b) for b in hash_codes[i][:64])
-            logger.mesg(f"    - [{i}]: {bits_str}")
+            hex_str = self.inference.hash_to_hex(hash_codes[i])
+            logger.mesg(f"    - [{i}]: {hex_str}")
 
         # check diversity
         avg_hamming = np.mean(list(hamming_distances.values()))
