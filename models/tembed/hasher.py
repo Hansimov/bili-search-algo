@@ -419,18 +419,11 @@ class HasherTrainer:
         with open(self.config_path, "w") as f:
             json.dump(config, f, indent=2)
 
-        logger.mesg(f"  * checkpoint: {hasher_ckpt}")
+        logger.mesg(f"  * checkpoint: {logstr.file(hasher_ckpt)}")
 
     def init_dataloader(self, num_workers: int = 4):
         """Initialize the data loader."""
-        logger.note(f"> Loading training data from:")
-        logger.file(f"  * {self.data_dir}")
-
         dataset = TrainSamplesDataset(self.data_dir, max_samples=self.max_samples)
-        logger.mesg(f"  samples: {len(dataset)}")
-        if self.max_samples is not None:
-            logger.mesg(f"  max_samples: {self.max_samples}")
-
         self.dataloader = DataLoader(
             dataset,
             batch_size=self.batch_size,
@@ -439,7 +432,14 @@ class HasherTrainer:
             pin_memory=True,
             drop_last=True,
         )
-        logger.mesg(f"  batches: {len(self.dataloader)}")
+        logger.note(f"> Loaded training dataset:")
+        info_dict = {
+            "data_dir": str(self.data_dir),
+            "batch_size": self.batch_size,
+            "dataset_len": len(dataset),
+            "batches": len(self.dataloader),
+        }
+        logger.mesg(dict_to_str(info_dict), indent=2)
 
     def save_checkpoint(self, epoch: int, loss: float, is_best: bool = False):
         """Save training checkpoint."""
@@ -493,8 +493,9 @@ class HasherTrainer:
         total_losses = {"triplet": 0, "quant": 0, "balance": 0, "total": 0}
         num_batches = len(self.dataloader)
 
-        logbar = TCLogbar(total=num_batches)
-        logbar.set_head(logstr.mesg(f"* [Epoch {epoch:03d}]"))
+        bar = TCLogbar(total=num_batches)
+        epoch_str = logstr.file(f"{epoch:03d}")
+        bar.set_head(logstr.mesg(f"* [Epoch {epoch_str}/{self.epochs}]"))
 
         for batch_idx, batch in enumerate(self.dataloader):
             # Move data to device
@@ -522,9 +523,9 @@ class HasherTrainer:
                 f"q={loss_dict['quant']:.3f}, "
                 f"b={loss_dict['balance']:.3f})"
             )
-            logbar.update(1, desc=desc)
+            bar.update(1, desc=desc)
+        bar.update(flush=True, linebreak=True)
 
-        # Average losses
         avg_losses = {k: v / num_batches for k, v in total_losses.items()}
         return avg_losses
 
@@ -537,6 +538,7 @@ class HasherTrainer:
         """
         logger.note(f"> Starting training for {epochs} epochs")
 
+        self.epochs = epochs
         start_epoch = 0
         if resume:
             start_epoch = self.load_checkpoint()
@@ -551,9 +553,6 @@ class HasherTrainer:
         for epoch in range(start_epoch + 1, epochs + 1):
             avg_losses = self.train_epoch(epoch)
             lr = self.optimizer.param_groups[0]["lr"]
-            # Log epoch summary
-            print()
-            logger.okay(f"  * loss={avg_losses['total']:.4f}, lr={lr:.2e}")
             # Update scheduler
             self.scheduler.step()
             # Save checkpoint
