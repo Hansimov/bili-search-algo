@@ -5,8 +5,8 @@
 
 # Usage:
 # cd ~/repos/bili-search-algo
-# SYNTAX : ./models/tembed/hash.sh [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-n max_count] [-w]
-# Example: ./models/tembed/hash.sh -hd 2048 -hb 2048 -ms 100000 -ep 10 -n 1000 -w
+# SYNTAX : ./models/tembed/hash.sh [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-n max_count] [-rm] [-w]
+# Example: ./models/tembed/hash.sh -hd 2048 -hb 2048 -ms 100000 -ep 10 -n 1000 -rm -w
 
 # color codes
 RED='\033[1;31m'
@@ -38,6 +38,7 @@ echo_params() {
     echo -e "  * ${CYAN}max_samples${NC}  : ${GREEN}$MAX_SAMPLES${NC}"
     echo -e "  * ${CYAN}epochs${NC}       : ${GREEN}$EPOCHS${NC}"
     echo -e "  * ${CYAN}max_count${NC}    : ${GREEN}$MAX_COUNT${NC}"
+    echo -e "  * ${CYAN}remove_weights${NC}: ${GREEN}$REMOVE_WEIGHTS${NC}"
     echo -e "  * ${CYAN}overwrite${NC}    : ${GREEN}$OVERWRITE${NC}"
 }
 
@@ -74,13 +75,17 @@ parse_args() {
                 MAX_COUNT="$2"
                 shift 2
                 ;;
+            -rm|--remove-weights)
+                REMOVE_WEIGHTS="true"
+                shift
+                ;;
             -w|--overwrite)
                 OVERWRITE="true"
                 shift
                 ;;
             *)
                 echo -e "${RED}Unknown parameter: $1${NC}"
-                echo "Usage: $0 [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-n max_count] [-w]"
+                echo "Usage: $0 [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-n max_count] [-w] [-rm]"
                 exit 1
                 ;;
         esac
@@ -98,6 +103,7 @@ HIDDEN_DIM=""
 MAX_SAMPLES=""
 EPOCHS=""
 MAX_COUNT=""
+REMOVE_WEIGHTS="false"
 OVERWRITE="false"
 parse_args "$@"
 
@@ -112,6 +118,7 @@ CMD="python -m models.tembed.hasher -m train"
 [[ -n "$HASH_BITS" ]] && CMD="$CMD -hb $HASH_BITS"
 [[ -n "$MAX_SAMPLES" ]] && CMD="$CMD -ms $MAX_SAMPLES"
 [[ -n "$EPOCHS" ]] && CMD="$CMD -ep $EPOCHS"
+[[ "$REMOVE_WEIGHTS" == "true" ]] && CMD="$CMD -rm"
 run_cmd "$CMD"
 
 # [Test]
