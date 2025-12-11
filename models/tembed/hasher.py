@@ -1,120 +1,35 @@
-"""Learned Hash Embedder Training Module.
-
-This module implements training for a neural network that maps float embeddings (1024-dim)
-to binary hash codes (2048-dim bits) using contrastive learning.
-
-Training Approach:
-- Uses triplet loss with (anchor, positive, negative) samples
-- Positives are similar embeddings (from Faiss top-k retrieval)
-- Negatives are previous sample's anchor (hard negative mining)
-- Loss preserves similarity: similar embeddings -> similar hash codes
-
-Architecture:
-- Input: 1024-dim float32 embedding
-- Hidden layers with batch normalization and dropout
-- Output: 2048-dim hash codes (via tanh -> sign for binary)
-
-Usage:
-    # Training
-    python -m models.tembed.hasher -m train -ep 50
-
-    # Inference test
-    python -m models.tembed.hasher -m test
-"""
-
 import argparse
 import json
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from pathlib import Path
-from torch.utils.data import Dataset, DataLoader
 from tclogger import TCLogger, TCLogbar, logstr, dict_to_str, int_bits
+from torch.utils.data import Dataset, DataLoader
 from typing import Optional
+
+from models.tembed.train import TrainSamplesManager
 
 logger = TCLogger("Hasher")
 
-# Constants
 PARENT_DIR = Path(__file__).parent
 WEIGHTS_DIR = PARENT_DIR / "weights"
 SAMPLES_DIR = Path("/media/data/tembed/train_samples")
 
-# Model architecture
 EMB_DIM = 1024
 HASH_BITS = 2048
 HIDDEN_DIM = 2048
 DROPOUT = 0.1
 
-# Training hyperparameters
 BATCH_SIZE = 256
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 1e-4
-EPOCHS = 50
-
-# Loss parameters
-# MARGIN_RATIO is relative to HASH_BITS (e.g., 0.2 = 20% of hash bits)
-# For HASH_BITS=2048, MARGIN_RATIO=0.2 means MARGIN=409.6
-# This requires d(anchor, neg) - d(anchor, pos) > 20% of hash bits
-MARGIN_RATIO = 0.2
-# Reduce quantization and balance weights to prioritize triplet and similarity losses
-QUANT_WEIGHT = 0.01
-BALANCE_WEIGHT = 0.001
-# CRITICAL FIX #1: SIM_WEIGHT must be large enough to prevent range shift
-# Problem: MSE similarity loss has magnitude ~0.25, while triplet loss is ~400 (initially)
-# With SIM_WEIGHT=0.2, sim contributes only 0.05, completely dominated by triplet
-# This causes hash similarities to shift upward (+0.14 offset from embedding similarities)
-# Solution: Set SIM_WEIGHT=1000 to make similarity preservation the PRIMARY objective
-# At convergence: triplet~20, sim~0.2, weighted: 20 vs 200, sim dominates 10:1
-SIM_WEIGHT = 1000.0
-
-# CRITICAL FIX #2: Use Straight-Through Estimator (STE) during training
-# Problem: Training uses continuous hash codes [-1,1], but inference uses binary {0,1}
-# This mismatch causes the model to learn continuous optimizations that don't transfer
-# to binary codes, resulting in poor benchmark performance (0.3-0.4 vs expected >0.6)
-# Solution: Use STE to train with binary codes {-1,1} while maintaining gradients
-# - Forward: h_binary = sign(tanh(x)), producing {-1, 1}
-# - Backward: gradients flow through tanh (straight-through estimator)
-# This ensures training behavior matches inference binary quantization
+EPOCHS = 20
 
 
 class EmbToHashNet(nn.Module):
-    """Neural network for converting float embeddings to binary hash codes.
-
-    Architecture:
-        Input (1024) -> FC(2048) -> ReLU -> Dropout
-                     -> FC(2048) -> ReLU -> Dropout
-                     -> FC(2048) -> Tanh -> Hash bits
-
-    IMPORTANT: BatchNorm Removal
-    ----------------------------
-    BatchNorm was removed from this architecture to fix a critical bug that caused
-    variance collapse and made all embeddings produce nearly identical hash codes.
-
-    The Problem:
-        Original architecture: Linear -> BatchNorm -> ReLU -> Dropout
-        - Linear outputs with mean≈0, variance≈1
-        - BatchNorm normalizes to mean=0, variance=1
-        - ReLU zeros negative values, reducing variance from 1 to ~0.25
-        - During training, BN's running_var recorded extremely small values (~0.007)
-        - During inference, division by sqrt(running_var) ≈ sqrt(0.007) ≈ 0.084
-        - Result: All inputs compressed to nearly identical values!
-
-    Evidence from broken model:
-        - Different embeddings (zeros vs ones) had only 11 bits difference out of 2048 (<1%)
-        - Expected: ~1024 bits difference (~50% for independent inputs)
-        - BatchNorm running_var showed: 1998/2048 channels had variance < 0.01
-
-    The Fix:
-        Current architecture: Linear -> ReLU -> Dropout (no BatchNorm)
-        - Simpler, more stable training
-        - Proper input separation: ~40-50% Hamming distance for different inputs
-        - Dropout provides sufficient regularization
-
-    The network is trained with contrastive loss to preserve similarity.
-    During inference, the tanh output is binarized with sign function.
-    """
+    """Embedding to Hash via Neural-Network"""
 
     def __init__(
         self,
@@ -127,250 +42,37 @@ class EmbToHashNet(nn.Module):
         self.input_dim = input_dim
         self.hash_bits = hash_bits
         self.hidden_dim = hidden_dim
+        self.dropout = dropout
+        # TODO
 
-        # Encoder layers
-        # Note: BN after activation causes issues. Use BN -> ReLU order or remove BN.
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-        )
-
-        # Hash projection layer
-        self.hash_layer = nn.Linear(hidden_dim, hash_bits)
-
-    def forward(self, x: torch.Tensor, use_ste: bool = False) -> torch.Tensor:
-        """Forward pass returning continuous or binary hash codes.
-
-        Args:
-            x: Input embeddings with shape (batch, input_dim)
-            use_ste: If True, use straight-through estimator for binary codes
-
-        Returns:
-            Hash codes with shape (batch, hash_bits)
-            - If use_ste=False: continuous codes in range [-1, 1]
-            - If use_ste=True: binary codes {-1, 1} with gradients from tanh
-        """
-        h = self.encoder(x)
-        h = self.hash_layer(h)
-        h = torch.tanh(h)
-
-        if use_ste:
-            # Straight-through estimator: forward uses binary {-1,1}, backward uses tanh gradient
-            # This ensures training and inference use the same scale
-            h_binary = torch.sign(h)  # Convert to {-1, 0, 1}
-            # Handle the rare case of exactly 0 (treat as +1)
-            h_binary = torch.where(h_binary == 0, torch.ones_like(h_binary), h_binary)
-            # Straight-through: forward = binary, backward = continuous gradient
-            h = h_binary + h - h.detach()
-
-        return h
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # TODO
+        pass
 
     def get_hash_codes(self, x: torch.Tensor) -> torch.Tensor:
-        """Get binary hash codes (0/1) from input embeddings.
-
-        Args:
-            x: Input embeddings with shape (batch, input_dim)
-
-        Returns:
-            Binary hash codes with shape (batch, hash_bits), values 0 or 1
-        """
         with torch.no_grad():
-            h = self.forward(x, use_ste=False)  # Always use continuous for inference
-            # Convert tanh output to binary: >0 -> 1, <=0 -> 0
+            h = self.forward(x)
+            # positive -> 1, negative -> 0
             return (h > 0).to(torch.uint8)
 
 
-class TripletHashLoss(nn.Module):
-    """Triplet loss for hash code learning.
-
-    Combines:
-    1. Triplet margin loss: anchor closer to positive than negative
-    2. Quantization loss: encourage outputs to be close to -1 or 1
-    3. Bit balance loss: encourage equal distribution of 0s and 1s
-    4. Similarity preservation loss: preserve relative similarities from embedding space
-
-    The loss preserves similarity from original embeddings in hash space.
-    """
-
-    def __init__(
-        self,
-        hash_bits: int = HASH_BITS,
-        margin_ratio: float = MARGIN_RATIO,
-        quant_weight: float = QUANT_WEIGHT,
-        balance_weight: float = BALANCE_WEIGHT,
-        sim_weight: float = SIM_WEIGHT,
-    ):
-        super().__init__()
-        self.hash_bits = hash_bits
-        self.margin = hash_bits * margin_ratio  # Convert ratio to absolute value
-        self.quant_weight = quant_weight
-        self.balance_weight = balance_weight
-        self.sim_weight = sim_weight
-
-    def hamming_distance(self, h1: torch.Tensor, h2: torch.Tensor) -> torch.Tensor:
-        """Compute differentiable Hamming distance for binary codes {-1, 1}.
-
-        For binary codes in {-1, 1}, Hamming distance is the count of differing bits.
-        When h1[i] != h2[i]: (h1[i] - h2[i])^2 = 4 (e.g., 1-(-1)=2, squared=4)
-        When h1[i] == h2[i]: (h1[i] - h2[i])^2 = 0
-
-        So: hamming_distance = sum((h1 - h2)^2) / 4
-
-        Args:
-            h1, h2: Binary hash codes with shape (batch, hash_bits), values in {-1, 1}
-
-        Returns:
-            Hamming distances with shape (batch,)
-        """
-        # For binary {-1,1}: (h1-h2)^2 is 4 when different, 0 when same
-        distance = ((h1 - h2) ** 2).sum(dim=-1) / 4
-        return distance
-
-    def compute_quantization_loss(
-        self, anchor: torch.Tensor, positive: torch.Tensor, negative: torch.Tensor
-    ) -> torch.Tensor:
-        """Compute quantization loss to encourage binary values {-1, 1}.
-
-        For {-1,1} codes: loss = 1 - h^2
-        This is 0 when h=-1 or h=1, maximum 1 when h=0
-        """
-        quant_loss = (1 - anchor.pow(2)).mean()
-        quant_loss += (1 - positive.pow(2)).mean()
-        quant_loss += (1 - negative.pow(2)).mean()
-        return quant_loss / 3
-
-    def compute_balance_loss(
-        self, anchor: torch.Tensor, positive: torch.Tensor, negative: torch.Tensor
-    ) -> torch.Tensor:
-        """Compute bit balance loss: mean of each bit should be close to 0 for {-1,1}."""
-        all_codes = torch.cat([anchor, positive, negative], dim=0)
-        bit_means = all_codes.mean(dim=0)  # Mean of each bit across batch
-        return bit_means.pow(2).mean()
-
-    def compute_similarity_loss(
-        self,
-        anchor: torch.Tensor,
-        positive: torch.Tensor,
-        negative: torch.Tensor,
-        anchor_emb: torch.Tensor,
-        positive_emb: torch.Tensor,
-        negative_emb: torch.Tensor,
-        d_ap: torch.Tensor,
-        d_an: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute similarity preservation loss.
-
-        Encourages hash similarity to correlate with embedding similarity.
-        """
-        if anchor_emb is None or positive_emb is None or self.sim_weight == 0:
-            return torch.tensor(0.0, device=anchor.device)
-
-        # Normalize embeddings
-        anchor_emb_norm = F.normalize(anchor_emb, p=2, dim=-1)
-        positive_emb_norm = F.normalize(positive_emb, p=2, dim=-1)
-
-        # Compute embedding cosine similarity (anchor-positive)
-        emb_sim_ap = (anchor_emb_norm * positive_emb_norm).sum(dim=-1)
-
-        # Compute hash similarity from Hamming distance
-        hash_sim_ap = 1 - d_ap / anchor.shape[-1]
-
-        # MSE loss for anchor-positive similarity preservation
-        sim_loss_ap = F.mse_loss(hash_sim_ap, emb_sim_ap)
-
-        # Also preserve dissimilarity for anchor-negative (if available)
-        if negative_emb is not None:
-            negative_emb_norm = F.normalize(negative_emb, p=2, dim=-1)
-            emb_sim_an = (anchor_emb_norm * negative_emb_norm).sum(dim=-1)
-            hash_sim_an = 1 - d_an / anchor.shape[-1]
-            sim_loss_an = F.mse_loss(hash_sim_an, emb_sim_an)
-            return (sim_loss_ap + sim_loss_an) / 2
-
-        return sim_loss_ap
-
-    def forward(
-        self,
-        anchor: torch.Tensor,
-        positive: torch.Tensor,
-        negative: torch.Tensor,
-        anchor_emb: torch.Tensor = None,
-        positive_emb: torch.Tensor = None,
-        negative_emb: torch.Tensor = None,
-    ) -> tuple[torch.Tensor, dict]:
-        """Compute triplet hash loss.
-
-        Args:
-            anchor: Anchor hash codes (batch, hash_bits)
-            positive: Positive hash codes (batch, hash_bits)
-            negative: Negative hash codes (batch, hash_bits)
-            anchor_emb: Original anchor embeddings for similarity preservation
-            positive_emb: Original positive embeddings for similarity preservation
-            negative_emb: Original negative embeddings for similarity preservation
-
-        Returns:
-            Total loss scalar and dict of individual loss components
-        """
-        # 1. Triplet margin loss
-        d_ap = self.hamming_distance(anchor, positive)
-        d_an = self.hamming_distance(anchor, negative)
-        triplet_loss = F.relu(d_ap - d_an + self.margin).mean()
-
-        # 2. Quantization loss
-        quant_loss = self.compute_quantization_loss(anchor, positive, negative)
-
-        # 3. Bit balance loss
-        balance_loss = self.compute_balance_loss(anchor, positive, negative)
-
-        # 4. Similarity preservation loss
-        sim_loss = self.compute_similarity_loss(
-            anchor,
-            positive,
-            negative,
-            anchor_emb,
-            positive_emb,
-            negative_emb,
-            d_ap,
-            d_an,
-        )
-
-        # Combine losses
-        total_loss = (
-            triplet_loss
-            + self.quant_weight * quant_loss
-            + self.balance_weight * balance_loss
-            + self.sim_weight * sim_loss
-        )
-
-        loss_dict = {
-            "triplet": triplet_loss.item(),
-            "quant": quant_loss.item(),
-            "balance": balance_loss.item(),
-            "sim": sim_loss.item() if isinstance(sim_loss, torch.Tensor) else sim_loss,
-            "total": total_loss.item(),
-        }
-
-        return total_loss, loss_dict
+class HashLoss(nn.Module):
+    pass
+    # TODO
 
 
 class TrainSamplesDataset(Dataset):
-    """PyTorch Dataset wrapper for TrainSamplesManager.
+    """Loads pre-computed training samples containing (anchor, positive, negative) triplets.
 
-    Loads training samples from shards and provides (anchor, positive, negative)
-    triplets for contrastive learning.
+    Data Structure:
+        - Anchors: Random embeddings from corpus
+        - Positives: Top-k similar items (from Faiss retrieval)
+        - Negatives: not similar to anchor
 
-    Index Convention:
-    - Both PyTorch Dataset and TrainSamplesManager now use 0-based indexing
-    - Direct pass-through: dataset[idx] -> manager[idx]
-    - All samples are valid, including sample 0 (uses random negative)
-
-    Positive Sampling:
-    - Each sample may have multiple positives (num_positives)
-    - This class randomly selects one positive per training iteration
-    - Different positives are selected across epochs for variety
+    Storage Format:
+        - Sharded storage: 30 shards × 100K samples = 3M total
+        - Memory-mapped for efficient loading
+        - Each sample has: anchor, positive, negative
     """
 
     def __init__(
@@ -386,9 +88,6 @@ class TrainSamplesDataset(Dataset):
             num_positives_to_use: Number of positives to sample per anchor (default 1)
             max_samples: Maximum number of samples to use (default None for all)
         """
-        # Import here to avoid circular imports
-        from models.tembed.train import TrainSamplesManager
-
         self.manager = TrainSamplesManager(data_dir=data_dir, mode="read")
         self.num_positives_to_use = num_positives_to_use
         self._length = len(self.manager)
@@ -399,30 +98,25 @@ class TrainSamplesDataset(Dataset):
         return self._length
 
     def __getitem__(self, idx: int) -> dict:
-        """Get a training sample.
-
-        Index Pass-through:
-        - Input idx is 0-based (PyTorch Dataset convention)
-        - Directly passed to TrainSamplesManager (now also 0-based)
-        - manager[idx] handles sample 0 gracefully with random negative
-
-        Random Positive Selection:
-        - Randomly picks one positive from available positives
-        - Provides variety across training iterations
-        - Same anchor may be paired with different positives
+        """Get a training triplet sample.
 
         Args:
-            idx: Sample index (0-based, directly maps to manager index)
+            idx: sample index, 0 to len(dataset)-1
 
         Returns:
-            Dict with anchor_emb, pos_emb, neg_emb as numpy arrays
+            Dict with keys:
+                - 'anchor_emb': Anchor embedding, shape (1024,), dtype float32
+                - 'pos_emb': Positive embedding, shape (1024,), dtype float32
+                - 'neg_emb': Negative embedding, shape (1024,), dtype float32
+
+        Example:
+            >>> sample = dataset[42]
+            >>> anchor, pos, neg = sample['anchor_emb'], sample['pos_emb'], sample['neg_emb']
+            >>> cos_sim = (anchor @ pos) / (np.linalg.norm(anchor) * np.linalg.norm(pos))
+            >>> cos_sim > 0.5  # Positive should be similar
         """
-        # Direct pass-through: both use 0-based indexing
         sample = self.manager[idx]
-
-        # Randomly select one positive if multiple available
         pos_idx = np.random.randint(0, len(sample["pos_embs"]))
-
         return {
             "anchor_emb": sample["anchor_emb"].astype(np.float32),
             "pos_emb": sample["pos_embs"][pos_idx].astype(np.float32),
@@ -431,15 +125,6 @@ class TrainSamplesDataset(Dataset):
 
 
 class HasherTrainer:
-    """Trainer for the embedding-to-hash neural network.
-
-    Handles:
-    - Data loading from TrainSamplesManager
-    - Model training with triplet loss
-    - Checkpoint saving and loading
-    - Training progress logging
-    """
-
     def __init__(
         self,
         data_dir: str | Path = SAMPLES_DIR,
@@ -477,16 +162,13 @@ class HasherTrainer:
         self.max_samples = max_samples
         self.remove_weights = remove_weights
 
-        # Auto-detect device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
         self.model: Optional[EmbToHashNet] = None
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None
         self.criterion: Optional[TripletHashLoss] = None
         self.dataloader: Optional[DataLoader] = None
 
-        # Paths for saving (will be set after init_model)
         self.weights_dir = WEIGHTS_DIR
         self.weights_dir.mkdir(parents=True, exist_ok=True)
         self.ckpt_path: Optional[Path] = None
@@ -505,13 +187,16 @@ class HasherTrainer:
         }
         logger.mesg(dict_to_str(info_dict), indent=2)
 
+        logger.note(f"> Loss weights:")
+        loss_weights = {
+            # TODO
+        }
+        logger.mesg(dict_to_str(loss_weights), indent=2)
+
     def _create_model(self):
         """Create and initialize the hash embedding model."""
         self.model = EmbToHashNet(
-            input_dim=self.input_dim,
-            hash_bits=self.hash_bits,
-            hidden_dim=self.hidden_dim,
-            dropout=self.dropout,
+            # TODO
         ).to(self.device)
 
     def _create_optimizer_and_criterion(self):
@@ -521,14 +206,7 @@ class HasherTrainer:
             lr=self.learning_rate,
             weight_decay=self.weight_decay,
         )
-
-        self.criterion = TripletHashLoss(
-            hash_bits=self.hash_bits,
-            margin_ratio=MARGIN_RATIO,
-            quant_weight=QUANT_WEIGHT,
-            balance_weight=BALANCE_WEIGHT,
-            sim_weight=0.2,  # Increase to prioritize similarity preservation
-        )
+        self.criterion = ...  # TODO
 
     def _generate_checkpoint_paths(self):
         """Generate checkpoint file paths based on model parameters."""
@@ -536,11 +214,7 @@ class HasherTrainer:
         name_parts.append(f"hb{self.hash_bits}")  # hash_bits
         name_parts.append(f"hd{self.hidden_dim}")  # hidden_dim
         name_parts.append(f"bs{self.batch_size}")  # batch_size
-        name_parts.append(
-            f"lr{self.learning_rate:.0e}".replace("e-0", "e-")
-        )  # learning_rate
         if self.max_samples is not None:
-            # Format max_samples in scientific notation
             if self.max_samples >= 1e6:
                 name_parts.append(f"ms{self.max_samples / 1e6:.0f}m")
             elif self.max_samples >= 1e3:
@@ -552,7 +226,7 @@ class HasherTrainer:
         hasher_ckpt = f"hasher_{ckpt_name}"
         self.ckpt_path = self.weights_dir / f"{hasher_ckpt}.pt"
         self.best_path = self.weights_dir / f"{hasher_ckpt}_best.pt"
-        self.config_path = self.weights_dir / f"{hasher_ckpt}_config.json"
+        self.config_path = self.weights_dir / f"{hasher_ckpt}.json"
 
         logger.mesg(f"  * checkpoint : {logstr.file(hasher_ckpt)}")
 
@@ -560,7 +234,6 @@ class HasherTrainer:
         """Remove existing weight files if requested."""
         if not self.remove_weights:
             return
-
         weights_to_remove = [
             self.ckpt_path,
             self.best_path,
@@ -572,7 +245,7 @@ class HasherTrainer:
                 weight_path.unlink()
                 removed_count += 1
         if removed_count > 0:
-            logger.warn(f"  × Removed {removed_count} existing weight file(s)")
+            logger.warn(f"  × Removed {removed_count} weight files")
 
     def _save_model_config(self):
         """Save model configuration to JSON file."""
@@ -616,7 +289,7 @@ class HasherTrainer:
         if preload_shards and self.max_samples:
             num_shards_needed = (self.max_samples - 1) // 100000 + 1  # shard_size=100k
             logger.note(
-                f"> Preloading {num_shards_needed} shards for {self.max_samples} samples..."
+                f"> Preloading {num_shards_needed} shards for {self.max_samples} samples:"
             )
             for shard_idx in range(num_shards_needed):
                 dataset.manager.shards_reader.load_shard(shard_idx)
@@ -664,8 +337,7 @@ class HasherTrainer:
             ckpt_path = self.ckpt_path
 
         if not ckpt_path.exists():
-            logger.warn(f"  * No existed checkpoint, training from scratch.")
-            return 0, float("inf")
+            logger.warn(f"  * No existed checkpoint, training from scratch")
 
         logger.mesg(f"  > Loading checkpoint from:")
         logger.file(f"    * {ckpt_path}")
@@ -680,14 +352,12 @@ class HasherTrainer:
         return ckpt["epoch"], ckpt.get("loss", float("inf"))
 
     def train_epoch(self, epoch: int) -> dict:
-        """Train for one epoch.
-
-        Returns:
-            Dict with average losses for the epoch
-        """
+        """Train for one epoch."""
         self.model.train()
 
-        total_losses = {"triplet": 0, "quant": 0, "balance": 0, "sim": 0, "total": 0}
+        total_losses = {
+            # TODO
+        }
         num_batches = len(self.dataloader)
 
         bar = TCLogbar(total=num_batches)
@@ -695,39 +365,25 @@ class HasherTrainer:
         bar.set_head(logstr.mesg(f"  * [Epoch {epoch_str}/{self.epochs}]"))
 
         for batch_idx, batch in enumerate(self.dataloader):
-            # Move data to device
             anchor_emb = batch["anchor_emb"].to(self.device)
             positive_emb = batch["pos_emb"].to(self.device)
-            negative_emb = batch["neg_emb"].to(self.device)
-            # Forward pass with STE for binary codes
-            anchor_hash = self.model(anchor_emb, use_ste=True)
-            positive_hash = self.model(positive_emb, use_ste=True)
-            negative_hash = self.model(negative_emb, use_ste=True)
-            # Compute loss with original embeddings for similarity preservation
+            # calc hashes
+            anchor_hash = self.model(anchor_emb)
+            positive_hash = self.model(positive_emb)
+            # calc loss
             loss, loss_dict = self.criterion(
-                anchor_hash,
-                positive_hash,
-                negative_hash,
-                anchor_emb=anchor_emb,
-                positive_emb=positive_emb,
-                negative_emb=negative_emb,
+                # TODO
             )
-            # Backward pass
+            # backward pass with gradient clipping
             self.optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
-            # Accumulate losses
+            # accumulate losses
             for k, v in loss_dict.items():
                 total_losses[k] += v
-            # Update progress
-            desc = (
-                f"loss={loss_dict['total']:.4f} "
-                f"(t={loss_dict['triplet']:.3f}, "
-                f"q={loss_dict['quant']:.3f}, "
-                f"b={loss_dict['balance']:.3f}, "
-                f"s={loss_dict['sim']:.3f})"
-            )
+            # update progress
+            desc = f"loss={loss_dict['total']:.3f} (s={loss_dict['sim']:.3f})"
             bar.update(1, desc=desc)
         bar.update(flush=True, linebreak=True)
 
@@ -750,10 +406,11 @@ class HasherTrainer:
         if resume:
             start_epoch, best_loss = self.load_checkpoint()
 
-        # Check if training is already completed
+        # check if training completed
         if start_epoch >= epochs:
             logger.okay(
-                f"> Training already completed at epoch {start_epoch}. Best loss: {best_loss:.4f}"
+                f"> Training already completed at epoch {start_epoch}. "
+                f"Best loss: {best_loss:.4f}"
             )
             return
 
@@ -770,15 +427,15 @@ class HasherTrainer:
         # Learning rate scheduler
         remaining_epochs = epochs - start_epoch
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, T_max=remaining_epochs, eta_min=1e-6
+            # TODO
         )
 
         for epoch in range(start_epoch + 1, epochs + 1):
             avg_losses = self.train_epoch(epoch)
             lr = self.optimizer.param_groups[0]["lr"]
-            # Update scheduler
+            # update scheduler
             self.scheduler.step()
-            # Save checkpoint
+            # save checkpoint
             is_best = avg_losses["total"] < best_loss
             if is_best:
                 best_loss = avg_losses["total"]
@@ -788,13 +445,7 @@ class HasherTrainer:
 
 
 class HasherInference:
-    """Inference wrapper for the trained hash model.
-
-    Provides:
-    - Model loading from checkpoint
-    - Batch embedding to hash conversion
-    - Hash code to hex string conversion
-    """
+    """Inference wrapper for trained Hasher model."""
 
     def __init__(
         self,
@@ -810,27 +461,22 @@ class HasherInference:
             device: Device for inference (default: auto-detect)
         """
         self.weights_dir = WEIGHTS_DIR
-
-        # Auto-detect weights if not provided
+        # init weights
         if weights_path is None:
             weights_path = self._find_best_latest_weights()
-
         self.weights_path = weights_path
-
-        # Auto-detect config path from weights path
+        # init config
         if config_path is None:
-            # Replace .pt or _best.pt with _config.json
-            config_name = self.weights_path.stem.replace("_best", "") + "_config.json"
+            config_name = self.weights_path.stem.replace("_best", "") + ".json"
             self.config_path = self.weights_dir / config_name
         else:
             self.config_path = config_path
-
-        # Auto-detect device if not provided
+        # init device
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
-
+        # load model
         self.model: Optional[EmbToHashNet] = None
         self._load_model()
 
@@ -845,22 +491,19 @@ class HasherInference:
         Returns:
             Path to model weights
         """
-        # Look for *_best.pt files
+        # look for best weights
         best_files = list(self.weights_dir.glob("hasher_*_best.pt"))
         if best_files:
-            # Return the most recently modified
+            # use most recently modified
             latest = max(best_files, key=lambda p: p.stat().st_mtime)
             return latest
-
-        # Look for any hasher_*.pt files (checkpoints)
+        # look for latest weights
         ckpt_files = list(self.weights_dir.glob("hasher_*.pt"))
         if ckpt_files:
-            # Filter out _best.pt files (already checked)
             ckpt_files = [f for f in ckpt_files if not f.stem.endswith("_best")]
             if ckpt_files:
                 latest = max(ckpt_files, key=lambda p: p.stat().st_mtime)
                 return latest
-
         raise FileNotFoundError(
             "No trained hasher model weights found in weights directory."
         )
@@ -869,8 +512,7 @@ class HasherInference:
         """Load model from checkpoint."""
         if not self.weights_path.exists():
             raise FileNotFoundError(f"Model weights not found: {self.weights_path}")
-
-        # Load config
+        # load config
         if self.config_path.exists():
             with open(self.config_path, "r") as f:
                 config = json.load(f)
@@ -881,32 +523,23 @@ class HasherInference:
                 "hidden_dim": HIDDEN_DIM,
                 "dropout": 0.1,
             }
-
-        # Initialize model
+        # init model
         self.model = EmbToHashNet(
             input_dim=config["input_dim"],
             hash_bits=config["hash_bits"],
             hidden_dim=config["hidden_dim"],
             dropout=config["dropout"],
         ).to(self.device)
-
-        # Load weights
+        # load weights
         ckpt = torch.load(self.weights_path, map_location=self.device)
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.model.eval()
-
+        # log path
         logger.note(f"> Loaded HasherInference model from:")
         logger.file(f"  * {self.weights_path}")
 
     def emb_to_hash(self, embs: np.ndarray) -> np.ndarray:
-        """Convert float embeddings to binary hash codes.
-
-        Args:
-            embs: Float embeddings with shape (n, input_dim) or (input_dim,)
-
-        Returns:
-            Binary hash codes with shape (n, hash_bits) or (hash_bits,), dtype uint8
-        """
+        """Convert embeddings to binary hash codes."""
         squeeze = False
         if embs.ndim == 1:
             embs = embs.reshape(1, -1)
@@ -928,7 +561,7 @@ class HasherInference:
         Returns:
             Hex string representation
         """
-        # Pack bits into bytes
+        # pack bits into bytes
         n_bytes = (len(hash_codes) + 7) // 8
         padded = np.zeros(n_bytes * 8, dtype=np.uint8)
         padded[: len(hash_codes)] = hash_codes
@@ -951,17 +584,44 @@ class HasherInference:
 
 
 class HasherInferenceTester:
-    """Tester for HasherInference model validation.
+    """Test criteria for HasherInference model:
+    1. **Random Embeddings Diversity** (40-60% Hamming distance)
+        Ensures different embeddings get different hashes
 
-    Performs comprehensive tests to verify model produces diverse hash codes:
-    - Test 1: Random embeddings with normal distribution
-    - Test 2: Batch vs individual processing consistency
-    - Test 3: Extreme value separation (zeros, ones, random)
+    2. **Batch vs Individual Consistency** (0 bit difference)
+        Verifies deterministic behavior regardless of batch size
 
-    A healthy model should produce:
-    - ~40-50% Hamming distance for independent random inputs
-    - Consistent results between batch and individual processing
-    - Strong separation for very different inputs (zeros vs ones)
+    3. **Extreme Value Separation** (>30% Hamming distance)
+        Tests separation on very different inputs (zeros, ones, random)
+
+    4. **Cosine Similarity Preservation** (correlation >0.7, MAE <0.15)
+        THE KEY TEST - angular preservation
+        This determines if model will work for similarity search
+
+    5. **Bit Distribution Balance** (mean ~0.5, few imbalanced bits)
+        Ensures efficient use of hash code capacity
+
+    6. **Hash Statistics** (mean Hamming ~50%, healthy spread)
+        Overall distribution health check
+
+    Success Criteria:
+        - Test 4 (similarity preservation) is CRITICAL
+        - Correlation >0.7 means model preserves similarity well
+        - MAE <0.15 means small errors in similarity estimation
+        - If Test 4 fails, model won't improve retrieval quality
+
+    Usage:
+        >>> tester = HasherInferenceTester()
+        >>> tester.run_all_tests()
+        # Runs all 6 tests, prints results with ✓/✗ indicators
+
+    Expected Results (Good Model):
+        Test 1: ✓ Good diversity (46-50%)
+        Test 2: ✓ Batch consistent (0 diffs)
+        Test 3: ✓ Good separation (>38%)
+        Test 4: ✓ Excellent preservation (corr=0.67+, MAE=0.02)
+        Test 5: ✓ Excellent balance (mean=0.50, std=0.05)
+        Test 6: ✓ Healthy distribution (mean=48%)
     """
 
     def __init__(self, inference: Optional[HasherInference] = None):
@@ -979,7 +639,7 @@ class HasherInferenceTester:
             seed: Random seed for reproducibility
             n_samples: Number of random embeddings to test
         """
-        logger.note(f"> Test 1: Random embeddings with different values")
+        logger.note(f"> Test 1: Random embeddings diversity")
         np.random.seed(seed)
         test_embs = np.random.randn(n_samples, EMB_DIM).astype(np.float32)
 
@@ -989,10 +649,10 @@ class HasherInferenceTester:
                 f"    - emb[{i}] mean={test_embs[i].mean():.4f}, std={test_embs[i].std():.4f}, "
                 f"min={test_embs[i].min():.4f}, max={test_embs[i].max():.4f}"
             )
-
+        # get hash codes
         hash_codes = self.inference.emb_to_hash(test_embs)
 
-        # Calculate pairwise Hamming distances
+        # calc pairwise Hamming distances
         hamming_distances = {}
         for i in range(n_samples):
             for j in range(i + 1, n_samples):
@@ -1003,37 +663,27 @@ class HasherInferenceTester:
             "input_shape": test_embs.shape,
             "hash_shape": hash_codes.shape,
             "hash_dtype": str(hash_codes.dtype),
-            "sample_bits_0": hash_codes[0][:20].tolist(),
-            "sample_bits_1": hash_codes[1][:20].tolist(),
-            "sample_bits_2": hash_codes[2][:20].tolist(),
         }
         info_dict.update({f"hamming_{k}": v for k, v in hamming_distances.items()})
         logger.mesg(dict_to_str(info_dict), indent=2)
 
-        # Show first 64 bits comparison
-        logger.note("> First 64 bits comparison:")
+        # compare first 64 bits
+        logger.note(f"  * First 64 bits comparison:")
         for i in range(n_samples):
             bits_str = "".join(str(b) for b in hash_codes[i][:64])
-            logger.mesg(f"  - [{i}]: {bits_str}")
+            logger.mesg(f"    - [{i}]: {bits_str}")
 
-        # Show hex strings
-        hex_strs = self.inference.emb_to_hex(test_embs)
-        logger.note(f"> Hex strings: {len(hex_strs)}")
-        for i, h in enumerate(hex_strs):
-            logger.mesg(f"  - [{i}]: {h[:64]}... (len={len(h)})")
-
-        # Show hex differences
-        logger.note("> Hex string differences:")
-        for i in range(len(hex_strs)):
-            for j in range(i + 1, len(hex_strs)):
-                diff_positions = [
-                    k
-                    for k in range(len(hex_strs[i]))
-                    if hex_strs[i][k] != hex_strs[j][k]
-                ]
-                logger.mesg(
-                    f"  * [{i}] vs [{j}]: {len(diff_positions)} chars differ at positions {diff_positions[:10]}..."
-                )
+        # check diversity
+        avg_hamming = np.mean(list(hamming_distances.values()))
+        total_bits = hash_codes.shape[1]
+        diversity_ratio = avg_hamming / total_bits
+        logger.mesg(
+            f"  * Average Hamming distance: {avg_hamming:.1f} / {total_bits} ({diversity_ratio*100:.1f}%)"
+        )
+        if 0.4 <= diversity_ratio <= 0.6:
+            logger.okay(f"  ✓ Good diversity (40-60% range)")
+        else:
+            logger.warn(f"  ✗ Poor diversity, expected 40-60%")
 
     def test_batch_vs_individual(self, seed: int = 42, n_samples: int = 3):
         """Test consistency between batch and individual processing.
@@ -1045,18 +695,15 @@ class HasherInferenceTester:
         logger.note("> Test 2: Process embeddings one by one")
         np.random.seed(seed)
         test_embs = np.random.randn(n_samples, EMB_DIM).astype(np.float32)
-
-        # Batch processing
+        # batch
         hash_codes_batch = self.inference.emb_to_hash(test_embs)
-
-        # Individual processing
+        # individual
         hash_codes_individual = []
         for i in range(n_samples):
             h = self.inference.emb_to_hash(test_embs[i : i + 1])
             hash_codes_individual.append(h[0])
         hash_codes_individual = np.array(hash_codes_individual)
-
-        # Compare
+        # compare batch and individual
         batch_vs_individual = np.sum(hash_codes_batch != hash_codes_individual)
         logger.mesg(f"  * Batch vs Individual differences: {batch_vs_individual} bits")
         if batch_vs_individual == 0:
@@ -1074,7 +721,7 @@ class HasherInferenceTester:
 
         Healthy models should show strong separation (>30% Hamming distance).
         """
-        logger.note("> Test 3: Very different embeddings (zeros, ones, random)")
+        logger.note("> Test 3: Extreme value separation")
         diverse_embs = np.array(
             [
                 np.zeros(EMB_DIM, dtype=np.float32),
@@ -1083,11 +730,11 @@ class HasherInferenceTester:
             ]
         )
         diverse_hash = self.inference.emb_to_hash(diverse_embs)
-
+        # calc pairwise Hamming distances
         hamming_01 = np.sum(diverse_hash[0] != diverse_hash[1])
         hamming_02 = np.sum(diverse_hash[0] != diverse_hash[2])
         hamming_12 = np.sum(diverse_hash[1] != diverse_hash[2])
-
+        # log results
         total_bits = diverse_hash.shape[1]
         logger.mesg(
             f"  * Hamming distances: "
@@ -1095,8 +742,7 @@ class HasherInferenceTester:
             f"0-2={hamming_02} ({hamming_02/total_bits*100:.1f}%), "
             f"1-2={hamming_12} ({hamming_12/total_bits*100:.1f}%)"
         )
-
-        # Check if model is healthy (>30% separation)
+        # check model health (>30% separation)
         min_distance = min(hamming_01, hamming_02, hamming_12)
         if min_distance > total_bits * 0.3:
             logger.okay(
@@ -1108,16 +754,204 @@ class HasherInferenceTester:
                 "expected >30%. Model may need retraining."
             )
 
+    def test_cosine_similarity_preservation(self, seed: int = 42, n_samples: int = 10):
+        """Test if model preserves cosine similarity.
+
+        Args:
+            seed: Random seed for reproducibility
+            n_samples: Number of random embeddings to test
+        """
+        logger.note("> Test 4: Cosine similarity  (angular) preservation")
+        np.random.seed(seed)
+        test_embs = np.random.randn(n_samples, EMB_DIM).astype(np.float32)
+        # normalize embeddings for cosine similarity
+        test_embs_norm = test_embs / np.linalg.norm(test_embs, axis=1, keepdims=True)
+        # get hash codes
+        hash_codes = self.inference.emb_to_hash(test_embs_norm)
+        # convert to {-1, 1} for cosine calculation
+        hash_codes_signed = hash_codes.astype(np.float32) * 2 - 1  # 0->-1, 1->1
+        # calc all pairwise similarities
+        emb_similarities = []
+        hash_similarities = []
+        for i in range(n_samples):
+            for j in range(i + 1, n_samples):
+                # embedding cosine similarity
+                emb_cos = np.dot(test_embs_norm[i], test_embs_norm[j])
+                emb_similarities.append(emb_cos)
+
+                # hash cosine similarity
+                # for binary {-1,1}: cos = dot(h1,h2) / hash_bits
+                hash_cos = np.dot(hash_codes_signed[i], hash_codes_signed[j]) / len(
+                    hash_codes_signed[i]
+                )
+                hash_similarities.append(hash_cos)
+        emb_similarities = np.array(emb_similarities)
+        hash_similarities = np.array(hash_similarities)
+        # calc correlation and mse
+        correlation = np.corrcoef(emb_similarities, hash_similarities)[0, 1]
+        mse = np.mean((emb_similarities - hash_similarities) ** 2)
+        mae = np.mean(np.abs(emb_similarities - hash_similarities))
+        # log results
+        logger.mesg(
+            f"  * Embedding similarity range: [{emb_similarities.min():.3f}, {emb_similarities.max():.3f}]"
+        )
+        logger.mesg(
+            f"  * Hash similarity range: [{hash_similarities.min():.3f}, {hash_similarities.max():.3f}]"
+        )
+        logger.mesg(f"  * Correlation: {correlation:.4f}")
+        logger.mesg(f"  * MSE: {mse:.4f}")
+        logger.mesg(f"  * MAE: {mae:.4f}")
+        # good if: high correlation (>0.7), low error (<0.1)
+        if correlation > 0.7 and mae < 0.15:
+            logger.okay(
+                f"  ✓ Excellent similarity preservation (correlation={correlation:.3f}, MAE={mae:.3f})"
+            )
+        elif correlation > 0.5 and mae < 0.25:
+            logger.warn(
+                f"  ○ Moderate similarity preservation (correlation={correlation:.3f}, MAE={mae:.3f})"
+            )
+        else:
+            logger.warn(
+                f"  ✗ Poor similarity preservation (correlation={correlation:.3f}, MAE={mae:.3f})"
+            )
+            logger.warn(
+                f"    Expected: correlation>0.7, MAE<0.15 for angular preservation"
+            )
+
+    def test_bit_distribution(self, seed: int = 42, n_samples: int = 100):
+        """Test if bit distribution is balanced.
+
+        Healthy hash codes should have ~50% zeros and ~50% ones for each bit position.
+        Severely imbalanced bits waste information capacity.
+
+        Args:
+            seed: Random seed for reproducibility
+            n_samples: Number of random embeddings to test
+        """
+        logger.note("> Test 5: Bit distribution balance")
+        np.random.seed(seed)
+        test_embs = np.random.randn(n_samples, EMB_DIM).astype(np.float32)
+        hash_codes = self.inference.emb_to_hash(test_embs)
+        # calc bit balance: mean of each bit across samples
+        bit_means = hash_codes.mean(axis=0)  # Proportion of 1s for each bit
+        # stats
+        mean_balance = bit_means.mean()
+        std_balance = bit_means.std()
+        min_balance = bit_means.min()
+        max_balance = bit_means.max()
+        # count severely imbalanced bits (<10% or >90%)
+        imbalanced_bits = np.sum((bit_means < 0.1) | (bit_means > 0.9))
+        total_bits = len(bit_means)
+        # log results
+        logger.mesg(f"  * Bit balance statistics (ideal: mean=0.5, std<0.1):")
+        logger.mesg(f"    - Mean: {mean_balance:.4f}")
+        logger.mesg(f"    - Std:  {std_balance:.4f}")
+        logger.mesg(f"    - Range: [{min_balance:.4f}, {max_balance:.4f}]")
+        logger.mesg(
+            f"    - Severely imbalanced bits (<10% or >90%): {imbalanced_bits}/{total_bits} ({imbalanced_bits/total_bits*100:.1f}%)"
+        )
+        # good if: mean ~0.5, std low, few imbalanced bits
+        if (
+            0.45 < mean_balance < 0.55
+            and std_balance < 0.1
+            and imbalanced_bits < total_bits * 0.05
+        ):
+            logger.okay(f"  ✓ Excellent bit balance")
+        elif (
+            0.4 < mean_balance < 0.6
+            and std_balance < 0.15
+            and imbalanced_bits < total_bits * 0.1
+        ):
+            logger.warn(f"  ○ Acceptable bit balance")
+        else:
+            logger.warn(f"  ✗ Poor bit balance - many wasted bits")
+
+    def test_hash_statistics(self, seed: int = 42, n_samples: int = 100):
+        """Test overall hash code statistics.
+
+        Args:
+            seed: Random seed for reproducibility
+            n_samples: Number of random embeddings to test
+        """
+        logger.note("> Test 6: Hash code statistics")
+        np.random.seed(seed)
+        test_embs = np.random.randn(n_samples, EMB_DIM).astype(np.float32)
+        hash_codes = self.inference.emb_to_hash(test_embs)
+        # calc pairwise Hamming distances for all pairs
+        hamming_matrix = np.zeros((n_samples, n_samples))
+        for i in range(n_samples):
+            for j in range(i + 1, n_samples):
+                dist = np.sum(hash_codes[i] != hash_codes[j])
+                hamming_matrix[i, j] = dist
+                hamming_matrix[j, i] = dist
+        # get upper triangle (excluding diagonal)
+        hamming_distances = hamming_matrix[np.triu_indices(n_samples, k=1)]
+        # stats
+        total_bits = hash_codes.shape[1]
+        mean_dist = hamming_distances.mean()
+        std_dist = hamming_distances.std()
+        min_dist = hamming_distances.min()
+        max_dist = hamming_distances.max()
+        # log results
+        logger.mesg(
+            f"  * Hamming distance statistics (n={len(hamming_distances)} pairs):"
+        )
+        logger.mesg(
+            f"    - Mean: {mean_dist:.1f} / {total_bits} ({mean_dist/total_bits*100:.1f}%)"
+        )
+        logger.mesg(f"    - Std:  {std_dist:.1f} ({std_dist/total_bits*100:.1f}%)")
+        logger.mesg(
+            f"    - Range: [{min_dist:.0f}, {max_dist:.0f}] ({min_dist/total_bits*100:.1f}%-{max_dist/total_bits*100:.1f}%)"
+        )
+        # check for duplicates or near-duplicates
+        duplicates = np.sum(hamming_distances == 0)
+        near_duplicates = np.sum(
+            hamming_distances < total_bits * 0.05
+        )  # <5% difference
+        # good if: no duplicates, few near-duplicates
+        if duplicates > 0:
+            logger.warn(f"  ✗ Found {duplicates} duplicate hash codes!")
+        if near_duplicates > duplicates:
+            logger.warn(
+                f"  ○ Found {near_duplicates} near-duplicate pairs (<5% difference)"
+            )
+        # good if: mean around 50%, std indicating good spread
+        if 0.45 < mean_dist / total_bits < 0.55 and std_dist / total_bits < 0.15:
+            logger.okay(f"  ✓ Healthy hash distribution")
+        else:
+            logger.warn(f"  ○ Hash distribution could be better")
+
     def run_all_tests(self):
         """Run all test suites."""
         logger.note("> Testing HasherInference")
         self.test_random_embeddings()
         self.test_batch_vs_individual()
         self.test_extreme_separation()
+        self.test_cosine_similarity_preservation()
+        self.test_bit_distribution()
+        self.test_hash_statistics()
 
 
 class HasherArgParser(argparse.ArgumentParser):
-    """Argument parser for hasher training and testing."""
+    """
+    Supports two modes:
+        1. train: Train a new model or resume training
+        2. test: Run inference quality tests
+
+    Common Arguments:
+        -m, --mode: Operation mode (train|test) [required]
+
+    Training Arguments:
+        -ep, --epochs: Number of training epochs (default: 50)
+        -bz, --batch-size: Training batch size (default: 256)
+        -lr, --learning-rate: Initial learning rate (default: 1e-3)
+        -hb, --hash-bits: Hash code size (default: 2048)
+        -hd, --hidden-dim: MLP hidden dimension (default: 2048)
+        -dp, --dropout: Dropout rate (default: 0.1)
+        -ms, --max-samples: Max training samples (default: None = all)
+        -w , --overwrite: Ignore checkpoint, train from scratch
+        -rm, --remove-weights: Delete existing weights before training
+    """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

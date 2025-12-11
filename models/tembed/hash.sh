@@ -33,13 +33,13 @@ echo_header() {
 
 echo_params() {
     echo -e "${MAGENTA}> Training Parameters:${NC}"
-    echo -e "  * ${CYAN}hidden_dim${NC}   : ${GREEN}$HIDDEN_DIM${NC}"
-    echo -e "  * ${CYAN}hash_bits${NC}    : ${GREEN}$HASH_BITS${NC}"
-    echo -e "  * ${CYAN}max_samples${NC}  : ${GREEN}$MAX_SAMPLES${NC}"
-    echo -e "  * ${CYAN}epochs${NC}       : ${GREEN}$EPOCHS${NC}"
-    echo -e "  * ${CYAN}max_count${NC}    : ${GREEN}$MAX_COUNT${NC}"
-    echo -e "  * ${CYAN}remove_weights${NC}: ${GREEN}$REMOVE_WEIGHTS${NC}"
-    echo -e "  * ${CYAN}overwrite${NC}    : ${GREEN}$OVERWRITE${NC}"
+    echo -e "  * ${CYAN}hidden_dim${NC}  : ${GREEN}$HIDDEN_DIM${NC}"
+    echo -e "  * ${CYAN}hash_bits${NC}   : ${GREEN}$HASH_BITS${NC}"
+    echo -e "  * ${CYAN}max_samples${NC} : ${GREEN}$MAX_SAMPLES${NC}"
+    echo -e "  * ${CYAN}epochs${NC}      : ${GREEN}$EPOCHS${NC}"
+    echo -e "  * ${CYAN}max_count${NC}   : ${GREEN}$MAX_COUNT${NC}"
+    echo -e "  * ${CYAN}rm_weights${NC}  : ${GREEN}$REMOVE_WEIGHTS${NC}"
+    echo -e "  * ${CYAN}overwrite${NC}   : ${GREEN}$OVERWRITE${NC}"
 }
 
 echo_complete() {
@@ -146,3 +146,6 @@ run_cmd "$SCORE_CMD"
 
 # [Complete]
 echo_complete
+
+# [Log]
+python -m tclogger.tmux -n 1 -i "hash.sh"
