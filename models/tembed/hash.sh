@@ -5,9 +5,10 @@
 
 # Usage:
 # cd ~/repos/bili-search-algo
-# ./models/tembed/hash.sh
+# ./models/tembed/hash.sh [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-w]
+# Example: ./models/tembed/hash.sh -hd 2048 -hb 2048 -ms 100000 -ep 10 -w
 
-# Color codes
+# color codes
 RED='\033[1;31m'
 BLUE='\033[1;34m'
 CYAN='\033[1;36m'
@@ -16,9 +17,11 @@ YELLOW='\033[1;33m'
 MAGENTA='\033[1;35m'
 NC='\033[0m' # No Color
 
-# Exit immediately if any command fails or user interrupts (Ctrl+C)
-set -e
-trap 'echo ""; echo -e "${RED}>>> Pipeline interrupted by user${NC}"; exit 130' INT
+# exit immediately if any command fails or user interrupts (Ctrl+C)
+echo_interrupt() {
+    set -e
+    trap 'echo ""; echo -e "${RED}>>> Pipeline interrupted by user${NC}"; exit 130' INT
+}
 
 echo_header() {
     local color="${2:-$BLUE}"
@@ -28,35 +31,100 @@ echo_header() {
     echo -e "${color}=========================================${NC}"
 }
 
-# cd ~/repos/bili-search-algo
+echo_params() {
+    echo -e "> ${MAGENTA}Training Parameters:${NC}"
+    echo -e "  * ${CYAN}hidden_dim${NC}   : ${GREEN}$HIDDEN_DIM${NC}"
+    echo -e "  * ${CYAN}hash_bits${NC}    : ${GREEN}$HASH_BITS${NC}"
+    echo -e "  * ${CYAN}max_samples${NC}  : ${GREEN}$MAX_SAMPLES${NC}"
+    echo -e "  * ${CYAN}epochs${NC}       : ${GREEN}$EPOCHS${NC}"
+    echo -e "  * ${CYAN}overwrite${NC}    : ${GREEN}$OVERWRITE${NC}"
+}
 
-# ========== Training ==========
+echo_complete() {
+    echo_header "Pipeline Complete!" "$GREEN"
+}
+
+run_cmd() {
+    local CMD="$1"
+    echo -e "> ${MAGENTA}Running${NC}: ${YELLOW}$CMD${NC}"
+    eval $CMD
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -hd|--hidden-dim)
+                HIDDEN_DIM="$2"
+                shift 2
+                ;;
+            -hb|--hash-bits)
+                HASH_BITS="$2"
+                shift 2
+                ;;
+            -ms|--max-samples)
+                MAX_SAMPLES="$2"
+                shift 2
+                ;;
+            -ep|--epochs)
+                EPOCHS="$2"
+                shift 2
+                ;;
+            -w|--overwrite)
+                OVERWRITE="true"
+                shift
+                ;;
+            *)
+                echo -e "${RED}Unknown parameter: $1${NC}"
+                echo "Usage: $0 [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-w]"
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# ====== Run Pipeline ======
+
+# [Interrupt]
+echo_interrupt
+
+# [Args]
+HASH_BITS=""
+HIDDEN_DIM=""
+MAX_SAMPLES=""
+EPOCHS=""
+OVERWRITE="false"
+parse_args "$@"
+
+# [Working]
+cd ~/repos/bili-search-algo
+
+# [Train]
 echo_header "Training Learned Hash Model"
-# Train params: 2048 hash_bits, 1024 hidden_dim, 100000 max_samples, 10 epochs
-python -m models.tembed.hasher -m train -hb 2048 -hd 1024 -ms 100000 -ep 10
+echo_params
+CMD="python -m models.tembed.hasher -m train"
+[[ -n "$HIDDEN_DIM" ]] && CMD="$CMD -hd $HIDDEN_DIM"
+[[ -n "$HASH_BITS" ]] && CMD="$CMD -hb $HASH_BITS"
+[[ -n "$MAX_SAMPLES" ]] && CMD="$CMD -ms $MAX_SAMPLES"
+[[ -n "$EPOCHS" ]] && CMD="$CMD -ep $EPOCHS"
+run_cmd "$CMD"
 
-# Some other params (commented out):
-# python -m models.tembed.hasher -m train -hb 2048 -ms 1000000 -ep 50
-# python -m models.tembed.hasher -m train -ep 50 -dp 0.2 -w
-
-# ========== Testing ==========
+# [Test]
 echo_header "Testing Learned Hash Model"
-# Test inference speed and output quality
-python -m models.tembed.hasher -m test
+run_cmd "python -m models.tembed.hasher -m test"
 
-# ========== Pre-Calc ==========
+# [Pre-Calc]
 echo_header "Pre-Calc Learned Hash Embeddings"
-# Pre-calc learned hash embeddings (overwrite)
-python -m models.tembed.calc -p -l -w
+CALC_CMD="python -m models.tembed.calc -p -l"
+[[ "$OVERWRITE" == "true" ]] && CALC_CMD="$CALC_CMD -w"
+run_cmd "$CALC_CMD"
 
-# ========== Benchmark ==========
+# [Benchmark]
 echo_header "Build Benchmark Ranks (Learned Hash)"
-# Build benchmark ranks using learned hash embeddings
-python -m models.tembed.calc -r -l
+run_cmd "python -m models.tembed.calc -r -l"
 
-# ========== Scoring ==========
+# [Score]
 echo_header "Score Benchmark Ranks (Learned Hash)"
-# Evaluate performance with scoring metrics
-python -m models.tembed.calc -s
+run_cmd "python -m models.tembed.calc -s"
 
-echo_header "Pipeline Complete!" "$GREEN"
+# [Complete]
+echo_complete
