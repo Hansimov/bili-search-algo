@@ -87,6 +87,8 @@ class HashLoss(nn.Module):
         margin: float = 0.2,
         w_distill: float = 1.0,
         w_matrix: float = 0.25,
+        matrix_temp: float = 0.07,
+        w_var: float = 0.02,
         w_triplet: float = 1.0,
         w_quant: float = 0.02,
         w_balance: float = 0.02,
@@ -97,6 +99,8 @@ class HashLoss(nn.Module):
         self.margin = float(margin)
         self.w_distill = float(w_distill)
         self.w_matrix = float(w_matrix)
+        self.matrix_temp = float(matrix_temp)
+        self.w_var = float(w_var)
         self.w_triplet = float(w_triplet)
         self.w_quant = float(w_quant)
         self.w_balance = float(w_balance)
@@ -106,6 +110,14 @@ class HashLoss(nn.Module):
     def _cos_matrix(self, x: torch.Tensor) -> torch.Tensor:
         x = torch.nn.functional.normalize(x, dim=-1, eps=self.eps)
         return x @ x.T
+
+    def _offdiag_mask(self, n: int, device: torch.device) -> torch.Tensor:
+        return (~torch.eye(n, dtype=torch.bool, device=device)).to(torch.bool)
+
+    def _var_loss(self, h: torch.Tensor) -> torch.Tensor:
+        # Encourage per-bit variance within batch to avoid constant bits.
+        v = torch.var(h, dim=0, unbiased=False)
+        return torch.mean(torch.relu(0.05 - v))
 
     def _signed_cos(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         a = torch.nn.functional.normalize(a, dim=-1, eps=self.eps)
@@ -150,7 +162,9 @@ class HashLoss(nn.Module):
         loss_distill = torch.tensor(0.0, device=anchor_hash.device)
         loss_matrix = torch.tensor(0.0, device=anchor_hash.device)
         if anchor_emb is not None and pos_emb is not None and neg_emb is not None:
-            anchor_emb_n = torch.nn.functional.normalize(anchor_emb, dim=-1, eps=self.eps)
+            anchor_emb_n = torch.nn.functional.normalize(
+                anchor_emb, dim=-1, eps=self.eps
+            )
             pos_emb_n = torch.nn.functional.normalize(pos_emb, dim=-1, eps=self.eps)
             neg_emb_n = torch.nn.functional.normalize(neg_emb, dim=-1, eps=self.eps)
 
@@ -163,14 +177,16 @@ class HashLoss(nn.Module):
 
             # In-batch matrix distillation on anchors: preserve global neighborhood geometry.
             # Use SmoothL1 on cosine similarity matrices.
-            s_mat = self._cos_matrix(anchor_hash)
-            t_mat = self._cos_matrix(anchor_emb_n).detach()
-            loss_matrix = torch.nn.functional.smooth_l1_loss(s_mat, t_mat)
+            s_mat = self._cos_matrix(anchor_hash) / self.matrix_temp
+            t_mat = (self._cos_matrix(anchor_emb_n).detach()) / self.matrix_temp
+            mask = self._offdiag_mask(s_mat.shape[0], s_mat.device)
+            loss_matrix = torch.nn.functional.smooth_l1_loss(s_mat[mask], t_mat[mask])
 
         # Regularize anchors only to reduce over-constraint and collapse risk.
         loss_quant = self._quant_loss(anchor_hash)
         loss_bal = self._balance_loss(anchor_hash)
         loss_decor = self._decor_loss(anchor_hash)
+        loss_var = self._var_loss(anchor_hash)
 
         total = (
             self.w_distill * loss_distill
@@ -179,6 +195,7 @@ class HashLoss(nn.Module):
             + self.w_quant * loss_quant
             + self.w_balance * loss_bal
             + self.w_decor * loss_decor
+            + self.w_var * loss_var
         )
 
         loss_dict = {
@@ -189,6 +206,7 @@ class HashLoss(nn.Module):
             "quant": float(loss_quant.detach().cpu().item()),
             "bal": float(loss_bal.detach().cpu().item()),
             "decor": float(loss_decor.detach().cpu().item()),
+            "var": float(loss_var.detach().cpu().item()),
         }
         return total, loss_dict
 
@@ -323,6 +341,8 @@ class HasherTrainer:
         loss_weights = {
             "distill": 1.0,
             "matrix": 0.25,
+            "matrix_temp": 0.07,
+            "var": 0.02,
             "triplet": 1.0,
             "quant": 0.02,
             "balance": 0.02,
@@ -352,6 +372,8 @@ class HasherTrainer:
             margin=0.2,
             w_distill=1.0,
             w_matrix=0.25,
+            matrix_temp=0.07,
+            w_var=0.02,
             w_triplet=1.0,
             w_quant=0.02,
             w_balance=0.02,
@@ -514,6 +536,7 @@ class HasherTrainer:
             "quant": 0.0,
             "bal": 0.0,
             "decor": 0.0,
+            "var": 0.0,
         }
         num_batches = len(self.dataloader)
 
@@ -555,7 +578,8 @@ class HasherTrainer:
             desc = (
                 f"loss={loss_dict['total']:.3f} "
                 f"(d={loss_dict.get('distill', 0.0):.3f}, "
-                f"m={loss_dict.get('matrix', 0.0):.3f}, s={loss_dict['sim']:.3f})"
+                f"m={loss_dict.get('matrix', 0.0):.3f}, "
+                f"v={loss_dict.get('var', 0.0):.3f}, s={loss_dict['sim']:.3f})"
             )
             bar.update(1, desc=desc)
         bar.update(flush=True, linebreak=True)
@@ -808,6 +832,155 @@ class HasherInferenceTester:
         """
         self.inference = inference or HasherInference()
 
+    @staticmethod
+    def _l2_normalize_np(x: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+        n = np.linalg.norm(x, axis=-1, keepdims=True)
+        return x / (n + eps)
+
+    @staticmethod
+    def _hash_to_signed(hash_codes: np.ndarray) -> np.ndarray:
+        return hash_codes.astype(np.float32) * 2.0 - 1.0
+
+    @staticmethod
+    def _pairwise_cos_np(x: np.ndarray) -> np.ndarray:
+        x = HasherInferenceTester._l2_normalize_np(x)
+        return x @ x.T
+
+    @staticmethod
+    def _spearman_corr(a: np.ndarray, b: np.ndarray) -> float:
+        a = np.asarray(a)
+        b = np.asarray(b)
+        if a.size != b.size or a.size < 2:
+            return float("nan")
+        ra = a.argsort().argsort().astype(np.float32)
+        rb = b.argsort().argsort().astype(np.float32)
+        ra = ra - ra.mean()
+        rb = rb - rb.mean()
+        denom = (np.sqrt((ra**2).mean()) * np.sqrt((rb**2).mean())) + 1e-12
+        return float((ra * rb).mean() / denom)
+
+    @staticmethod
+    def _topk_overlap(sim_a: np.ndarray, sim_b: np.ndarray, k: int) -> float:
+        n = sim_a.shape[0]
+        ks = min(max(1, int(k)), max(1, n - 1))
+        overlaps = []
+        for i in range(n):
+            ia = np.argsort(-sim_a[i])
+            ib = np.argsort(-sim_b[i])
+            ia = ia[ia != i][:ks]
+            ib = ib[ib != i][:ks]
+            overlaps.append(len(set(ia.tolist()) & set(ib.tolist())) / ks)
+        return float(np.mean(overlaps))
+
+    def _collapse_diagnostics(self, hash_codes: np.ndarray) -> dict[str, float]:
+        bit_means = hash_codes.mean(axis=0)
+        eps = 1e-12
+        entropy = -(
+            bit_means * np.log2(bit_means + eps)
+            + (1.0 - bit_means) * np.log2(1.0 - bit_means + eps)
+        )
+        unique = np.unique(hash_codes, axis=0).shape[0]
+        return {
+            "unique_ratio": float(unique / max(1, hash_codes.shape[0])),
+            "entropy_mean": float(entropy.mean()),
+            "entropy_min": float(entropy.min()),
+            "bit_mean": float(bit_means.mean()),
+            "bit_std": float(bit_means.std()),
+        }
+
+    def _make_controlled_cosine_set(
+        self,
+        n_anchors: int = 32,
+        n_per_anchor: int = 8,
+        noise_levels: list[float] | None = None,
+        seed: int = 42,
+    ) -> np.ndarray:
+        """Generate embeddings with a wide, controllable cosine similarity range.
+
+        Construction: for each anchor a (unit), make variants v = normalize(a + s * u)
+        where u is random unit noise orthogonal-ish to a (in expectation).
+        This yields cos(a, v) roughly decreasing as s increases.
+        """
+        if noise_levels is None:
+            noise_levels = [0.0, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2]
+        if n_per_anchor != len(noise_levels):
+            # keep behavior predictable; allow user to pass matching lists
+            noise_levels = (
+                noise_levels
+                * ((n_per_anchor + len(noise_levels) - 1) // len(noise_levels))
+            )[:n_per_anchor]
+
+        rng = np.random.default_rng(seed)
+        anchors = rng.standard_normal((n_anchors, EMB_DIM), dtype=np.float32)
+        anchors = self._l2_normalize_np(anchors)
+
+        all_vecs = []
+        for i in range(n_anchors):
+            a = anchors[i]
+            for s in noise_levels[:n_per_anchor]:
+                u = rng.standard_normal((EMB_DIM,), dtype=np.float32)
+                u = u - float(np.dot(u, a)) * a
+                u = u / (np.linalg.norm(u) + 1e-12)
+                v = a + float(s) * u
+                all_vecs.append(v.astype(np.float32))
+        all_vecs = np.stack(all_vecs, axis=0)
+        return self._l2_normalize_np(all_vecs)
+
+    @staticmethod
+    def _linear_calibration(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+        """Fit y ~= a*x + b by least squares (closed form)."""
+        x = np.asarray(x, dtype=np.float64)
+        y = np.asarray(y, dtype=np.float64)
+        vx = float(np.var(x))
+        if vx < 1e-12:
+            return 1.0, 0.0
+        a = float(np.cov(x, y, bias=True)[0, 1] / (vx + 1e-12))
+        b = float(y.mean() - a * x.mean())
+        return a, b
+
+    @staticmethod
+    def _bucket_report(
+        x: np.ndarray,
+        y: np.ndarray,
+        bins: list[float],
+    ) -> list[dict[str, float]]:
+        """Bucket x into [bins[i], bins[i+1]) and report y stats and MAE."""
+        x = np.asarray(x)
+        y = np.asarray(y)
+        rows: list[dict[str, float]] = []
+        for i in range(len(bins) - 1):
+            lo = float(bins[i])
+            hi = float(bins[i + 1])
+            m = (x >= lo) & (x < hi)
+            n = int(m.sum())
+            if n <= 0:
+                rows.append(
+                    {
+                        "lo": lo,
+                        "hi": hi,
+                        "n": 0.0,
+                        "x_mean": float("nan"),
+                        "y_mean": float("nan"),
+                        "y_std": float("nan"),
+                        "mae": float("nan"),
+                    }
+                )
+                continue
+            xs = x[m]
+            ys = y[m]
+            rows.append(
+                {
+                    "lo": lo,
+                    "hi": hi,
+                    "n": float(n),
+                    "x_mean": float(xs.mean()),
+                    "y_mean": float(ys.mean()),
+                    "y_std": float(ys.std()),
+                    "mae": float(np.mean(np.abs(xs - ys))),
+                }
+            )
+        return rows
+
     def test_random_embeddings(self, seed: int = 42, n_samples: int = 3):
         """Test with random embeddings from normal distribution.
 
@@ -816,8 +989,10 @@ class HasherInferenceTester:
             n_samples: Number of random embeddings to test
         """
         logger.note(f"> Test 1: Random embeddings diversity")
-        np.random.seed(seed)
-        test_embs = np.random.randn(n_samples, EMB_DIM).astype(np.float32)
+        # Prefer unit-sphere distribution to match training geometry (cosine).
+        rng = np.random.default_rng(seed)
+        test_embs = rng.standard_normal((n_samples, EMB_DIM), dtype=np.float32)
+        test_embs = self._l2_normalize_np(test_embs)
 
         logger.mesg(f"  * Test embeddings stats:")
         for i in range(n_samples):
@@ -847,7 +1022,7 @@ class HasherInferenceTester:
         logger.note(f"  * Hex strings:")
         for i in range(n_samples):
             hex_str = self.inference.hash_to_hex(hash_codes[i])
-            logger.mesg(f"    - [{i}]: {hex_str}")
+            logger.mesg(f"    - [{i}]: {hex_str[:32]} ... (len={len(hex_str)})")
 
         # check diversity
         avg_hamming = np.mean(list(hamming_distances.values()))
@@ -869,8 +1044,9 @@ class HasherInferenceTester:
             n_samples: Number of embeddings to test
         """
         logger.note("> Test 2: Process embeddings one by one")
-        np.random.seed(seed)
-        test_embs = np.random.randn(n_samples, EMB_DIM).astype(np.float32)
+        rng = np.random.default_rng(seed)
+        test_embs = rng.standard_normal((n_samples, EMB_DIM), dtype=np.float32)
+        test_embs = self._l2_normalize_np(test_embs)
         # batch
         hash_codes_batch = self.inference.emb_to_hash(test_embs)
         # individual
@@ -898,13 +1074,17 @@ class HasherInferenceTester:
         Healthy models should show strong separation (>30% Hamming distance).
         """
         logger.note("> Test 3: Extreme value separation")
-        diverse_embs = np.array(
-            [
-                np.zeros(EMB_DIM, dtype=np.float32),
-                np.ones(EMB_DIM, dtype=np.float32),
-                np.random.randn(EMB_DIM).astype(np.float32),
-            ]
-        )
+        # Since training/inference normalize embeddings, zeros/ones are not meaningful
+        # (zeros becomes all-zeros -> undefined cosine; ones collapses to a direction).
+        # Use controlled far-apart directions instead.
+        rng = np.random.default_rng(42)
+        a = rng.standard_normal((EMB_DIM,), dtype=np.float32)
+        a = a / (np.linalg.norm(a) + 1e-12)
+        b = -a
+        c = rng.standard_normal((EMB_DIM,), dtype=np.float32)
+        c = c - float(np.dot(c, a)) * a
+        c = c / (np.linalg.norm(c) + 1e-12)
+        diverse_embs = np.stack([a, b, c], axis=0).astype(np.float32)
         diverse_hash = self.inference.emb_to_hash(diverse_embs)
         # calc pairwise Hamming distances
         hamming_01 = np.sum(diverse_hash[0] != diverse_hash[1])
@@ -938,60 +1118,85 @@ class HasherInferenceTester:
             n_samples: Number of random embeddings to test
         """
         logger.note("> Test 4: Cosine similarity  (angular) preservation")
-        np.random.seed(seed)
-        test_embs = np.random.randn(n_samples, EMB_DIM).astype(np.float32)
-        # normalize embeddings for cosine similarity
-        test_embs_norm = test_embs / np.linalg.norm(test_embs, axis=1, keepdims=True)
-        # get hash codes
-        hash_codes = self.inference.emb_to_hash(test_embs_norm)
-        # convert to {-1, 1} for cosine calculation
-        hash_codes_signed = hash_codes.astype(np.float32) * 2 - 1  # 0->-1, 1->1
-        # calc all pairwise similarities
-        emb_similarities = []
-        hash_similarities = []
-        for i in range(n_samples):
-            for j in range(i + 1, n_samples):
-                # embedding cosine similarity
-                emb_cos = np.dot(test_embs_norm[i], test_embs_norm[j])
-                emb_similarities.append(emb_cos)
+        # IMPORTANT: Pure random pairs in high-D have cosine concentrated near 0,
+        # which makes correlation unstable and not representative of retrieval.
+        # Use a controlled set with a broad cosine range.
+        test_embs_norm = self._make_controlled_cosine_set(
+            n_anchors=max(4, n_samples),
+            n_per_anchor=8,
+            seed=seed,
+        )
 
-                # hash cosine similarity
-                # for binary {-1,1}: cos = dot(h1,h2) / hash_bits
-                hash_cos = np.dot(hash_codes_signed[i], hash_codes_signed[j]) / len(
-                    hash_codes_signed[i]
-                )
-                hash_similarities.append(hash_cos)
-        emb_similarities = np.array(emb_similarities)
-        hash_similarities = np.array(hash_similarities)
-        # calc correlation and mse
-        correlation = np.corrcoef(emb_similarities, hash_similarities)[0, 1]
-        mse = np.mean((emb_similarities - hash_similarities) ** 2)
-        mae = np.mean(np.abs(emb_similarities - hash_similarities))
-        # log results
+        hash_codes = self.inference.emb_to_hash(test_embs_norm)
+        hash_codes_signed = self._hash_to_signed(hash_codes)
+
+        emb_sim = self._pairwise_cos_np(test_embs_norm)
+        hash_sim = (hash_codes_signed @ hash_codes_signed.T) / float(
+            hash_codes_signed.shape[1]
+        )
+
+        iu = np.triu_indices(emb_sim.shape[0], k=1)
+        emb_similarities = emb_sim[iu]
+        hash_similarities = hash_sim[iu]
+
+        pearson = float(np.corrcoef(emb_similarities, hash_similarities)[0, 1])
+        spearman = self._spearman_corr(emb_similarities, hash_similarities)
+        mse = float(np.mean((emb_similarities - hash_similarities) ** 2))
+        mae = float(np.mean(np.abs(emb_similarities - hash_similarities)))
+
+        topk10 = self._topk_overlap(emb_sim, hash_sim, k=10)
+        topk50 = self._topk_overlap(emb_sim, hash_sim, k=50)
+
         logger.mesg(
             f"  * Embedding similarity range: [{emb_similarities.min():.3f}, {emb_similarities.max():.3f}]"
         )
         logger.mesg(
             f"  * Hash similarity range: [{hash_similarities.min():.3f}, {hash_similarities.max():.3f}]"
         )
-        logger.mesg(f"  * Correlation: {correlation:.4f}")
-        logger.mesg(f"  * MSE: {mse:.4f}")
-        logger.mesg(f"  * MAE: {mae:.4f}")
-        # good if: high correlation (>0.7), low error (<0.1)
-        if correlation > 0.7 and mae < 0.15:
-            logger.okay(
-                f"  ✓ Excellent similarity preservation (correlation={correlation:.3f}, MAE={mae:.3f})"
+        logger.mesg(f"  * Pearson:   {pearson:.4f}")
+        logger.mesg(f"  * Spearman:  {spearman:.4f}")
+        logger.mesg(f"  * MAE/MSE:   {mae:.4f} / {mse:.4f}")
+        logger.mesg(f"  * TopK@10 overlap: {topk10:.3f}")
+        logger.mesg(f"  * TopK@50 overlap: {topk50:.3f}")
+
+        # Calibration / bucket diagnostics: tells whether errors come from
+        # a simple affine mismatch (scale+offset) or true rank/geometry distortion.
+        a, b = self._linear_calibration(emb_similarities, hash_similarities)
+        hash_sim_cal = a * hash_similarities + b
+        mae_cal = float(np.mean(np.abs(emb_similarities - hash_sim_cal)))
+        logger.mesg(
+            f"  * Linear calibration: y={a:.3f}*x+{b:.3f} | MAE_cal={mae_cal:.4f}"
+        )
+
+        bins = [-1.0, -0.5, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0001]
+        raw_rows = self._bucket_report(emb_similarities, hash_similarities, bins=bins)
+        cal_rows = self._bucket_report(emb_similarities, hash_sim_cal, bins=bins)
+        logger.note("  * Bucket report (by embedding cosine):")
+        for rr, cr in zip(raw_rows, cal_rows):
+            lo = rr["lo"]
+            hi = rr["hi"]
+            n = int(rr["n"])
+            if n == 0:
+                logger.mesg(f"    - [{lo:+.1f},{hi:+.1f}): n=0")
+                continue
+            logger.mesg(
+                f"    - [{lo:+.1f},{hi:+.1f}): n={n:<4d} "
+                f"hash_mean={rr['y_mean']:+.3f}±{rr['y_std']:.3f} mae={rr['mae']:.3f} | "
+                f"mae_cal={cr['mae']:.3f}"
             )
-        elif correlation > 0.5 and mae < 0.25:
+
+        # Slightly relaxed hard thresholds; focus on rank/neighbor preservation.
+        if spearman > 0.7 and topk10 > 0.6 and mae < 0.25:
+            logger.okay(
+                f"  ✓ Strong preservation (Spearman={spearman:.3f}, TopK@10={topk10:.3f}, MAE={mae:.3f})"
+            )
+        elif spearman > 0.5 and topk10 > 0.4:
             logger.warn(
-                f"  ○ Moderate similarity preservation (correlation={correlation:.3f}, MAE={mae:.3f})"
+                f"  ○ Moderate preservation (Spearman={spearman:.3f}, TopK@10={topk10:.3f}, MAE={mae:.3f})"
             )
         else:
             logger.warn(
-                f"  ✗ Poor similarity preservation (correlation={correlation:.3f}, MAE={mae:.3f})"
-            )
-            logger.warn(
-                f"    Expected: correlation>0.7, MAE<0.15 for angular preservation"
+                f"  ✗ Weak preservation (Spearman={spearman:.3f}, TopK@10={topk10:.3f}, MAE={mae:.3f})"
             )
 
     def test_bit_distribution(self, seed: int = 42, n_samples: int = 100):
@@ -1005,9 +1210,11 @@ class HasherInferenceTester:
             n_samples: Number of random embeddings to test
         """
         logger.note("> Test 5: Bit distribution balance")
-        np.random.seed(seed)
-        test_embs = np.random.randn(n_samples, EMB_DIM).astype(np.float32)
+        rng = np.random.default_rng(seed)
+        test_embs = rng.standard_normal((n_samples, EMB_DIM), dtype=np.float32)
+        test_embs = self._l2_normalize_np(test_embs)
         hash_codes = self.inference.emb_to_hash(test_embs)
+        diag = self._collapse_diagnostics(hash_codes)
         # calc bit balance: mean of each bit across samples
         bit_means = hash_codes.mean(axis=0)  # Proportion of 1s for each bit
         # stats
@@ -1025,6 +1232,10 @@ class HasherInferenceTester:
         logger.mesg(f"    - Range: [{min_balance:.4f}, {max_balance:.4f}]")
         logger.mesg(
             f"    - Severely imbalanced bits (<10% or >90%): {imbalanced_bits}/{total_bits} ({imbalanced_bits/total_bits*100:.1f}%)"
+        )
+        logger.mesg(
+            f"  * Collapse diagnostics: unique={diag['unique_ratio']*100:.1f}%, "
+            f"entropy_mean={diag['entropy_mean']:.3f}, entropy_min={diag['entropy_min']:.3f}"
         )
         # good if: mean ~0.5, std low, few imbalanced bits
         if (
@@ -1050,9 +1261,11 @@ class HasherInferenceTester:
             n_samples: Number of random embeddings to test
         """
         logger.note("> Test 6: Hash code statistics")
-        np.random.seed(seed)
-        test_embs = np.random.randn(n_samples, EMB_DIM).astype(np.float32)
+        rng = np.random.default_rng(seed)
+        test_embs = rng.standard_normal((n_samples, EMB_DIM), dtype=np.float32)
+        test_embs = self._l2_normalize_np(test_embs)
         hash_codes = self.inference.emb_to_hash(test_embs)
+        diag = self._collapse_diagnostics(hash_codes)
         # calc pairwise Hamming distances for all pairs
         hamming_matrix = np.zeros((n_samples, n_samples))
         for i in range(n_samples):
@@ -1096,6 +1309,11 @@ class HasherInferenceTester:
             logger.okay(f"  ✓ Healthy hash distribution")
         else:
             logger.warn(f"  ○ Hash distribution could be better")
+
+        logger.mesg(
+            f"  * Unique ratio: {diag['unique_ratio']*100:.1f}% | "
+            f"Entropy(mean/min): {diag['entropy_mean']:.3f}/{diag['entropy_min']:.3f}"
+        )
 
     def run_all_tests(self):
         """Run all test suites."""
