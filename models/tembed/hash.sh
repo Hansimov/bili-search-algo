@@ -5,8 +5,11 @@
 
 # Usage:
 # cd ~/repos/bili-search-algo
-# SYNTAX : ./models/tembed/hash.sh [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-n max_count] [-rm] [-w]
-# Example: ./models/tembed/hash.sh -hd 2048 -hb 2048 -ms 100000 -ep 10 -n 1000 -rm -w
+# SYNTAX : ./models/tembed/hash.sh [-p preset] [-a arch] [-bz batch_size] [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-n max_count] [-rm] [-w]
+
+# Examples:
+# ./models/tembed/hash.sh -hd 2048 -hb 2048 -ms 100000 -ep 10 -n 1000 -rm -w
+# ./models/tembed/hash.sh -p resmlp_small -a resmlp -hb 2048 -ms 100000 -bz 256 -ep 10 -n 500 -rm -w
 
 # color codes
 RED='\033[1;31m'
@@ -33,6 +36,9 @@ echo_header() {
 
 echo_params() {
     echo -e "${MAGENTA}> Training Parameters:${NC}"
+    echo -e "  * ${CYAN}preset${NC}      : ${GREEN}${PRESET}${NC}"
+    echo -e "  * ${CYAN}arch${NC}        : ${GREEN}${ARCH}${NC}"
+    echo -e "  * ${CYAN}batch_size${NC}  : ${GREEN}${BATCH_SIZE}${NC}"
     echo -e "  * ${CYAN}hidden_dim${NC}  : ${GREEN}$HIDDEN_DIM${NC}"
     echo -e "  * ${CYAN}hash_bits${NC}   : ${GREEN}$HASH_BITS${NC}"
     echo -e "  * ${CYAN}max_samples${NC} : ${GREEN}$MAX_SAMPLES${NC}"
@@ -55,6 +61,18 @@ run_cmd() {
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
+            -p|--preset)
+                PRESET="$2"
+                shift 2
+                ;;
+            -a|--arch)
+                ARCH="$2"
+                shift 2
+                ;;
+            -bz|--batch-size)
+                BATCH_SIZE="$2"
+                shift 2
+                ;;
             -hd|--hidden-dim)
                 HIDDEN_DIM="$2"
                 shift 2
@@ -85,7 +103,7 @@ parse_args() {
                 ;;
             *)
                 echo -e "${RED}Unknown parameter: $1${NC}"
-                echo "Usage: $0 [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-n max_count] [-w] [-rm]"
+                echo "Usage: $0 [-p preset] [-a arch] [-bz batch_size] [-hd hidden_dim] [-hb hash_bits] [-ms max_samples] [-ep epochs] [-n max_count] [-w] [-rm]"
                 exit 1
                 ;;
         esac
@@ -100,6 +118,9 @@ echo_interrupt
 # [Args]
 HASH_BITS=""
 HIDDEN_DIM=""
+PRESET=""
+ARCH=""
+BATCH_SIZE=""
 MAX_SAMPLES=""
 EPOCHS=""
 MAX_COUNT=""
@@ -114,6 +135,9 @@ cd ~/repos/bili-search-algo
 echo_header "Training Learned Hash Model"
 echo_params
 CMD="python -m models.tembed.hasher -m train"
+[[ -n "$PRESET" ]] && CMD="$CMD --preset $PRESET"
+[[ -n "$ARCH" ]] && CMD="$CMD --arch $ARCH"
+[[ -n "$BATCH_SIZE" ]] && CMD="$CMD -bz $BATCH_SIZE"
 [[ -n "$HIDDEN_DIM" ]] && CMD="$CMD -hd $HIDDEN_DIM"
 [[ -n "$HASH_BITS" ]] && CMD="$CMD -hb $HASH_BITS"
 [[ -n "$MAX_SAMPLES" ]] && CMD="$CMD -ms $MAX_SAMPLES"

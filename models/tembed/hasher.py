@@ -3,6 +3,7 @@ import json
 import numpy as np
 import torch
 import torch.nn as nn
+import sys
 
 from pathlib import Path
 from tclogger import TCLogger, TCLogbar, logstr, dict_to_str, int_bits
@@ -23,9 +24,132 @@ HIDDEN_DIM = 2048
 DROPOUT = 0.1
 
 BATCH_SIZE = 256
-LEARNING_RATE = 1e-3
+# ResMLP is more sensitive to step size; use a safer default.
+LEARNING_RATE = 5e-4
 WEIGHT_DECAY = 1e-4
 EPOCHS = 20
+
+
+class RMSNorm(nn.Module):
+    """RMSNorm without mean subtraction (stable for embedding features)."""
+
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = float(eps)
+        self.scale = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        rms = torch.sqrt(torch.mean(x * x, dim=-1, keepdim=True) + self.eps)
+        return (x / rms) * self.scale
+
+
+class GatedMLPBlock(nn.Module):
+    """Pre-norm residual gated MLP block (SwiGLU-style)."""
+
+    def __init__(self, dim: int, expansion: int = 4, dropout: float = 0.1):
+        super().__init__()
+        self.norm = RMSNorm(dim)
+        hidden = int(dim * expansion)
+        self.fc_g = nn.Linear(dim, hidden, bias=True)
+        self.fc_v = nn.Linear(dim, hidden, bias=True)
+        self.fc_out = nn.Linear(hidden, dim, bias=True)
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        z = self.norm(x)
+        g = torch.nn.functional.silu(self.fc_g(z))
+        v = self.fc_v(z)
+        y = self.fc_out(g * v)
+        y = self.drop(y)
+        return x + y
+
+
+class EmbToHashNetV2(nn.Module):
+    """Stronger Emb->Hash model: input proj + residual gated blocks + output head."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        hash_bits: int,
+        model_dim: int = 1536,
+        depth: int = 4,
+        expansion: int = 4,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.input_dim = int(input_dim)
+        self.hash_bits = int(hash_bits)
+        self.model_dim = int(model_dim)
+        self.depth = int(depth)
+        self.expansion = int(expansion)
+        self.dropout = float(dropout)
+
+        self.in_norm = RMSNorm(self.input_dim)
+        self.in_proj = nn.Linear(self.input_dim, self.model_dim, bias=True)
+        self.blocks = nn.ModuleList(
+            [
+                GatedMLPBlock(
+                    dim=self.model_dim,
+                    expansion=self.expansion,
+                    dropout=self.dropout,
+                )
+                for _ in range(self.depth)
+            ]
+        )
+        self.out_norm = RMSNorm(self.model_dim)
+        self.out_proj = nn.Linear(self.model_dim, self.hash_bits, bias=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.ndim != 2:
+            raise ValueError(
+                f"Expected 2D tensor (batch, dim), got shape={tuple(x.shape)}"
+            )
+        if x.shape[1] != self.input_dim:
+            raise ValueError(f"Expected input_dim={self.input_dim}, got {x.shape[1]}")
+
+        # Keep angular geometry stable.
+        x = torch.nn.functional.normalize(x, dim=-1)
+        x = self.in_norm(x)
+        h = self.in_proj(x)
+        for blk in self.blocks:
+            h = blk(h)
+        h = self.out_norm(h)
+        return torch.tanh(self.out_proj(h))
+
+    def get_hash_codes(self, x: torch.Tensor) -> torch.Tensor:
+        with torch.no_grad():
+            h = self.forward(x)
+            return (h > 0).to(torch.uint8)
+
+
+def build_hasher_model(
+    arch: str,
+    input_dim: int,
+    hash_bits: int,
+    hidden_dim: int,
+    dropout: float,
+    model_dim: int = 1536,
+    depth: int = 4,
+    expansion: int = 4,
+) -> nn.Module:
+    arch = (arch or "mlp").lower()
+    if arch == "mlp":
+        return EmbToHashNet(
+            input_dim=input_dim,
+            hash_bits=hash_bits,
+            hidden_dim=hidden_dim,
+            dropout=dropout,
+        )
+    if arch in {"resmlp", "v2", "gmlp"}:
+        return EmbToHashNetV2(
+            input_dim=input_dim,
+            hash_bits=hash_bits,
+            model_dim=model_dim,
+            depth=depth,
+            expansion=expansion,
+            dropout=dropout,
+        )
+    raise ValueError(f"Unknown arch: {arch}")
 
 
 class EmbToHashNet(nn.Module):
@@ -87,8 +211,9 @@ class HashLoss(nn.Module):
         margin: float = 0.2,
         w_distill: float = 1.0,
         w_matrix: float = 0.25,
-        matrix_temp: float = 0.07,
-        w_var: float = 0.02,
+        matrix_temp: float = 0.2,
+        w_entropy: float = 0.01,
+        w_center: float = 0.05,
         w_triplet: float = 1.0,
         w_quant: float = 0.02,
         w_balance: float = 0.02,
@@ -100,24 +225,64 @@ class HashLoss(nn.Module):
         self.w_distill = float(w_distill)
         self.w_matrix = float(w_matrix)
         self.matrix_temp = float(matrix_temp)
-        self.w_var = float(w_var)
+        self.w_entropy = float(w_entropy)
+        self.w_center = float(w_center)
         self.w_triplet = float(w_triplet)
         self.w_quant = float(w_quant)
         self.w_balance = float(w_balance)
         self.w_decor = float(w_decor)
         self.eps = float(eps)
 
+        # Training-time scheduling (set by trainer): helps stability at 1M+
+        self._epoch: int = 0
+        self._epochs: int = 0
+
+    def set_epoch(self, epoch: int, epochs: int) -> None:
+        self._epoch = int(epoch)
+        self._epochs = int(epochs)
+
+    def _weight_scale(self, kind: str) -> float:
+        """Simple schedules to improve stability across dataset sizes.
+
+        - entropy: warm up (avoid fighting alignment early)
+        - center : warm up slightly (still useful early, but can destabilize if too strong)
+        """
+        if self._epochs <= 0:
+            return 1.0
+        t = float(self._epoch) / float(max(1, self._epochs))
+        if kind == "entropy":
+            # 0 -> 1 over first 30% epochs
+            return float(min(1.0, t / 0.30))
+        if kind == "center":
+            # 0.5 -> 1 over first 20% epochs
+            return float(0.5 + 0.5 * min(1.0, t / 0.20))
+        return 1.0
+
     def _cos_matrix(self, x: torch.Tensor) -> torch.Tensor:
         x = torch.nn.functional.normalize(x, dim=-1, eps=self.eps)
-        return x @ x.T
+        c = x @ x.T
+        # Numerical guard: cosine should be in [-1, 1], but fp16/overflow can break this.
+        return torch.clamp(c, -1.0, 1.0)
 
     def _offdiag_mask(self, n: int, device: torch.device) -> torch.Tensor:
         return (~torch.eye(n, dtype=torch.bool, device=device)).to(torch.bool)
 
-    def _var_loss(self, h: torch.Tensor) -> torch.Tensor:
-        # Encourage per-bit variance within batch to avoid constant bits.
-        v = torch.var(h, dim=0, unbiased=False)
-        return torch.mean(torch.relu(0.05 - v))
+    def _entropy_loss(self, h: torch.Tensor) -> torch.Tensor:
+        """Encourage non-saturated bits via per-bit Bernoulli entropy.
+
+        Let p = P(bit=1) estimated from continuous h in (-1,1) via p=(h+1)/2.
+        Max entropy at p=0.5. Penalize low entropy bits.
+        """
+        p = torch.clamp((h + 1.0) * 0.5, self.eps, 1.0 - self.eps)
+        # Stable: avoid log(0) and propagate finite values.
+        hbit = -(p * torch.log(p) + (1.0 - p) * torch.log(1.0 - p))
+        # target: encourage near-maximum entropy; use hinge so it's inactive when healthy
+        # max entropy for Bernoulli is ln(2)
+        loss = torch.mean(torch.relu(np.log(2.0) - hbit))
+        # Final guard to prevent NaNs from poisoning training.
+        if not torch.isfinite(loss):
+            return torch.zeros((), device=h.device, dtype=h.dtype)
+        return loss
 
     def _signed_cos(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         a = torch.nn.functional.normalize(a, dim=-1, eps=self.eps)
@@ -161,6 +326,7 @@ class HashLoss(nn.Module):
         # Distillation: match hash-space similarities to embedding-space cosine
         loss_distill = torch.tensor(0.0, device=anchor_hash.device)
         loss_matrix = torch.tensor(0.0, device=anchor_hash.device)
+        loss_center = torch.tensor(0.0, device=anchor_hash.device)
         if anchor_emb is not None and pos_emb is not None and neg_emb is not None:
             anchor_emb_n = torch.nn.functional.normalize(
                 anchor_emb, dim=-1, eps=self.eps
@@ -176,37 +342,57 @@ class HashLoss(nn.Module):
             ) + torch.nn.functional.smooth_l1_loss(sim_an, t_an)
 
             # In-batch matrix distillation on anchors: preserve global neighborhood geometry.
-            # Use SmoothL1 on cosine similarity matrices.
-            s_mat = self._cos_matrix(anchor_hash) / self.matrix_temp
-            t_mat = (self._cos_matrix(anchor_emb_n).detach()) / self.matrix_temp
+            # Important: scaling cosine by 1/temp can explode gradients when temp is small.
+            # Instead, keep cosine in [-1,1] and apply temperature inside the regression.
+            temp = max(self.matrix_temp, self.eps)
+            s_mat = self._cos_matrix(anchor_hash)
+            t_mat = self._cos_matrix(anchor_emb_n).detach()
             mask = self._offdiag_mask(s_mat.shape[0], s_mat.device)
-            loss_matrix = torch.nn.functional.smooth_l1_loss(s_mat[mask], t_mat[mask])
+            loss_matrix = torch.nn.functional.smooth_l1_loss(
+                s_mat[mask], t_mat[mask], beta=float(temp)
+            )
+
+            # Centering: match the *mean* pairwise cosine to reduce global bias.
+            # This addresses the common failure mode where hash cosine is shifted upward.
+            with torch.no_grad():
+                t_mu = t_mat[mask].mean()
+            s_mu = s_mat[mask].mean()
+            loss_center = (s_mu - t_mu) ** 2
 
         # Regularize anchors only to reduce over-constraint and collapse risk.
         loss_quant = self._quant_loss(anchor_hash)
         loss_bal = self._balance_loss(anchor_hash)
         loss_decor = self._decor_loss(anchor_hash)
-        loss_var = self._var_loss(anchor_hash)
+        loss_entropy = self._entropy_loss(anchor_hash)
+
+        w_entropy_eff = self.w_entropy * self._weight_scale("entropy")
+        w_center_eff = self.w_center * self._weight_scale("center")
 
         total = (
             self.w_distill * loss_distill
             + self.w_matrix * loss_matrix
+            + w_center_eff * loss_center
             + self.w_triplet * loss_triplet
             + self.w_quant * loss_quant
             + self.w_balance * loss_bal
             + self.w_decor * loss_decor
-            + self.w_var * loss_var
+            + w_entropy_eff * loss_entropy
         )
+
+        # Safety: if anything went numerically wrong, return a finite loss.
+        if not torch.isfinite(total):
+            total = torch.zeros((), device=anchor_hash.device, dtype=anchor_hash.dtype)
 
         loss_dict = {
             "total": float(total.detach().cpu().item()),
             "sim": float(loss_triplet.detach().cpu().item()),
             "distill": float(loss_distill.detach().cpu().item()),
             "matrix": float(loss_matrix.detach().cpu().item()),
+            "center": float(loss_center.detach().cpu().item()),
             "quant": float(loss_quant.detach().cpu().item()),
             "bal": float(loss_bal.detach().cpu().item()),
             "decor": float(loss_decor.detach().cpu().item()),
-            "var": float(loss_var.detach().cpu().item()),
+            "entropy": float(loss_entropy.detach().cpu().item()),
         }
         return total, loss_dict
 
@@ -282,11 +468,16 @@ class HasherTrainer:
         hash_bits: int = HASH_BITS,
         hidden_dim: int = HIDDEN_DIM,
         dropout: float = DROPOUT,
+        arch: str = "mlp",
+        model_dim: int = 1536,
+        depth: int = 4,
+        expansion: int = 4,
         batch_size: int = BATCH_SIZE,
         learning_rate: float = LEARNING_RATE,
         weight_decay: float = WEIGHT_DECAY,
         max_samples: int = None,
         remove_weights: bool = False,
+        loss_params: Optional[dict] = None,
     ):
         """Initialize trainer.
 
@@ -306,17 +497,22 @@ class HasherTrainer:
         self.hash_bits = hash_bits
         self.hidden_dim = hidden_dim
         self.dropout = dropout
+        self.arch = arch
+        self.model_dim = int(model_dim)
+        self.depth = int(depth)
+        self.expansion = int(expansion)
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.max_samples = max_samples
         self.remove_weights = remove_weights
+        self.loss_params = loss_params or {}
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model: Optional[EmbToHashNet] = None
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None
-        self.criterion: Optional[TripletHashLoss] = None
+        self.criterion: Optional[HashLoss] = None
         self.dataloader: Optional[DataLoader] = None
 
         self.weights_dir = WEIGHTS_DIR
@@ -328,36 +524,49 @@ class HasherTrainer:
     def _log_model_info(self):
         """Log model initialization information."""
         logger.note(f"> Initializing model:")
+        arch = str(self.arch or "mlp").lower()
         info_dict = {
             "input_dim": self.input_dim,
             "hash_bits": self.hash_bits,
-            "hidden_dim": self.hidden_dim,
+            "arch": arch,
             "dropout": self.dropout,
             "device": str(self.device),
         }
+        if arch == "mlp":
+            info_dict["hidden_dim"] = self.hidden_dim
+        else:
+            # hidden_dim is an MLP-only parameter; avoid misleading logs.
+            info_dict["model_dim"] = int(self.model_dim)
+            info_dict["depth"] = int(self.depth)
+            info_dict["expansion"] = int(self.expansion)
         logger.mesg(dict_to_str(info_dict), indent=2)
 
         logger.note(f"> Loss weights:")
         loss_weights = {
-            "distill": 1.0,
-            "matrix": 0.25,
-            "matrix_temp": 0.07,
-            "var": 0.02,
-            "triplet": 1.0,
-            "quant": 0.02,
-            "balance": 0.02,
-            "decor": 0.005,
-            "margin": 0.2,
+            "distill": float(self.loss_params.get("w_distill", 1.0)),
+            "matrix": float(self.loss_params.get("w_matrix", 0.25)),
+            "matrix_temp": float(self.loss_params.get("matrix_temp", 0.07)),
+            "center": float(self.loss_params.get("w_center", 0.05)),
+            "entropy": float(self.loss_params.get("w_entropy", 0.01)),
+            "triplet": float(self.loss_params.get("w_triplet", 1.0)),
+            "quant": float(self.loss_params.get("w_quant", 0.02)),
+            "balance": float(self.loss_params.get("w_balance", 0.02)),
+            "decor": float(self.loss_params.get("w_decor", 0.005)),
+            "margin": float(self.loss_params.get("margin", 0.2)),
         }
         logger.mesg(dict_to_str(loss_weights), indent=2)
 
     def _create_model(self):
         """Create and initialize the hash embedding model."""
-        self.model = EmbToHashNet(
+        self.model = build_hasher_model(
+            arch=self.arch,
             input_dim=self.input_dim,
             hash_bits=self.hash_bits,
             hidden_dim=self.hidden_dim,
             dropout=self.dropout,
+            model_dim=self.model_dim,
+            depth=self.depth,
+            expansion=self.expansion,
         ).to(self.device)
 
     def _create_optimizer_and_criterion(self):
@@ -367,24 +576,31 @@ class HasherTrainer:
             lr=self.learning_rate,
             weight_decay=self.weight_decay,
         )
-        self.criterion = ...  # TODO
         self.criterion = HashLoss(
-            margin=0.2,
-            w_distill=1.0,
-            w_matrix=0.25,
-            matrix_temp=0.07,
-            w_var=0.02,
-            w_triplet=1.0,
-            w_quant=0.02,
-            w_balance=0.02,
-            w_decor=0.005,
+            margin=float(self.loss_params.get("margin", 0.2)),
+            w_distill=float(self.loss_params.get("w_distill", 1.0)),
+            w_matrix=float(self.loss_params.get("w_matrix", 0.25)),
+            matrix_temp=float(self.loss_params.get("matrix_temp", 0.1)),
+            w_center=float(self.loss_params.get("w_center", 0.05)),
+            w_entropy=float(self.loss_params.get("w_entropy", 0.01)),
+            w_triplet=float(self.loss_params.get("w_triplet", 1.0)),
+            w_quant=float(self.loss_params.get("w_quant", 0.02)),
+            w_balance=float(self.loss_params.get("w_balance", 0.02)),
+            w_decor=float(self.loss_params.get("w_decor", 0.005)),
         )
 
     def _generate_checkpoint_paths(self):
         """Generate checkpoint file paths based on model parameters."""
         name_parts = []
         name_parts.append(f"hb{self.hash_bits}")  # hash_bits
-        name_parts.append(f"hd{self.hidden_dim}")  # hidden_dim
+        arch = str(self.arch or "mlp").lower()
+        if arch == "mlp":
+            name_parts.append(f"hd{self.hidden_dim}")  # hidden_dim (MLP only)
+        else:
+            # ResMLP: hidden_dim is unused; encode architecture params instead.
+            name_parts.append(f"md{int(self.model_dim)}")
+            name_parts.append(f"d{int(self.depth)}")
+            name_parts.append(f"x{int(self.expansion)}")
         name_parts.append(f"bs{self.batch_size}")  # batch_size
         if self.max_samples is not None:
             if self.max_samples >= 1e6:
@@ -425,10 +641,26 @@ class HasherTrainer:
             "input_dim": self.input_dim,
             "hash_bits": self.hash_bits,
             "hidden_dim": self.hidden_dim,
+            "arch": str(self.arch),
+            "model_dim": int(self.model_dim),
+            "depth": int(self.depth),
+            "expansion": int(self.expansion),
             "dropout": self.dropout,
             "batch_size": self.batch_size,
             "learning_rate": self.learning_rate,
             "max_samples": self.max_samples,
+            "loss": {
+                "margin": float(self.loss_params.get("margin", 0.2)),
+                "w_distill": float(self.loss_params.get("w_distill", 1.0)),
+                "w_matrix": float(self.loss_params.get("w_matrix", 0.25)),
+                "matrix_temp": float(self.loss_params.get("matrix_temp", 0.07)),
+                "w_center": float(self.loss_params.get("w_center", 0.05)),
+                "w_entropy": float(self.loss_params.get("w_entropy", 0.01)),
+                "w_triplet": float(self.loss_params.get("w_triplet", 1.0)),
+                "w_quant": float(self.loss_params.get("w_quant", 0.02)),
+                "w_balance": float(self.loss_params.get("w_balance", 0.02)),
+                "w_decor": float(self.loss_params.get("w_decor", 0.005)),
+            },
         }
         with open(self.config_path, "w") as f:
             json.dump(config, f, indent=2)
@@ -487,17 +719,26 @@ class HasherTrainer:
     def save_checkpoint(self, epoch: int, loss: float, is_best: bool = False):
         """Save training checkpoint."""
         ckpt = {
-            "epoch": epoch,
+            "epoch": int(epoch),
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
-            "loss": loss,
+            "loss": float(loss),
         }
         if self.scheduler:
             ckpt["scheduler_state_dict"] = self.scheduler.state_dict()
 
+        # Full checkpoint for resuming training (may be large due to optimizer state).
         torch.save(ckpt, self.ckpt_path)
+
         if is_best:
-            torch.save(ckpt, self.best_path)
+            # Weights-only best checkpoint for deployment (small).
+            # Keep only what's needed for inference.
+            best_ckpt = {
+                "epoch": int(epoch),
+                "loss": float(loss),
+                "model_state_dict": self.model.state_dict(),
+            }
+            torch.save(best_ckpt, self.best_path)
 
     def load_checkpoint(self, ckpt_path: Path = None) -> tuple[int, float]:
         """Load training checkpoint.
@@ -517,7 +758,8 @@ class HasherTrainer:
         ckpt = torch.load(ckpt_path, map_location=self.device)
 
         self.model.load_state_dict(ckpt["model_state_dict"])
-        self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        if "optimizer_state_dict" in ckpt and ckpt["optimizer_state_dict"] is not None:
+            self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         if self.scheduler and "scheduler_state_dict" in ckpt:
             self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
 
@@ -528,21 +770,28 @@ class HasherTrainer:
         """Train for one epoch."""
         self.model.train()
 
+        if self.criterion is not None and hasattr(self.criterion, "set_epoch"):
+            self.criterion.set_epoch(epoch=epoch, epochs=self.epochs)
+
         total_losses = {
             "total": 0.0,
             "sim": 0.0,
             "distill": 0.0,
             "matrix": 0.0,
+            "center": 0.0,
             "quant": 0.0,
             "bal": 0.0,
             "decor": 0.0,
-            "var": 0.0,
+            "entropy": 0.0,
         }
+        skipped_batches = 0
         num_batches = len(self.dataloader)
 
-        bar = TCLogbar(total=num_batches)
+        use_bar = bool(getattr(sys.stdout, "isatty", lambda: False)())
+        bar = TCLogbar(total=num_batches) if use_bar else None
         epoch_str = logstr.file(f"{epoch:>{int_bits(self.epochs)}d}")
-        bar.set_head(logstr.mesg(f"  * [Epoch {epoch_str}/{self.epochs}]"))
+        if bar is not None:
+            bar.set_head(logstr.mesg(f"  * [Epoch {epoch_str}/{self.epochs}]"))
 
         for batch_idx, batch in enumerate(self.dataloader):
             anchor_emb = batch["anchor_emb"].to(self.device)
@@ -566,6 +815,25 @@ class HasherTrainer:
                 pos_emb=positive_emb,
                 neg_emb=negative_emb,
             )
+
+            # Numerical safety: skip this batch if loss is NaN/Inf.
+            # This avoids corrupting optimizer state and checkpoint.
+            if not torch.isfinite(loss):
+                skipped_batches += 1
+                self.optimizer.zero_grad(set_to_none=True)
+                desc = (
+                    f"loss=nan "
+                    f"(skip={skipped_batches}, "
+                    f"d={loss_dict.get('distill', 0.0):.3f}, "
+                    f"m={loss_dict.get('matrix', 0.0):.3f}, "
+                    f"c={loss_dict.get('center', 0.0):.3f}, "
+                    f"e={loss_dict.get('entropy', 0.0):.3f}, s={loss_dict.get('sim', 0.0):.3f})"
+                )
+                if bar is not None:
+                    bar.update(1, desc=desc)
+                elif (batch_idx % 50) == 0:
+                    logger.warn(desc)
+                continue
             # backward pass with gradient clipping
             self.optimizer.zero_grad()
             loss.backward()
@@ -579,12 +847,20 @@ class HasherTrainer:
                 f"loss={loss_dict['total']:.3f} "
                 f"(d={loss_dict.get('distill', 0.0):.3f}, "
                 f"m={loss_dict.get('matrix', 0.0):.3f}, "
-                f"v={loss_dict.get('var', 0.0):.3f}, s={loss_dict['sim']:.3f})"
+                f"c={loss_dict.get('center', 0.0):.3f}, "
+                f"e={loss_dict.get('entropy', 0.0):.3f}, s={loss_dict['sim']:.3f})"
             )
-            bar.update(1, desc=desc)
-        bar.update(flush=True, linebreak=True)
+            if bar is not None:
+                bar.update(1, desc=desc)
+            elif (batch_idx % 50) == 0:
+                logger.mesg(desc)
 
-        avg_losses = {k: v / num_batches for k, v in total_losses.items()}
+        if bar is not None:
+            bar.update(flush=True, linebreak=True)
+
+        denom = max(1, num_batches - skipped_batches)
+        avg_losses = {k: v / denom for k, v in total_losses.items()}
+        avg_losses["skipped"] = float(skipped_batches)
         return avg_losses
 
     def train(self, epochs: int = 20, resume: bool = True):
@@ -634,8 +910,21 @@ class HasherTrainer:
             lr = self.optimizer.param_groups[0]["lr"]
             # update scheduler
             self.scheduler.step()
+
+            if avg_losses.get("skipped", 0.0) > 0:
+                logger.warn(
+                    f"  * Skipped {int(avg_losses['skipped'])} NaN/Inf batches in epoch {epoch}"
+                )
+
+            # Do not treat NaN as best.
+            if not np.isfinite(avg_losses["total"]):
+                logger.warn(
+                    f"  ✗ Epoch {epoch} produced non-finite avg loss; checkpoint not marked best"
+                )
             # save checkpoint
-            is_best = avg_losses["total"] < best_loss
+            is_best = np.isfinite(avg_losses["total"]) and (
+                avg_losses["total"] < best_loss
+            )
             if is_best:
                 best_loss = avg_losses["total"]
             self.save_checkpoint(epoch, avg_losses["total"], is_best=is_best)
@@ -721,17 +1010,30 @@ class HasherInference:
                 "hash_bits": HASH_BITS,
                 "hidden_dim": HIDDEN_DIM,
                 "dropout": 0.1,
+                "arch": "mlp",
             }
         # init model
-        self.model = EmbToHashNet(
-            input_dim=config["input_dim"],
-            hash_bits=config["hash_bits"],
-            hidden_dim=config["hidden_dim"],
-            dropout=config["dropout"],
+        arch = str(config.get("arch", "mlp"))
+        self.model = build_hasher_model(
+            arch=arch,
+            input_dim=int(config.get("input_dim", EMB_DIM)),
+            hash_bits=int(config.get("hash_bits", HASH_BITS)),
+            hidden_dim=int(config.get("hidden_dim", HIDDEN_DIM)),
+            dropout=float(config.get("dropout", 0.1)),
+            model_dim=int(config.get("model_dim", 1536)),
+            depth=int(config.get("depth", 4)),
+            expansion=int(config.get("expansion", 4)),
         ).to(self.device)
         # load weights
         ckpt = torch.load(self.weights_path, map_location=self.device)
-        self.model.load_state_dict(ckpt["model_state_dict"])
+        # Support:
+        # 1) full checkpoint dict with "model_state_dict"
+        # 2) raw state_dict
+        if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
+            state = ckpt["model_state_dict"]
+        else:
+            state = ckpt
+        self.model.load_state_dict(state)
         self.model.eval()
         # log path
         logger.note(f"> Loaded HasherInference model from:")
@@ -1338,7 +1640,7 @@ class HasherArgParser(argparse.ArgumentParser):
     Training Arguments:
         -ep, --epochs: Number of training epochs (default: 50)
         -bz, --batch-size: Training batch size (default: 256)
-        -lr, --learning-rate: Initial learning rate (default: 1e-3)
+        -lr, --learning-rate: Initial learning rate (default: 5e-4)
         -hb, --hash-bits: Hash code size (default: 2048)
         -hd, --hidden-dim: MLP hidden dimension (default: 2048)
         -dp, --dropout: Dropout rate (default: 0.1)
@@ -1349,6 +1651,15 @@ class HasherArgParser(argparse.ArgumentParser):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # Presets: apply a known-good bundle of defaults. Explicit flags still override.
+        self.add_argument(
+            "-p",
+            "--preset",
+            type=str,
+            default=None,
+            choices=["mlp_base", "resmlp_small", "resmlp_large"],
+            help="Apply a training preset (sets sensible defaults; explicit flags override)",
+        )
         # Mode: train or test
         self.add_argument(
             "-m",
@@ -1386,6 +1697,13 @@ class HasherArgParser(argparse.ArgumentParser):
         )
         # Model options
         self.add_argument(
+            "--arch",
+            type=str,
+            default="resmlp",
+            choices=["mlp", "resmlp"],
+            help="Model architecture",
+        )
+        self.add_argument(
             "-hb",
             "--hash-bits",
             type=int,
@@ -1398,6 +1716,24 @@ class HasherArgParser(argparse.ArgumentParser):
             type=int,
             default=HIDDEN_DIM,
             help="Hidden layer dimension",
+        )
+        self.add_argument(
+            "--model-dim",
+            type=int,
+            default=768,
+            help="ResMLP model dimension (used when --arch=resmlp)",
+        )
+        self.add_argument(
+            "--depth",
+            type=int,
+            default=3,
+            help="ResMLP depth (#blocks) (used when --arch=resmlp)",
+        )
+        self.add_argument(
+            "--expansion",
+            type=int,
+            default=4,
+            help="ResMLP expansion factor (used when --arch=resmlp)",
         )
         self.add_argument(
             "-dp",
@@ -1413,6 +1749,78 @@ class HasherArgParser(argparse.ArgumentParser):
             default=None,
             help="Maximum number of training samples",
         )
+
+        # Loss options (make large-sample sweeps practical)
+        self.add_argument("--margin", type=float, default=0.2, help="Triplet margin")
+        self.add_argument(
+            "--w-distill", type=float, default=1.0, help="Weight for pairwise distill"
+        )
+        self.add_argument(
+            "--w-matrix", type=float, default=0.25, help="Weight for matrix distill"
+        )
+        self.add_argument(
+            "--matrix-temp", type=float, default=0.2, help="Temperature for matrix"
+        )
+        self.add_argument(
+            "--w-center", type=float, default=0.05, help="Weight for center loss"
+        )
+        self.add_argument(
+            "--w-entropy",
+            type=float,
+            default=0.01,
+            help="Weight for entropy regularizer",
+        )
+        self.add_argument(
+            "--w-triplet", type=float, default=1.0, help="Weight for triplet loss"
+        )
+        self.add_argument(
+            "--w-quant", type=float, default=0.02, help="Weight for quantization"
+        )
+        self.add_argument(
+            "--w-balance", type=float, default=0.02, help="Weight for bit balance"
+        )
+        self.add_argument(
+            "--w-decor", type=float, default=0.005, help="Weight for decorrelation"
+        )
+
+        # Parse once to see if preset is requested.
+        args, _ = self.parse_known_args()
+
+        if args.preset is not None:
+            presets: dict[str, dict[str, object]] = {
+                # Baseline MLP matching older behavior.
+                "mlp_base": {
+                    "arch": "mlp",
+                    "learning_rate": 1e-3,
+                    "hidden_dim": 1024,
+                    "matrix_temp": 0.2,
+                },
+                # Fast, stable ResMLP for quick sweeps.
+                "resmlp_small": {
+                    "arch": "resmlp",
+                    "learning_rate": 5e-4,
+                    "model_dim": 768,
+                    "depth": 3,
+                    "expansion": 4,
+                    "matrix_temp": 0.2,
+                },
+                # Heavier ResMLP for quality runs.
+                "resmlp_large": {
+                    "arch": "resmlp",
+                    "learning_rate": 3e-4,
+                    "model_dim": 1536,
+                    "depth": 4,
+                    "expansion": 4,
+                    "matrix_temp": 0.2,
+                },
+            }
+            chosen = presets.get(args.preset)
+            if chosen is None:
+                raise ValueError(f"Unknown preset: {args.preset}")
+            # Only set defaults; if user passed an explicit flag, argparse keeps it.
+            self.set_defaults(**chosen)
+
+        # Final parse with the (possibly) updated defaults.
         self.args, _ = self.parse_known_args()
 
 
@@ -1420,6 +1828,18 @@ def main():
     args = HasherArgParser().args
 
     if args.mode == "train":
+        loss_params = {
+            "margin": args.margin,
+            "w_distill": args.w_distill,
+            "w_matrix": args.w_matrix,
+            "matrix_temp": args.matrix_temp,
+            "w_center": args.w_center,
+            "w_entropy": args.w_entropy,
+            "w_triplet": args.w_triplet,
+            "w_quant": args.w_quant,
+            "w_balance": args.w_balance,
+            "w_decor": args.w_decor,
+        }
         trainer = HasherTrainer(
             data_dir=SAMPLES_DIR,
             batch_size=args.batch_size,
@@ -1427,8 +1847,13 @@ def main():
             hash_bits=args.hash_bits,
             hidden_dim=args.hidden_dim,
             dropout=args.dropout,
+            arch=args.arch,
+            model_dim=args.model_dim,
+            depth=args.depth,
+            expansion=args.expansion,
             max_samples=args.max_samples,
             remove_weights=args.remove_weights,
+            loss_params=loss_params,
         )
         trainer.init_model()
         trainer.init_dataloader()
