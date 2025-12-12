@@ -53,9 +53,19 @@ echo_complete() {
 }
 
 run_cmd() {
-    local CMD="$1"
-    echo -e "${MAGENTA}> Running:${NC} ${YELLOW}$CMD${NC}"
-    eval $CMD
+    local -a cmd=("$@")
+    echo -e "${MAGENTA}> Running:${NC} ${YELLOW}${cmd[*]}${NC}"
+    "${cmd[@]}"
+}
+
+arg() {
+    # append arg with non-empty value
+    # Usage: arg <cmdArray> "--flag" "$value"
+    local array_name="$1"
+    local flag="$2"
+    local value="$3"
+    [[ -n "$value" ]] || return 0
+    eval "$array_name+=(\"$flag\" \"$value\")"
 }
 
 parse_args() {
@@ -134,39 +144,39 @@ cd ~/repos/bili-search-algo
 # [Train]
 echo_header "Training Learned Hash Model"
 echo_params
-CMD="python -m models.tembed.hasher -m train"
-[[ -n "$PRESET" ]] && CMD="$CMD --preset $PRESET"
-[[ -n "$ARCH" ]] && CMD="$CMD --arch $ARCH"
-[[ -n "$BATCH_SIZE" ]] && CMD="$CMD -bz $BATCH_SIZE"
-[[ -n "$HIDDEN_DIM" ]] && CMD="$CMD -hd $HIDDEN_DIM"
-[[ -n "$HASH_BITS" ]] && CMD="$CMD -hb $HASH_BITS"
-[[ -n "$MAX_SAMPLES" ]] && CMD="$CMD -ms $MAX_SAMPLES"
-[[ -n "$EPOCHS" ]] && CMD="$CMD -ep $EPOCHS"
-[[ "$REMOVE_WEIGHTS" == "true" ]] && CMD="$CMD -rm"
-run_cmd "$CMD"
+cmd=(python -m models.tembed.hasher -m train)
+arg cmd --preset "$PRESET"
+arg cmd --arch "$ARCH"
+arg cmd -bz "$BATCH_SIZE"
+arg cmd -hd "$HIDDEN_DIM"
+arg cmd -hb "$HASH_BITS"
+arg cmd -ms "$MAX_SAMPLES"
+arg cmd -ep "$EPOCHS"
+[[ "$REMOVE_WEIGHTS" == "true" ]] && cmd+=(-rm)
+run_cmd "${cmd[@]}"
 
 # [Test]
 echo_header "Testing Learned Hash Model"
-run_cmd "python -m models.tembed.hasher -m test"
+run_cmd python -m models.tembed.hasher -m test
 
 # [Pre-Calc]
 echo_header "Pre-Calc Learned Hash Embeddings"
-CALC_CMD="python -m models.tembed.calc -p -l"
-[[ -n "$MAX_COUNT" ]] && CALC_CMD="$CALC_CMD -n $MAX_COUNT"
-[[ "$OVERWRITE" == "true" ]] && CALC_CMD="$CALC_CMD -w"
-run_cmd "$CALC_CMD"
+cmd=(python -m models.tembed.calc -p -l)
+arg cmd -n "$MAX_COUNT"
+[[ "$OVERWRITE" == "true" ]] && cmd+=(-w)
+run_cmd "${cmd[@]}"
 
 # [Benchmark]
 echo_header "Build Benchmark Ranks (Learned Hash)"
-BENCH_CMD="python -m models.tembed.calc -r -l"
-[[ -n "$MAX_COUNT" ]] && BENCH_CMD="$BENCH_CMD -n $MAX_COUNT"
-run_cmd "$BENCH_CMD"
+cmd=(python -m models.tembed.calc -r -l)
+arg cmd -n "$MAX_COUNT"
+run_cmd "${cmd[@]}"
 
 # [Score]
 echo_header "Score Benchmark Ranks (Learned Hash)"
-SCORE_CMD="python -m models.tembed.calc -s"
-[[ -n "$MAX_COUNT" ]] && SCORE_CMD="$SCORE_CMD -n $MAX_COUNT"
-run_cmd "$SCORE_CMD"
+cmd=(python -m models.tembed.calc -s)
+arg cmd -n "$MAX_COUNT"
+run_cmd "${cmd[@]}"
 
 # [Complete]
 echo_complete
