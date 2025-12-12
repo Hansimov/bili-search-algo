@@ -415,6 +415,7 @@ class TrainSamplesDataset(Dataset):
         self,
         data_dir: str | Path,
         num_positives_to_use: int = 1,
+        return_all_positives: bool = False,
         max_samples: int = None,
     ):
         """Initialize dataset.
@@ -426,6 +427,7 @@ class TrainSamplesDataset(Dataset):
         """
         self.manager = TrainSamplesManager(data_dir=data_dir, mode="read")
         self.num_positives_to_use = num_positives_to_use
+        self.return_all_positives = bool(return_all_positives)
         self._length = len(self.manager)
         if max_samples is not None:
             self._length = min(self._length, max_samples)
@@ -452,11 +454,118 @@ class TrainSamplesDataset(Dataset):
             >>> cos_sim > 0.5  # Positive should be similar
         """
         sample = self.manager[idx]
-        pos_idx = np.random.randint(0, len(sample["pos_embs"]))
+        pos_embs = sample["pos_embs"].astype(np.float32)
+        if self.return_all_positives:
+            return {
+                "anchor_emb": sample["anchor_emb"].astype(np.float32),
+                "pos_embs": pos_embs,
+                "neg_emb": sample["neg_emb"].astype(np.float32),
+            }
+
+        pos_k = int(max(1, min(self.num_positives_to_use, len(pos_embs))))
+        pos_idx = np.random.randint(0, pos_k)
         return {
             "anchor_emb": sample["anchor_emb"].astype(np.float32),
-            "pos_emb": sample["pos_embs"][pos_idx].astype(np.float32),
+            "pos_emb": pos_embs[pos_idx],
             "neg_emb": sample["neg_emb"].astype(np.float32),
+        }
+
+
+class OrderedPosRankLoss(nn.Module):
+    """Ranking loss that uses multiple positives and teacher ordering.
+
+    If a sample provides >=2 positives, use teacher cosine(anchor_emb, pos_i)
+    to decide which positive should be ranked higher than the other in hash space.
+    """
+
+    def __init__(
+        self,
+        margin: float = 0.05,
+        w_rank: float = 0.5,
+        weight_tau: float = 0.05,
+        gap_min: float = 0.0,
+        topk_pairs: int = 0,
+        eps: float = 1e-8,
+    ):
+        super().__init__()
+        self.margin = float(margin)
+        self.w_rank = float(w_rank)
+        self.weight_tau = float(weight_tau)
+        self.gap_min = float(gap_min)
+        self.topk_pairs = int(topk_pairs)
+        self.eps = float(eps)
+        self._w_scale = 1.0
+
+    def set_weight_scale(self, scale: float) -> None:
+        self._w_scale = float(max(0.0, scale))
+
+    def _signed_cos(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        a = torch.nn.functional.normalize(a, dim=-1, eps=self.eps)
+        b = torch.nn.functional.normalize(b, dim=-1, eps=self.eps)
+        return torch.sum(a * b, dim=-1)
+
+    def forward(
+        self,
+        anchor_hash: torch.Tensor,
+        pos_hashes: torch.Tensor,
+        anchor_emb: torch.Tensor,
+        pos_embs: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        if pos_embs.ndim != 3 or pos_embs.shape[1] < 2:
+            z = torch.zeros((), device=anchor_hash.device, dtype=anchor_hash.dtype)
+            return z, {"rank": 0.0}
+
+        # Compute teacher scores for all positives.
+        # anchor_emb: [B,D], pos_embs: [B,P,D] -> t: [B,P]
+        with torch.no_grad():
+            t = torch.sum(anchor_emb[:, None, :] * pos_embs, dim=-1)
+
+        # Student scores for all positives in hash space.
+        # anchor_hash: [B,Bits], pos_hashes: [B,P,Bits] -> s: [B,P]
+        s = self._signed_cos(anchor_hash[:, None, :], pos_hashes)
+
+        bsz, pnum = t.shape
+        # Build all unordered positive pairs (i<j)
+        # Produce index tensors on the correct device.
+        pair_i, pair_j = torch.triu_indices(pnum, pnum, offset=1, device=t.device)
+        # Gather per-pair teacher/student scores: [B,Pairs]
+        ti = t[:, pair_i]
+        tj = t[:, pair_j]
+        si = s[:, pair_i]
+        sj = s[:, pair_j]
+
+        # Teacher order: if ti>=tj -> want si>=sj else want sj>=si.
+        y = torch.where(ti >= tj, torch.ones_like(ti), -torch.ones_like(ti))
+        # Margin hinge on signed difference
+        # want y*(si-sj) >= margin
+        signed_diff = y * (si - sj)
+        pair_loss = torch.relu(self.margin - signed_diff)
+
+        # Weight pairs by teacher gap magnitude: bigger gap => more confident ordering.
+        # Optionally gate low-gap pairs entirely (strict mode).
+        gap = torch.abs(ti - tj)
+        if self.gap_min and self.gap_min > 0:
+            pair_loss = pair_loss * (gap >= float(self.gap_min)).to(pair_loss.dtype)
+
+        if self.weight_tau > 0:
+            w = torch.clamp(gap / (self.weight_tau + self.eps), 0.0, 1.0)
+            pair_loss = pair_loss * w
+
+        # Optional: keep only top-k most confident pairs per sample (largest teacher gap).
+        # This makes rank supervision sparse and reduces noise.
+        if self.topk_pairs and self.topk_pairs > 0:
+            k = min(int(self.topk_pairs), pair_loss.shape[1])
+            if k < pair_loss.shape[1]:
+                topk_idx = torch.topk(gap, k=k, dim=1, largest=True).indices
+                pair_loss = pair_loss.gather(dim=1, index=topk_idx)
+
+        loss_rank = torch.mean(pair_loss)
+        if not torch.isfinite(loss_rank):
+            loss_rank = torch.zeros(
+                (), device=anchor_hash.device, dtype=anchor_hash.dtype
+            )
+        return (self.w_rank * self._w_scale) * loss_rank, {
+            "rank": float(loss_rank.detach().cpu().item())
         }
 
 
@@ -508,11 +617,22 @@ class HasherTrainer:
         self.remove_weights = remove_weights
         self.loss_params = loss_params or {}
 
+        # Optional: extra rank loss from multiple positives.
+        self.use_pos_rank = bool(self.loss_params.get("use_pos_rank", True))
+        self.rank_margin = float(self.loss_params.get("rank_margin", 0.05))
+        self.w_rank = float(self.loss_params.get("w_rank", 0.5))
+        self.rank_weight_tau = float(self.loss_params.get("rank_weight_tau", 0.05))
+        self.rank_gap_min = float(self.loss_params.get("rank_gap_min", 0.0))
+        self.rank_topk_pairs = int(self.loss_params.get("rank_topk_pairs", 0))
+        # Warm up rank-loss weight over a fraction of epochs (0 disables).
+        self.rank_warmup_frac = float(self.loss_params.get("rank_warmup_frac", 0.0))
+
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model: Optional[EmbToHashNet] = None
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None
         self.criterion: Optional[HashLoss] = None
+        self.rank_criterion: Optional[OrderedPosRankLoss] = None
         self.dataloader: Optional[DataLoader] = None
 
         self.weights_dir = WEIGHTS_DIR
@@ -589,6 +709,15 @@ class HasherTrainer:
             w_decor=float(self.loss_params.get("w_decor", 0.005)),
         )
 
+        if self.use_pos_rank:
+            self.rank_criterion = OrderedPosRankLoss(
+                margin=self.rank_margin,
+                w_rank=self.w_rank,
+                weight_tau=self.rank_weight_tau,
+                gap_min=self.rank_gap_min,
+                topk_pairs=self.rank_topk_pairs,
+            )
+
     def _generate_checkpoint_paths(self):
         """Generate checkpoint file paths based on model parameters."""
         name_parts = []
@@ -660,6 +789,13 @@ class HasherTrainer:
                 "w_quant": float(self.loss_params.get("w_quant", 0.02)),
                 "w_balance": float(self.loss_params.get("w_balance", 0.02)),
                 "w_decor": float(self.loss_params.get("w_decor", 0.005)),
+                "use_pos_rank": bool(self.use_pos_rank),
+                "rank_margin": float(self.rank_margin),
+                "w_rank": float(self.w_rank),
+                "rank_weight_tau": float(self.rank_weight_tau),
+                "rank_gap_min": float(self.rank_gap_min),
+                "rank_topk_pairs": int(self.rank_topk_pairs),
+                "rank_warmup_frac": float(self.rank_warmup_frac),
             },
         }
         with open(self.config_path, "w") as f:
@@ -687,7 +823,11 @@ class HasherTrainer:
             num_workers: Number of worker processes (default 0 for single-process)
             preload_shards: Whether to preload shards that cover max_samples (default True)
         """
-        dataset = TrainSamplesDataset(self.data_dir, max_samples=self.max_samples)
+        dataset = TrainSamplesDataset(
+            self.data_dir,
+            max_samples=self.max_samples,
+            return_all_positives=self.use_pos_rank,
+        )
 
         # Preload shards covering max_samples to avoid slow first batch
         if preload_shards and self.max_samples:
@@ -773,12 +913,22 @@ class HasherTrainer:
         if self.criterion is not None and hasattr(self.criterion, "set_epoch"):
             self.criterion.set_epoch(epoch=epoch, epochs=self.epochs)
 
+        # Rank-loss warmup: scale from 0->1 over first rank_warmup_frac of epochs.
+        if self.rank_criterion is not None:
+            if self.rank_warmup_frac and self.rank_warmup_frac > 0:
+                t = float(epoch) / float(max(1, self.epochs))
+                scale = min(1.0, t / float(self.rank_warmup_frac))
+            else:
+                scale = 1.0
+            self.rank_criterion.set_weight_scale(scale)
+
         total_losses = {
             "total": 0.0,
             "sim": 0.0,
             "distill": 0.0,
             "matrix": 0.0,
             "center": 0.0,
+            "rank": 0.0,
             "quant": 0.0,
             "bal": 0.0,
             "decor": 0.0,
@@ -795,16 +945,39 @@ class HasherTrainer:
 
         for batch_idx, batch in enumerate(self.dataloader):
             anchor_emb = batch["anchor_emb"].to(self.device)
-            positive_emb = batch["pos_emb"].to(self.device)
+            positive_emb = batch.get("pos_emb")
+            pos_embs = batch.get("pos_embs")
             negative_emb = batch["neg_emb"].to(self.device)
 
             # Normalize embeddings so teacher cosine is well-defined and stable.
             anchor_emb = torch.nn.functional.normalize(anchor_emb, dim=-1)
-            positive_emb = torch.nn.functional.normalize(positive_emb, dim=-1)
+            if positive_emb is not None:
+                positive_emb = torch.nn.functional.normalize(
+                    positive_emb.to(self.device), dim=-1
+                )
+            if pos_embs is not None:
+                pos_embs = torch.nn.functional.normalize(
+                    pos_embs.to(self.device), dim=-1
+                )
             negative_emb = torch.nn.functional.normalize(negative_emb, dim=-1)
             # calc hashes
             anchor_hash = self.model(anchor_emb)
-            positive_hash = self.model(positive_emb)
+            pos_hashes = None
+            if pos_embs is not None:
+                bsz, pnum, dim = pos_embs.shape
+                pos_hashes = self.model(pos_embs.reshape(bsz * pnum, dim)).reshape(
+                    bsz, pnum, -1
+                )
+                # Choose teacher-best positive for the existing triplet/distillation losses.
+                with torch.no_grad():
+                    t_sims = torch.sum(anchor_emb[:, None, :] * pos_embs, dim=-1)
+                    best_idx = torch.argmax(t_sims, dim=1)
+                positive_hash = pos_hashes[
+                    torch.arange(bsz, device=self.device), best_idx
+                ]
+                positive_emb = pos_embs[torch.arange(bsz, device=self.device), best_idx]
+            else:
+                positive_hash = self.model(positive_emb)
             negative_hash = self.model(negative_emb)
             # calc loss
             loss, loss_dict = self.criterion(
@@ -815,6 +988,22 @@ class HasherTrainer:
                 pos_emb=positive_emb,
                 neg_emb=negative_emb,
             )
+
+            # Extra: exploit two-positives ordering to reduce pairwise inversions.
+            if (
+                self.rank_criterion is not None
+                and pos_embs is not None
+                and pos_hashes is not None
+            ):
+                loss_rank, rank_dict = self.rank_criterion(
+                    anchor_hash=anchor_hash,
+                    pos_hashes=pos_hashes,
+                    anchor_emb=anchor_emb,
+                    pos_embs=pos_embs,
+                )
+                loss = loss + loss_rank
+                loss_dict["rank"] = float(rank_dict.get("rank", 0.0))
+                loss_dict["total"] = float(loss.detach().cpu().item())
 
             # Numerical safety: skip this batch if loss is NaN/Inf.
             # This avoids corrupting optimizer state and checkpoint.
@@ -848,6 +1037,7 @@ class HasherTrainer:
                 f"(d={loss_dict.get('distill', 0.0):.3f}, "
                 f"m={loss_dict.get('matrix', 0.0):.3f}, "
                 f"c={loss_dict.get('center', 0.0):.3f}, "
+                f"r={loss_dict.get('rank', 0.0):.3f}, "
                 f"e={loss_dict.get('entropy', 0.0):.3f}, s={loss_dict['sim']:.3f})"
             )
             if bar is not None:
@@ -1657,7 +1847,14 @@ class HasherArgParser(argparse.ArgumentParser):
             "--preset",
             type=str,
             default=None,
-            choices=["mlp_base", "resmlp_small", "resmlp_large"],
+            choices=[
+                "mlp_base",
+                "resmlp_small",
+                "resmlp_large",
+                "resmlp_small_rank",
+                "resmlp_small_no_rank",
+                "resmlp_small_rank_strict",
+            ],
             help="Apply a training preset (sets sensible defaults; explicit flags override)",
         )
         # Mode: train or test
@@ -1783,6 +1980,44 @@ class HasherArgParser(argparse.ArgumentParser):
             "--w-decor", type=float, default=0.005, help="Weight for decorrelation"
         )
 
+        # Optional: rank-loss knobs (normally set via presets)
+        self.add_argument(
+            "--w-rank",
+            type=float,
+            default=0.5,
+            help="Weight for positive-rank loss (0 disables)",
+        )
+        self.add_argument(
+            "--rank-margin",
+            type=float,
+            default=0.05,
+            help="Margin for positive-rank loss",
+        )
+        self.add_argument(
+            "--rank-weight-tau",
+            type=float,
+            default=0.05,
+            help="Teacher-gap scale for rank loss weighting",
+        )
+        self.add_argument(
+            "--rank-gap-min",
+            type=float,
+            default=0.0,
+            help="Minimum teacher gap to apply rank loss (0 disables gating)",
+        )
+        self.add_argument(
+            "--rank-topk-pairs",
+            type=int,
+            default=0,
+            help="Use only top-k teacher-gap pairs per sample for rank loss (0 uses all)",
+        )
+        self.add_argument(
+            "--rank-warmup-frac",
+            type=float,
+            default=0.0,
+            help="Warmup fraction of epochs for rank loss (0 disables)",
+        )
+
         # Parse once to see if preset is requested.
         args, _ = self.parse_known_args()
 
@@ -1803,6 +2038,47 @@ class HasherArgParser(argparse.ArgumentParser):
                     "depth": 3,
                     "expansion": 4,
                     "matrix_temp": 0.2,
+                },
+                # Same as resmlp_small but disable positive-rank loss.
+                "resmlp_small_no_rank": {
+                    "arch": "resmlp",
+                    "learning_rate": 5e-4,
+                    "model_dim": 768,
+                    "depth": 3,
+                    "expansion": 4,
+                    "matrix_temp": 0.2,
+                    "w_rank": 0.0,
+                },
+                # Rank-loss tuned: very small weight + only learn confident orderings.
+                # This tends to be safer for global geometry than a large w_rank.
+                "resmlp_small_rank": {
+                    "arch": "resmlp",
+                    "learning_rate": 5e-4,
+                    "model_dim": 768,
+                    "depth": 3,
+                    "expansion": 4,
+                    "matrix_temp": 0.2,
+                    # Rank-loss knobs (kept as loss-args for simplicity)
+                    "w_rank": 0.08,
+                    "rank_margin": 0.02,
+                    "rank_weight_tau": 0.01,
+                    "rank_warmup_frac": 0.3,
+                },
+                # Strict rank-loss: only learn from large teacher gaps and keep supervision sparse.
+                # Intended to reduce noisy local constraints that hurt global ranking.
+                "resmlp_small_rank_strict": {
+                    "arch": "resmlp",
+                    "learning_rate": 5e-4,
+                    "model_dim": 768,
+                    "depth": 3,
+                    "expansion": 4,
+                    "matrix_temp": 0.2,
+                    "w_rank": 0.03,
+                    "rank_margin": 0.01,
+                    "rank_weight_tau": 0.02,
+                    "rank_gap_min": 0.03,
+                    "rank_topk_pairs": 1,
+                    "rank_warmup_frac": 0.5,
                 },
                 # Heavier ResMLP for quality runs.
                 "resmlp_large": {
@@ -1839,6 +2115,13 @@ def main():
             "w_quant": args.w_quant,
             "w_balance": args.w_balance,
             "w_decor": args.w_decor,
+            # Rank-loss extras (can be set by presets; still overridable by flags if added later)
+            "w_rank": getattr(args, "w_rank", 0.5),
+            "rank_margin": getattr(args, "rank_margin", 0.05),
+            "rank_weight_tau": getattr(args, "rank_weight_tau", 0.05),
+            "rank_gap_min": getattr(args, "rank_gap_min", 0.0),
+            "rank_topk_pairs": getattr(args, "rank_topk_pairs", 0),
+            "rank_warmup_frac": getattr(args, "rank_warmup_frac", 0.0),
         }
         trainer = HasherTrainer(
             data_dir=SAMPLES_DIR,
