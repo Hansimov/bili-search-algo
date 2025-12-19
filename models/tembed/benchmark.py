@@ -4,7 +4,7 @@ import re
 import time
 
 from pathlib import Path
-from rocksdict import Rdict, Options
+from rocksdict import Rdict, Options, ReadOptions
 from sedb import RedisOperator, RocksOperator
 from tclogger import TCLogger, TCLogbar, logstr, brk, int_bits
 
@@ -308,17 +308,67 @@ class RocksStatsAnalyzer:
 
 
 class RocksBenchmark:
-    """Benchmark RocksDB sequential and random read performance."""
+    """Benchmark RocksDB sequential and random read performance.
 
-    def __init__(self, max_count: int = 100_000, batch_size: int = 1000):
+    Block Cache behavior:
+    - First read: data is fetched from disk and cached in block cache
+    - Subsequent reads of same data: served from cache (much faster)
+    - Cache size (8GB) << data size (88GB), so only ~9% can be cached
+    - Random reads of different keys will have low cache hit rate
+    - Repeated reads of same keys will show cache benefit
+    """
+
+    def __init__(
+        self,
+        max_count: int = 100_000,
+        batch_size: int = 1000,
+        warmup_rounds: int = 0,
+        repeat_rounds: int = 1,
+    ):
         self.max_count = max_count
         self.batch_size = batch_size
+        self.warmup_rounds = warmup_rounds
+        self.repeat_rounds = repeat_rounds
         self.init_processors()
 
     def init_processors(self):
         self.redis = RedisOperator(configs=REDIS_ENVS, connect_cls=self.__class__)
         self.rocks = RocksOperator(
             configs={"db_path": ROCKS_DB_PATH}, connect_cls=self.__class__
+        )
+        # Create ReadOptions with fill_cache enabled (default is True, but be explicit)
+        self.read_options = ReadOptions()
+        self.read_options.fill_cache(True)  # Ensure data is cached after read
+        self.rocks.db.set_read_options(self.read_options)
+
+    def get_cache_stats(self) -> dict:
+        """Get current block cache statistics."""
+        db = self.rocks.db
+        stats = {
+            "capacity_mb": int(db.property_value("rocksdb.block-cache-capacity") or 0)
+            / (1024 * 1024),
+            "usage_mb": int(db.property_value("rocksdb.block-cache-usage") or 0)
+            / (1024 * 1024),
+            "pinned_mb": int(db.property_value("rocksdb.block-cache-pinned-usage") or 0)
+            / (1024 * 1024),
+        }
+        return stats
+
+    def print_cache_stats(self, prefix: str = ""):
+        """Print current cache statistics."""
+        stats = self.get_cache_stats()
+        usage_pct = (
+            stats["usage_mb"] / stats["capacity_mb"] * 100
+            if stats["capacity_mb"] > 0
+            else 0
+        )
+        usage_str = f'{stats["usage_mb"]:.1f}'
+        capacity_str = f'{stats["capacity_mb"]:.0f}'
+        pct_str = f"{usage_pct:.1f}%"
+        logger.mesg(
+            f"  {prefix}cache: {logstr.file(usage_str)}/"
+            f"{logstr.file(capacity_str)} MB "
+            f"({logstr.file(pct_str)})"
         )
 
     def benchmark_sequential_read(self) -> dict:
@@ -338,10 +388,14 @@ class RocksBenchmark:
             for key, value in items_batch:
                 read_count += 1
                 if value is not None:
+                    # Fast byte counting - avoid slow str() conversion
                     if isinstance(value, bytes):
                         total_bytes += len(value)
-                    elif isinstance(value, (list, str)):
-                        total_bytes += len(str(value))
+                    elif isinstance(value, (list, tuple)):
+                        # Assume list of floats (embedding vector)
+                        total_bytes += len(value) * 8
+                    elif isinstance(value, str):
+                        total_bytes += len(value)
             bar.update(len(items_batch))
             if read_count >= self.max_count:
                 break
@@ -392,11 +446,65 @@ class RocksBenchmark:
         """
         return [key.removeprefix(REDIS_PREFIX) for key in redis_keys]
 
+    def _read_keys_batch(self, rocks_keys: list[str], desc: str = "reading") -> dict:
+        """Read a batch of keys and return statistics."""
+        read_count = 0
+        total_bytes = 0
+        start_time = time.perf_counter()
+
+        bar = TCLogbar(total=len(rocks_keys), desc=f"  * {desc}")
+        for i in range(0, len(rocks_keys), self.batch_size):
+            batch_keys = rocks_keys[i : i + self.batch_size]
+            values = self.rocks.mget(batch_keys)
+            for value in values:
+                read_count += 1
+                if value is not None:
+                    # Fast byte counting - avoid slow str() conversion
+                    if isinstance(value, bytes):
+                        total_bytes += len(value)
+                    elif isinstance(value, (list, tuple)):
+                        # Assume list of floats (embedding vector)
+                        # Each float is 8 bytes (Python float = C double)
+                        total_bytes += len(value) * 8
+                    elif isinstance(value, str):
+                        total_bytes += len(value)
+            bar.update(len(batch_keys))
+        print()
+
+        elapsed = time.perf_counter() - start_time
+        qps = read_count / elapsed if elapsed > 0 else 0
+        throughput_mb = total_bytes / (1024 * 1024) / elapsed if elapsed > 0 else 0
+
+        return {
+            "read_count": read_count,
+            "total_bytes": total_bytes,
+            "elapsed_sec": elapsed,
+            "qps": qps,
+            "throughput_mb_s": throughput_mb,
+        }
+
     def benchmark_random_read(self) -> dict:
-        """Benchmark RocksDB random read using mget with shuffled keys."""
+        """Benchmark RocksDB random read using mget with shuffled keys.
+
+        With warmup_rounds > 0:
+            - First, run warmup rounds to fill the cache (results discarded)
+            - Then, run the actual benchmark (cache should be warm)
+
+        With repeat_rounds > 1:
+            - Read the same keys multiple times
+            - Shows cache hit performance after first pass
+        """
         logger.note(f"> Benchmark: Random Read")
         logger.mesg(f"  * max_count : {logstr.file(brk(self.max_count))}")
         logger.mesg(f"  * batch_size: {logstr.file(brk(self.batch_size))}")
+        if self.warmup_rounds > 0:
+            logger.mesg(
+                f"  * warmup    : {logstr.file(brk(self.warmup_rounds))} rounds"
+            )
+        if self.repeat_rounds > 1:
+            logger.mesg(
+                f"  * repeat    : {logstr.file(brk(self.repeat_rounds))} rounds"
+            )
 
         # collect and shuffle keys
         redis_keys = self.collect_random_keys()
@@ -406,44 +514,72 @@ class RocksBenchmark:
 
         rocks_keys = self.redis_keys_to_rocks_keys(redis_keys)
 
-        read_count = 0
-        total_bytes = 0
-        start_time = time.perf_counter()
+        # Show initial cache state
+        self.print_cache_stats(prefix="* initial ")
 
-        bar = TCLogbar(total=len(rocks_keys), desc="  * reading")
-        for i in range(0, len(rocks_keys), self.batch_size):
-            batch_keys = rocks_keys[i : i + self.batch_size]
-            values = self.rocks.mget(batch_keys)
-            for value in values:
-                read_count += 1
-                if value is not None:
-                    if isinstance(value, bytes):
-                        total_bytes += len(value)
-                    elif isinstance(value, (list, str)):
-                        total_bytes += len(str(value))
-            bar.update(len(batch_keys))
-        print()
+        # Warmup phase: read keys to fill cache (results discarded)
+        if self.warmup_rounds > 0:
+            logger.note(f"> Warmup Phase ({self.warmup_rounds} rounds)")
+            for round_idx in range(self.warmup_rounds):
+                _ = self._read_keys_batch(
+                    rocks_keys, desc=f"warmup {round_idx+1}/{self.warmup_rounds}"
+                )
+            self.print_cache_stats(prefix="* after warmup ")
 
-        elapsed = time.perf_counter() - start_time
-        qps = read_count / elapsed if elapsed > 0 else 0
-        throughput_mb = total_bytes / (1024 * 1024) / elapsed if elapsed > 0 else 0
+        # Actual benchmark
+        logger.note(f"> Benchmark Phase")
+        results = []
+        for round_idx in range(self.repeat_rounds):
+            if self.repeat_rounds > 1:
+                desc = f"round {round_idx+1}/{self.repeat_rounds}"
+            else:
+                desc = "reading"
+            result = self._read_keys_batch(rocks_keys, desc=desc)
+            results.append(result)
+            if self.repeat_rounds > 1:
+                logger.mesg(f"    round {round_idx+1}: {result['qps']:.0f} ops/s")
 
-        result = {
-            "read_count": read_count,
-            "total_bytes": total_bytes,
-            "elapsed_sec": elapsed,
-            "qps": qps,
-            "throughput_mb_s": throughput_mb,
-        }
+        # Use last round result (or average if multiple rounds)
+        if len(results) == 1:
+            final_result = results[0]
+        else:
+            # Average results from all rounds
+            final_result = {
+                "read_count": sum(r["read_count"] for r in results),
+                "total_bytes": sum(r["total_bytes"] for r in results),
+                "elapsed_sec": sum(r["elapsed_sec"] for r in results),
+                "qps": sum(r["qps"] for r in results) / len(results),
+                "throughput_mb_s": sum(r["throughput_mb_s"] for r in results)
+                / len(results),
+            }
+            # Also show improvement from first to last round
+            first_qps = results[0]["qps"]
+            last_qps = results[-1]["qps"]
+            improvement = (last_qps / first_qps - 1) * 100 if first_qps > 0 else 0
+            speedup_str = f"{improvement:+.1f}%"
+            logger.mesg(
+                f"  * cache speedup: {logstr.file(speedup_str)} (round 1 → {self.repeat_rounds})"
+            )
+
+        # Show final cache state
+        self.print_cache_stats(prefix="* final ")
+
+        elapsed_str = f"{final_result['elapsed_sec']:.3f} s"
+        qps_str = f"{final_result['qps']:.2f} ops/s"
+        throughput_str = f"{final_result['throughput_mb_s']:.2f} MB/s"
 
         logger.okay(f"> Random Read Result:")
-        logger.mesg(f"  * read_count    : {logstr.file(brk(read_count))}")
-        logger.mesg(f"  * total_bytes   : {logstr.file(brk(int_bits(total_bytes)))}")
-        logger.mesg(f"  * elapsed_sec   : {logstr.file(f'{elapsed:.3f} s')}")
-        logger.mesg(f"  * qps           : {logstr.file(f'{qps:.2f} ops/s')}")
-        logger.mesg(f"  * throughput    : {logstr.file(f'{throughput_mb:.2f} MB/s')}")
+        logger.mesg(
+            f"  * read_count    : {logstr.file(brk(final_result['read_count']))}"
+        )
+        logger.mesg(
+            f"  * total_bytes   : {logstr.file(brk(int_bits(final_result['total_bytes'])))}"
+        )
+        logger.mesg(f"  * elapsed_sec   : {logstr.file(elapsed_str)}")
+        logger.mesg(f"  * qps           : {logstr.file(qps_str)}")
+        logger.mesg(f"  * throughput    : {logstr.file(throughput_str)}")
 
-        return result
+        return final_result
 
     def run(self):
         """Run all benchmarks and print summary."""
@@ -489,6 +625,21 @@ class BenchmarkArgParser(argparse.ArgumentParser):
         self.add_argument("-b", "--batch-size", type=int, default=1000)
         self.add_argument("-s", "--sequential", action="store_true")
         self.add_argument("-r", "--random", action="store_true")
+        # cache test options
+        self.add_argument(
+            "-w",
+            "--warmup",
+            type=int,
+            default=0,
+            help="Number of warmup rounds before benchmark (fill cache)",
+        )
+        self.add_argument(
+            "-R",
+            "--repeat",
+            type=int,
+            default=1,
+            help="Number of repeat rounds (test cache hit performance)",
+        )
         # analyze options
         self.add_argument("-a", "--analyze", action="store_true", help="Run analysis")
         self.add_argument("-f", "--full", action="store_true", help="Full analysis")
@@ -514,6 +665,8 @@ def main():
     benchmark = RocksBenchmark(
         max_count=args.max_count,
         batch_size=args.batch_size,
+        warmup_rounds=args.warmup,
+        repeat_rounds=args.repeat,
     )
 
     # run specific benchmark or all
@@ -542,6 +695,15 @@ if __name__ == "__main__":
 
     # Run only random read benchmark
     # python -m models.tembed.benchmark -r
+
+    # Run with warmup (fill cache first, then benchmark)
+    # python -m models.tembed.benchmark -r -w 1 -n 10000
+
+    # Run with repeat (test cache hit performance)
+    # python -m models.tembed.benchmark -r -R 3 -n 10000
+
+    # Run with warmup and repeat (best for cache testing)
+    # python -m models.tembed.benchmark -r -w 1 -R 3 -n 10000
 
     # Run quick analysis
     # python -m models.tembed.benchmark -a
