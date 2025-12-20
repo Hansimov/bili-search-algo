@@ -416,9 +416,9 @@ class RocksBenchmark:
         logger.okay(f"> Sequential Read Result:")
         logger.mesg(f"  * read_count    : {logstr.file(brk(read_count))}")
         logger.mesg(f"  * total_bytes   : {logstr.file(brk(int_bits(total_bytes)))}")
-        logger.mesg(f"  * elapsed_sec   : {logstr.file(f'{elapsed:.3f} s')}")
-        logger.mesg(f"  * qps           : {logstr.file(f'{qps:.2f} ops/s')}")
-        logger.mesg(f"  * throughput    : {logstr.file(f'{throughput_mb:.2f} MB/s')}")
+        logger.mesg(f"  * elapsed_sec   : {logstr.file(f'{elapsed:.1f} s')}")
+        logger.mesg(f"  * qps           : {logstr.file(f'{qps:.0f} ops/s')}")
+        logger.mesg(f"  * throughput    : {logstr.file(f'{throughput_mb:.1f} MB/s')}")
 
         return result
 
@@ -564,9 +564,9 @@ class RocksBenchmark:
         # Show final cache state
         self.print_cache_stats(prefix="* final ")
 
-        elapsed_str = f"{final_result['elapsed_sec']:.3f} s"
-        qps_str = f"{final_result['qps']:.2f} ops/s"
-        throughput_str = f"{final_result['throughput_mb_s']:.2f} MB/s"
+        elapsed_str = f"{final_result['elapsed_sec']:.1f} s"
+        qps_str = f"{final_result['qps']:.0f} ops/s"
+        throughput_str = f"{final_result['throughput_mb_s']:.0f} MB/s"
 
         logger.okay(f"> Random Read Result:")
         logger.mesg(
@@ -597,23 +597,23 @@ class RocksBenchmark:
         if seq_result and rand_result:
             logger.mesg(
                 f"  {'read_count':15s} "
-                f"{seq_result['read_count']:>15,d} "
-                f"{rand_result['read_count']:>15,d}"
+                f"{seq_result['read_count']:>15d} "
+                f"{rand_result['read_count']:>15d}"
             )
             logger.mesg(
                 f"  {'elapsed_sec':15s} "
-                f"{seq_result['elapsed_sec']:>15.3f} "
-                f"{rand_result['elapsed_sec']:>15.3f}"
+                f"{seq_result['elapsed_sec']:>15.1f} "
+                f"{rand_result['elapsed_sec']:>15.1f}"
             )
             logger.mesg(
                 f"  {'qps (ops/s)':15s} "
-                f"{seq_result['qps']:>15,.2f} "
-                f"{rand_result['qps']:>15,.2f}"
+                f"{seq_result['qps']:>15.0f} "
+                f"{rand_result['qps']:>15.0f}"
             )
             logger.mesg(
                 f"  {'throughput MB/s':15s} "
-                f"{seq_result['throughput_mb_s']:>15.2f} "
-                f"{rand_result['throughput_mb_s']:>15.2f}"
+                f"{seq_result['throughput_mb_s']:>15.1f} "
+                f"{rand_result['throughput_mb_s']:>15.1f}"
             )
 
 
