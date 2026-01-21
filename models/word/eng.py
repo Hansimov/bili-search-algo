@@ -296,7 +296,10 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
     main(args)
 
-    # python -m models.word.eng -ed -en -mn 50000
+    # Case: max-count docs
+    # python -m models.word.eng -ec -en -mn 50000
     # python -m models.word.eng -ec -zh -mf 6 -mn 5000000
+
+    # Case: all docs
     # python -m models.word.eng -ec -en -mf 6
     # python -m models.word.eng -ec -zh -mf 6

@@ -177,6 +177,7 @@ class ConverterMergerArgParser(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
         self.add_argument("-s", "--sentencepiece", action="store_true")
         self.add_argument("-r", "--record", action="store_true")
+        self.add_argument("-c", "--doc-count", type=int, default=None)
         self.add_argument("-m", "--merge", action="store_true")
         self.add_argument("-n", "--min-doc-freq", type=int, default=20)
         self.add_argument("-l", "--max-char-len", type=int, default=32)
@@ -196,8 +197,7 @@ def main():
         txt_paths.append(sp_converter.txt_path)
 
     if args.record:
-        doc_count = 770000000
-        en_csv_path = get_dump_path(doc_count, lang="en")
+        en_csv_path = get_dump_path(args.doc_count, lang="en")
         word_converter = WordRecordsConverter(
             min_doc_freq=args.min_doc_freq, max_char_len=args.max_char_len
         )
@@ -205,7 +205,7 @@ def main():
         word_converter.to_txt()
         txt_paths.append(word_converter.txt_path)
 
-        zh_csv_path = get_dump_path(doc_count, lang="zh")
+        zh_csv_path = get_dump_path(args.doc_count, lang="zh")
         word_converter.set_csv_path(zh_csv_path)
         word_converter.to_txt()
         txt_paths.append(word_converter.txt_path)
@@ -221,4 +221,5 @@ def main():
 if __name__ == "__main__":
     main()
 
-    # python -m models.sentencepiece.convert -s -r -m -n 20 -l 32
+    # NOTE: Change -c (--doc-count) before run command below
+    # python -m models.sentencepiece.convert -s -r -m -n 20 -l 32 -c 867000000

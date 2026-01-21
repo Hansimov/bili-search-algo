@@ -1,6 +1,6 @@
 #!/bin/bash
 
-prefix="sp_750m"
+prefix="sp_867m"
 zhwiki_prefix="sp_wiki_8m_400k"
 zhwiki_vocab_size=400000
 
@@ -45,6 +45,8 @@ cmd=(python -m models.sentencepiece.train -m "${prefix}_${region}" -fg "$region"
 echo "${cmd[@]}"
 "${cmd[@]}"
 done
+
+# NOTE: Change "prefix" before run commands below
 
 # chmod +x models/sentencepiece/train.sh
 # ./models/sentencepiece/train.sh 1

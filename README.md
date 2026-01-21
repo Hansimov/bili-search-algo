@@ -1,6 +1,22 @@
 # bili-search-algo
 Algorithms and models for Bilibili Search Engine (blbl.top).
 
+## models.eng
+
+Extract English words from video texts (titles, tags and desc):
+
+```sh
+python -m models.word.eng -ec -en -mf 6
+```
+
+Extract Chinese words from video texts (tags):
+
+```sh
+python -m models.word.eng -ec -zh -mf 6
+```
+
+See more example usages in comments of [eng.py](models/word/eng.py).
+
 ## models.sentencepiece.train
 
 Train sentencepiece model from video texts.
@@ -14,6 +30,9 @@ or use `train.sh` with pre-grouped regions and pre-defined input-output paths:
 ```bash
 ./models/sentencepiece/train.sh 1
 ./models/sentencepiece/train.sh 2
+./models/sentencepiece/train.sh 3
+./models/sentencepiece/train.sh 4
+./models/sentencepiece/train.sh r
 ```
 
 Test:
@@ -45,7 +64,7 @@ See more example usages in comments of [merge.py](models/sentencepiece/merge.py)
 Convert sentencepiece vocab to txt:
 
 ```bash
-python -m models.sentencepiece.convert
+python -m models.sentencepiece.convert ...
 ```
 
 See more example usages in comments of [convert.py](models/sentencepiece/convert.py).
