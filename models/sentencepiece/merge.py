@@ -211,20 +211,23 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
     main(args)
 
+    # ANCHOR[id=sp-merge]
+
     # Backup old model
     # cd ~/repos/bili-search-algo/models/sentencepiece/checkpoints
-    # cp sp_merged.model sp_merged_703m.model && cp sp_merged.vocab sp_merged_703m.vocab
+    # cp sp_merged.model sp_merged_750m.model && cp sp_merged.vocab sp_merged_750m.vocab
 
-    # Merge with prefix
+    # Merge with prefix "sp_867m_"
     # cd ~/repos/bili-search-algo
-    # python -m models.sentencepiece.merge -vs 1000000 -i sp_703m_ -o sp_merged
-    # python -m models.sentencepiece.merge -vs 1000000 -i sp_750m_ -o sp_merged
+    # python -m models.sentencepiece.merge -vs 1000000 -i sp_867m_ -o sp_merged
+
+    # Convert .vocab to .txt
+    # See: # LINK: models/sentencepiece/convert.py#sp-convert
 
     # Copy to btok (sp_merged.* -> sp.*)
     # for f in ~/repos/bili-search-algo/models/sentencepiece/checkpoints/sp_merged.*; do cp "$f" ~/repos/btok/src/btok/sp.${f##*.}; done
-    # cp ~/repos/btok/src/btok/sp.txt ~/elasticsearch-docker/plugins/es01/es_tok/vocabs.txt
+    # cp ~/repos/btok/src/btok/sp.txt ~/elasticsearch-docker-9.2.4-pro/plugins/es01/es_tok/vocabs.txt
 
     # Test
-    # cd ~/repos/btok
-    # python tests.py
-    # vi src/btok/sp.txt
+    # python ~/repos/btok/tests.py
+    # vi ~/repos/btok/src/btok/sp.txt

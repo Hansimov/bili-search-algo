@@ -221,5 +221,10 @@ def main():
 if __name__ == "__main__":
     main()
 
+    # Run merge before convert:
+    # See: # LINK: models/sentencepiece/merge.py#sp-merge
+
+    # ANCHOR[id=sp-convert]
+
     # NOTE: Change -c (--doc-count) before run command below
     # python -m models.sentencepiece.convert -s -r -m -n 20 -l 32 -c 867000000
