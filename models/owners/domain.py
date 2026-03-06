@@ -37,6 +37,12 @@ VIDEO_PROJECTION = {
 DEFAULT_LABEL_GROUPS = [
     group for group in REGION_MONGO_FILTERS.keys() if group not in {"recent", "test"}
 ]
+DEFAULT_WEIGHTED_FIELD_WEIGHTS = {
+    "owner_name": 4.0,
+    "top_tags": 3.0,
+    "sample_titles": 2.0,
+    "desc_samples": 1.0,
+}
 LATIN_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_\-\.]{1,}")
 CJK_SPAN_RE = re.compile(r"[\u4e00-\u9fff]+")
 
@@ -130,6 +136,73 @@ def tokenize_text(text: str) -> list[str]:
             tokens.append(span[idx : idx + 2])
 
     return tokens
+
+
+def tokenize_sample(
+    sample_or_text: dict | str,
+    field_weights: dict[str, float] = None,
+) -> Counter:
+    if isinstance(sample_or_text, str):
+        return Counter(tokenize_text(sample_or_text))
+
+    sample = sample_or_text or {}
+    if not field_weights:
+        return Counter(tokenize_text(sample.get("text", "")))
+
+    has_structured_fields = any(sample.get(field) for field in field_weights.keys())
+    if not has_structured_fields:
+        return Counter(tokenize_text(sample.get("text", "")))
+
+    token_counts = Counter()
+    for field, weight in field_weights.items():
+        if weight <= 0:
+            continue
+        field_value = sample.get(field)
+        if not field_value:
+            continue
+        values = field_value if isinstance(field_value, list) else [field_value]
+        for value in values:
+            for token in tokenize_text(str(value)):
+                token_counts[token] += weight
+    return token_counts
+
+
+def summarize_prediction_errors(
+    predictions: list[dict],
+    max_examples_per_label: int = 3,
+) -> dict:
+    error_counts = Counter()
+    confusion = defaultdict(Counter)
+    examples = defaultdict(list)
+
+    for prediction in predictions:
+        truth = prediction.get("truth") or "<none>"
+        pred = prediction.get("pred") or "<none>"
+        if pred == truth:
+            continue
+        error_counts[truth] += 1
+        confusion[truth][pred] += 1
+        if len(examples[truth]) < max_examples_per_label:
+            examples[truth].append(
+                {
+                    "owner_name": prediction.get("owner_name"),
+                    "mid": prediction.get("mid"),
+                    "pred": pred,
+                    "top_score": next(
+                        iter((prediction.get("scores") or {}).items()),
+                        None,
+                    ),
+                }
+            )
+
+    return {
+        truth: {
+            "count": error_counts[truth],
+            "top_confusions": dict(confusion[truth].most_common(3)),
+            "examples": examples[truth],
+        }
+        for truth, _ in error_counts.most_common()
+    }
 
 
 class OwnerDomainSampleBuilder:
@@ -276,6 +349,7 @@ class OwnerDomainSampleBuilder:
             "total_videos": len(videos),
             "top_tags": top_tags,
             "sample_titles": titles,
+            "desc_samples": desc_samples,
             "text": " ".join(part for part in text_parts if part).strip(),
         }
 
@@ -338,14 +412,19 @@ class OwnerDomainSampleBuilder:
 
 
 class OwnerDomainCentroidClassifier:
-    def __init__(self, min_token_freq: int = 2):
+    def __init__(
+        self,
+        min_token_freq: int = 2,
+        field_weights: dict[str, float] = None,
+    ):
         self.min_token_freq = min_token_freq
+        self.field_weights = field_weights
         self.idf = {}
         self.centroids = {}
         self.label_doc_counts = Counter()
 
-    def vectorize(self, text: str) -> dict[str, float]:
-        token_counts = Counter(tokenize_text(text))
+    def vectorize(self, sample_or_text: dict | str) -> dict[str, float]:
+        token_counts = tokenize_sample(sample_or_text, field_weights=self.field_weights)
         return {
             token: float(count)
             for token, count in token_counts.items()
@@ -359,13 +438,13 @@ class OwnerDomainCentroidClassifier:
 
         for sample in samples:
             label = sample["label"]
-            tokens = tokenize_text(sample.get("text", ""))
-            if not tokens:
+            token_counts = tokenize_sample(sample, field_weights=self.field_weights)
+            if not token_counts:
                 continue
             self.label_doc_counts[label] += 1
-            unique_tokens = set(tokens)
+            unique_tokens = set(token_counts.keys())
             doc_freq.update(unique_tokens)
-            label_token_totals[label].update(tokens)
+            label_token_totals[label].update(token_counts)
 
         self.idf = {
             token: math.log((1 + total_docs) / (1 + freq)) + 1.0
@@ -388,8 +467,10 @@ class OwnerDomainCentroidClassifier:
                 token: weight / norm for token, weight in weights.items()
             }
 
-    def predict(self, text: str) -> tuple[Optional[str], dict[str, float]]:
-        vector = self.vectorize(text)
+    def predict(
+        self, sample_or_text: dict | str
+    ) -> tuple[Optional[str], dict[str, float]]:
+        vector = self.vectorize(sample_or_text)
         if not vector or not self.centroids:
             return None, {}
 
@@ -411,9 +492,15 @@ class OwnerDomainCentroidClassifier:
 
 
 class OwnerDomainNaiveBayesClassifier:
-    def __init__(self, min_token_freq: int = 2, alpha: float = 1.0):
+    def __init__(
+        self,
+        min_token_freq: int = 2,
+        alpha: float = 1.0,
+        field_weights: dict[str, float] = None,
+    ):
         self.min_token_freq = min_token_freq
         self.alpha = alpha
+        self.field_weights = field_weights
         self.vocab = set()
         self.label_doc_counts = Counter()
         self.label_token_counts = defaultdict(Counter)
@@ -427,12 +514,12 @@ class OwnerDomainNaiveBayesClassifier:
 
         for sample in samples:
             label = sample["label"]
-            tokens = tokenize_text(sample.get("text", ""))
-            if not tokens:
+            token_counts = tokenize_sample(sample, field_weights=self.field_weights)
+            if not token_counts:
                 continue
             label_doc_counts[label] += 1
-            label_token_counts[label].update(tokens)
-            global_freq.update(tokens)
+            label_token_counts[label].update(token_counts)
+            global_freq.update(token_counts)
 
         self.vocab = {
             token for token, freq in global_freq.items() if freq >= self.min_token_freq
@@ -453,12 +540,20 @@ class OwnerDomainNaiveBayesClassifier:
             self.label_token_counts[label] = filtered
             self.label_total_tokens[label] = sum(filtered.values())
 
-    def predict(self, text: str) -> tuple[Optional[str], dict[str, float]]:
+    def predict(
+        self, sample_or_text: dict | str
+    ) -> tuple[Optional[str], dict[str, float]]:
         if not self.labels:
             return None, {}
 
         token_counts = Counter(
-            token for token in tokenize_text(text) if token in self.vocab
+            {
+                token: count
+                for token, count in tokenize_sample(
+                    sample_or_text, field_weights=self.field_weights
+                ).items()
+                if token in self.vocab
+            }
         )
         if not token_counts:
             return None, {}
@@ -498,18 +593,26 @@ class OwnerDomainNaiveBayesClassifier:
 
 
 class OwnerDomainLinearClassifier:
-    def __init__(self, min_token_freq: int = 2, epochs: int = 8):
+    def __init__(
+        self,
+        min_token_freq: int = 2,
+        epochs: int = 8,
+        field_weights: dict[str, float] = None,
+    ):
         self.min_token_freq = min_token_freq
         self.epochs = epochs
+        self.field_weights = field_weights
         self.vocab = set()
         self.labels = []
         self.weights = defaultdict(dict)
         self.bias = defaultdict(float)
 
-    def _vectorize(self, text: str) -> dict[str, float]:
+    def _vectorize(self, sample_or_text: dict | str) -> dict[str, float]:
         return {
             token: float(count)
-            for token, count in Counter(tokenize_text(text)).items()
+            for token, count in tokenize_sample(
+                sample_or_text, field_weights=self.field_weights
+            ).items()
             if token in self.vocab
         }
 
@@ -526,12 +629,12 @@ class OwnerDomainLinearClassifier:
         prepared = []
         for sample in samples:
             label = sample["label"]
-            tokens = tokenize_text(sample.get("text", ""))
-            if not tokens:
+            token_counts = tokenize_sample(sample, field_weights=self.field_weights)
+            if not token_counts:
                 continue
             labels.add(label)
-            token_freq.update(tokens)
-            prepared.append((label, Counter(tokens)))
+            token_freq.update(token_counts)
+            prepared.append((label, token_counts))
 
         self.vocab = {
             token for token, freq in token_freq.items() if freq >= self.min_token_freq
@@ -577,8 +680,10 @@ class OwnerDomainLinearClassifier:
         ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
         return (ranked[0][0] if ranked else None), dict(ranked)
 
-    def predict(self, text: str) -> tuple[Optional[str], dict[str, float]]:
-        features = self._vectorize(text)
+    def predict(
+        self, sample_or_text: dict | str
+    ) -> tuple[Optional[str], dict[str, float]]:
+        features = self._vectorize(sample_or_text)
         if not features:
             return None, {}
         return self.predict_from_features(features)
@@ -630,7 +735,7 @@ def evaluate_classifier(
     predictions = []
     confusion = defaultdict(Counter)
     for sample in test_samples:
-        pred_label, scores = classifier.predict(sample.get("text", ""))
+        pred_label, scores = classifier.predict(sample)
         truth = sample["label"]
         if pred_label == truth:
             correct += 1
@@ -656,6 +761,7 @@ def evaluate_classifier(
             for label, label_samples in samples_by_label.items()
         },
         "confusion": {label: dict(counter) for label, counter in confusion.items()},
+        "error_summary": summarize_prediction_errors(predictions),
         "model": classifier.__class__.__name__,
     }
     return {"metrics": metrics, "predictions": predictions}
@@ -677,6 +783,13 @@ def evaluate_multiple_models(
         return evaluate_classifier(
             classifier, samples, test_ratio=test_ratio, seed=seed
         )
+    if model_name == "naive_bayes_weighted":
+        classifier = OwnerDomainNaiveBayesClassifier(
+            field_weights=DEFAULT_WEIGHTED_FIELD_WEIGHTS
+        )
+        return evaluate_classifier(
+            classifier, samples, test_ratio=test_ratio, seed=seed
+        )
     if model_name == "linear":
         classifier = OwnerDomainLinearClassifier()
         return evaluate_classifier(
@@ -690,6 +803,9 @@ def evaluate_multiple_models(
         for name, classifier in {
             "centroid": OwnerDomainCentroidClassifier(),
             "naive_bayes": OwnerDomainNaiveBayesClassifier(),
+            "naive_bayes_weighted": OwnerDomainNaiveBayesClassifier(
+                field_weights=DEFAULT_WEIGHTED_FIELD_WEIGHTS
+            ),
             "linear": OwnerDomainLinearClassifier(),
         }.items():
             classifier.fit(train_samples)
@@ -697,7 +813,7 @@ def evaluate_multiple_models(
             confusion = defaultdict(Counter)
             predictions = []
             for sample in test_samples:
-                pred_label, scores = classifier.predict(sample.get("text", ""))
+                pred_label, scores = classifier.predict(sample)
                 truth = sample["label"]
                 if pred_label == truth:
                     correct += 1
@@ -723,6 +839,7 @@ def evaluate_multiple_models(
                 "confusion": {
                     label: dict(counter) for label, counter in confusion.items()
                 },
+                "error_summary": summarize_prediction_errors(predictions),
                 "model": classifier.__class__.__name__,
             }
             results[name] = {
@@ -767,7 +884,13 @@ class OwnerDomainArgParser(argparse.ArgumentParser):
         self.add_argument("--allow-full-scan", action="store_true")
         self.add_argument(
             "--model",
-            choices=["centroid", "naive_bayes", "linear", "compare"],
+            choices=[
+                "centroid",
+                "naive_bayes",
+                "naive_bayes_weighted",
+                "linear",
+                "compare",
+            ],
             default="centroid",
         )
         self.add_argument("--test-ratio", type=float, default=0.2)

@@ -2,6 +2,7 @@ from models.owners.domain import (
     OwnerDomainCentroidClassifier,
     OwnerDomainLinearClassifier,
     OwnerDomainNaiveBayesClassifier,
+    DEFAULT_WEIGHTED_FIELD_WEIGHTS,
     evaluate_multiple_models,
     match_filter_spec,
     select_owner_label,
@@ -118,9 +119,15 @@ def test_evaluate_multiple_models_compare_returns_both_results():
 
     results = evaluate_multiple_models("compare", samples, test_ratio=0.34, seed=7)
 
-    assert set(results.keys()) == {"centroid", "naive_bayes", "linear"}
+    assert set(results.keys()) == {
+        "centroid",
+        "naive_bayes",
+        "naive_bayes_weighted",
+        "linear",
+    }
     assert results["centroid"]["metrics"]["test_size"] >= 2
     assert results["naive_bayes"]["metrics"]["test_size"] >= 2
+    assert results["naive_bayes_weighted"]["metrics"]["test_size"] >= 2
     assert results["linear"]["metrics"]["test_size"] >= 2
 
 
@@ -135,6 +142,42 @@ def test_owner_domain_linear_classifier_predicts_expected_label():
     classifier = OwnerDomainLinearClassifier(min_token_freq=1, epochs=10)
     classifier.fit(train_samples)
     pred_label, scores = classifier.predict("数码 相机 科技 测评")
+
+    assert pred_label == "know_info"
+    assert scores["know_info"] > scores["music_dance"]
+
+
+def test_weighted_naive_bayes_uses_structured_owner_fields():
+    train_samples = [
+        {
+            "label": "know_info",
+            "owner_name": "科技观察室",
+            "top_tags": ["科技", "数码", "芯片"],
+            "sample_titles": ["相机测评", "手机体验"],
+            "desc_samples": ["长期做数码和芯片内容"],
+        },
+        {
+            "label": "music_dance",
+            "owner_name": "音乐现场台",
+            "top_tags": ["音乐", "翻唱", "舞蹈"],
+            "sample_titles": ["live现场", "翻唱合集"],
+            "desc_samples": ["偏音乐演出和翻唱"],
+        },
+    ]
+
+    classifier = OwnerDomainNaiveBayesClassifier(
+        min_token_freq=1,
+        field_weights=DEFAULT_WEIGHTED_FIELD_WEIGHTS,
+    )
+    classifier.fit(train_samples)
+    pred_label, scores = classifier.predict(
+        {
+            "owner_name": "硬件研究所",
+            "top_tags": ["科技", "数码"],
+            "sample_titles": ["芯片拆解", "相机体验"],
+            "desc_samples": ["持续更新手机和硬件评测"],
+        }
+    )
 
     assert pred_label == "know_info"
     assert scores["know_info"] > scores["music_dance"]

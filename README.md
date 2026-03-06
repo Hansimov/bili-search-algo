@@ -191,10 +191,18 @@ Build samples and compare centroid vs naive Bayes vs linear baseline on the same
 python -m models.owners.domain --model compare -m 300 --max-scanned-videos 200000 -s "2026-02-01 00:00:00" -e "2026-03-07 00:00:00"
 ```
 
+The compare mode now also includes `naive_bayes_weighted`, which cheaply upweights `owner_name`, `top_tags`, `sample_titles`, and `desc_samples` inside each owner profile.
+
 Evaluate from an existing sample file:
 
 ```sh
 python -m models.owners.domain --eval-only --model naive_bayes --samples-path data/owners/owner_domain_samples.jsonl
+```
+
+Evaluate the weighted naive Bayes variant only:
+
+```sh
+python -m models.owners.domain --eval-only --model naive_bayes_weighted --samples-path data/owners/owner_domain_samples.jsonl
 ```
 
 Run the cheap linear baseline only:
@@ -202,3 +210,5 @@ Run the cheap linear baseline only:
 ```sh
 python -m models.owners.domain --model linear -m 300 --max-scanned-videos 200000 -s "2026-02-01 00:00:00" -e "2026-03-07 00:00:00"
 ```
+
+Metrics output in `data/owners/owner_domain_metrics.json` now includes an `error_summary` block for quick inspection of the top confusions and a few misclassified owners per ground-truth label.
