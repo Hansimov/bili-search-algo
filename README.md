@@ -168,3 +168,37 @@ Test remote client:
 python -m models.fasttext.run -tc
 python -m models.fasttext.run -tc -ms doc
 ```
+
+## models.owners.domain
+
+Build pseudo-labeled owner-domain samples from Mongo videos and run lightweight owner-domain baselines. This is intended for owner search / owner ranking feature experiments, especially validating whether `top_tags` and region dominance are stable enough to use as creator-domain signals.
+
+Build samples only:
+
+```sh
+python -m models.owners.domain --build-only --min-videos 8 --dominant-ratio 0.6 -m 5000
+```
+
+Build samples and evaluate centroid baseline:
+
+```sh
+python -m models.owners.domain --min-videos 8 --dominant-ratio 0.6 --sample-per-owner 12 -m 5000
+```
+
+Build samples and compare centroid vs naive Bayes vs linear baseline on the same split:
+
+```sh
+python -m models.owners.domain --model compare -m 300 --max-scanned-videos 200000 -s "2026-02-01 00:00:00" -e "2026-03-07 00:00:00"
+```
+
+Evaluate from an existing sample file:
+
+```sh
+python -m models.owners.domain --eval-only --model naive_bayes --samples-path data/owners/owner_domain_samples.jsonl
+```
+
+Run the cheap linear baseline only:
+
+```sh
+python -m models.owners.domain --model linear -m 300 --max-scanned-videos 200000 -s "2026-02-01 00:00:00" -e "2026-03-07 00:00:00"
+```
