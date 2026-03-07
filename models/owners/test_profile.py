@@ -1,6 +1,10 @@
 from models.owners.profile import (
     OwnerProfileAccumulator,
+    build_owner_range_query,
+    build_owner_shard_expr,
+    build_profile_upsert_filter,
     merge_profile_docs,
+    split_owner_mid_range,
 )
 
 
@@ -111,3 +115,21 @@ def test_merge_profile_docs_merges_sparse_terms_and_latest_fields():
     assert "芯片拆解" in merged["topic_phrases"]
     assert "科技观察室" in merged["profile_text"]
     assert merged["sample_titles"] == ["相机测评", "芯片拆解"]
+
+
+def test_build_owner_shard_expr_validates_and_builds_mod_filter():
+    assert build_owner_shard_expr() is None
+    assert build_owner_shard_expr(1, 0) is None
+    assert build_owner_shard_expr(4, 2) == {"$eq": [{"$mod": ["$owner.mid", 4]}, 2]}
+
+
+def test_build_owner_range_query_and_split_owner_mid_range():
+    assert build_owner_range_query() is None
+    assert build_owner_range_query(100, 199) == {
+        "owner.mid": {"$gte": 100, "$lte": 199}
+    }
+    assert split_owner_mid_range(100, 199, 4, 2) == (150, 174)
+
+
+def test_build_profile_upsert_filter_uses__id_key():
+    assert build_profile_upsert_filter({"_id": 123, "mid": 123}) == {"_id": 123}

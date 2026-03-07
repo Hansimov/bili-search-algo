@@ -325,6 +325,153 @@ PYTHONPATH=. python -m models.owners.profile \
 2. 但 online retrieval 的 query 设计还不够“短句语义友好”。
 3. 下一步优化重点应该放在短语匹配、字段分层召回和更稳的 sparse/dense 融合，而不是再回去做 coarse label 分类。
 
+### 9.3 最新 100k owner 并行分片预计算实验
+
+为了继续放大真实实验规模，同时验证预计算层的并行化可行性，新增了 owner shard 参数：
+
+1. `--owner-shard-count`
+2. `--owner-shard-id`
+3. `--mongo-read-batch-size`
+
+本轮采用 `4` 个 shard 并行写入同一个 Mongo snapshot collection：
+
+```bash
+cd /home/asimov/repos/bili-search-algo
+PYTHONPATH=. python -m models.owners.profile \
+	-m 25000 \
+	-s "2025-12-15 00:00:00" \
+	-e "2026-03-07 16:00:00" \
+	--mongo-output-collection owner_profile_snapshots_dev_poc3_100k4 \
+	--mongo-batch-size 1000 \
+	--mongo-read-batch-size 10000 \
+	--feature-buckets 4096 \
+	--log-every 100000 \
+	--owner-shard-count 4 \
+	--owner-shard-id <0..3>
+```
+
+4 个 shard 的完成结果分别为：
+
+1. shard0: `25,000` profiles, `222,014` videos, `1623.31s`
+2. shard1: `25,000` profiles, `215,424` videos, `1630.07s`
+3. shard2: `25,000` profiles, `214,860` videos, `1635.02s`
+4. shard3: `25,000` profiles, `223,982` videos, `1573.32s`
+
+合并后得到：
+
+1. `100,000` 个 owner profile
+2. 总扫描 `876,280` 条视频
+3. wall-clock 约 `1635.02s`
+4. 聚合后的有效吞吐约 `535.94 videos/s`
+5. 聚合后的 owner 生成速率约 `61.16 profiles/s`
+6. Mongo collection: `owner_profile_snapshots_dev_poc3_100k4`
+
+随后写入 DEV ES v2：
+
+1. ES index: `bili_owners_dev_poc3_100k4_v2`
+2. 写入量：`100,000` docs
+3. 用时：`57.4s`
+4. 写入吞吐：`1742.16 docs/s`
+
+这轮结果说明：
+
+1. 分片并行是有效的，100k 真实全链路已经跑通。
+2. 但当前按 `owner.mid % N` 的 shard 方式仍有明显效率损失，实际 wall-clock 提速还没有接近理想的 `4x`。
+3. 当前瓶颈仍在 `videos -> owner profile snapshot` 阶段，而不是 `snapshot -> ES` 阶段。
+
+## 10. 最新真实检索评估
+
+### 10.1 长尾短句误召回修复
+
+针对 `当你半年不上线的账号打一把王者排位的时候` 这类长尾短句，已经把 online domain query 改成：
+
+1. 长 query 强制至少命中一个 phrase/AND 严格子句
+2. 再用较宽松的 `top_tags/topic_phrases/sample_titles/profile_text` 做补充分数
+3. 避免在 `sort_by=influence` 时，被宽泛 token 匹配的高影响力 owner 直接顶上来
+
+在 `bili_owners_dev_poc2_50k1_v2` 和 `bili_owners_dev_poc3_100k4_v2` 上，这个长尾短句都已经从原来的明显误召回，收敛成单一命中结果。
+
+### 10.2 100k query panel 观察
+
+在新的 `bili_owners_dev_poc3_100k4_v2` 上做了几组真实查询：
+
+1. 用 `OwnerSearcher.search("影视飓风")` 走 relevance 路由时，top1 仍然是 owner `影视飓风` 本人。
+2. 用 domain-only + `sort_by=influence` 路由查 `影视飓风` 时，top1 会被更高影响力但只是在语料里碰到“影视”相关 token 的账号顶掉，说明 name-like query 和 domain-like query 仍需要更强的路由区分。
+3. `黑神话悟空` 在 relevance 路由上，已经能把强相关的黑神话实况/混剪 owner 顶到前面，明显好于只看 `influence` 的 domain-only 排序。
+4. `王者荣耀` 这类超泛主题词，在 domain-only + influence 排序下仍然会混入与主题弱相关但高影响力的账号，说明超泛 query 还需要更强的领域约束或二阶段重排。
+
+因此，这一阶段可以明确下来的结论是：
+
+1. 长尾短句误召回问题已经在 query 结构上被修正。
+2. 100k 全链路已经验证完成。
+3. 下一步在线优化重点，应从“短句误召回”转到“name/domain 路由分流”和“超泛 query 的领域约束”。
+
+### 10.3 query routing 最新进展
+
+这一轮又继续把 query routing 往前推了一步，不再只依赖 merge 之后的 `query_type` 判断，而是在查询入口就做 route probe：
+
+1. phrase-like query 继续走严格 domain route
+2. 非 relevance 排序下，如果 query 存在 `name.keyword` 精确命中，则直接切到 strict name route
+3. strict name route 只保留 `name.keyword` + `name.words(and)`，避免被 `top_tags/topic_phrases/profile_text` 的宽匹配污染
+
+真实 DEV 验证结果：
+
+1. 在 `bili_owners_dev_poc3_100k4_v2` 上，`search_by_domain("影视飓风", sort_by="influence")` 已经收敛成单一命中 owner `影视飓风`。
+2. `search("影视飓风", sort_by="influence")` 也已经走 strict name route，top1 同样是 owner 本人。
+3. 长尾短句 `当你半年不上线的账号打一把王者排位的时候` 在新路由下仍保持单一命中，没有回退。
+
+这说明 name/domain/phrase 三类请求已经不再完全共用同一条非 relevance 路由，至少把最明显的“name-like query 被 domain-only 排序污染”的问题修掉了。
+
+### 10.4 planned-range 分片优化结果
+
+在 `% shard` 之外，又补了一个新的 range 分片路线：
+
+1. 先对当前时间窗里的唯一 `owner.mid` 做 `bucketAuto`，得到近似均衡的 owner range plan
+2. 每个 shard 使用显式 `owner_mid_min / owner_mid_max`
+3. 对 range shard 强制使用 `owner.mid_1` Mongo index hint
+
+对应命令链路已经补到 `models.owners.profile`：
+
+1. `--plan-owner-shards`
+2. `--owner-shard-mode range`
+3. `--owner-mid-min`
+4. `--owner-mid-max`
+5. `--mongo-hint owner.mid_1`
+
+新的 100k planned-range 实验结果：
+
+1. `100,000` owner profile
+2. 总扫描 `921,308` 视频
+3. wall-clock `1488.37s`
+4. 聚合吞吐 `619.00 videos/s`
+5. owner 生成速率 `67.19 profiles/s`
+6. Mongo collection: `owner_profile_snapshots_dev_poc9_100k4_rangeplan`
+
+相对上一轮 `% shard` 的 `535.94 videos/s` / `61.16 profiles/s`：
+
+1. video throughput 提升约 `15.5%`
+2. profile throughput 提升约 `9.9%`
+3. wall-clock 从 `1635.02s` 降到 `1488.37s`
+
+随后写入 ES：
+
+1. ES index: `bili_owners_dev_poc9_100k4_rangeplan_v2`
+2. `100,000` docs
+3. `53.39s`
+4. `1873.09 docs/s`
+
+但这里必须记一条重要 caveat：
+
+1. 当 `range` 分片和 `--max-owners 25000` 一起使用时，每个 shard 实际上会优先取本 range 内按 `owner.mid` 排序靠前的 owner，样本组成会和 `% shard` 路线不一样。
+2. 这意味着 planned-range 这一轮更适合用来评估“预计算吞吐”，不适合直接和 `% shard` 的 100k 检索质量做一一对应对比。
+3. 例如在 `bili_owners_dev_poc9_100k4_rangeplan_v2` 上，`影视飓风` 本人就不在这个 100k 样本里，因此不能拿这组索引来评判 `影视飓风` 的 name route 是否失效。
+
+所以当前比较稳妥的结论是：
+
+1. query routing 的线上行为，用 `bili_owners_dev_poc3_100k4_v2` 这类更均匀的 sample 来看。
+2. range-planned 方案的主要价值，是证明 owner-mid range + index hint 的预计算性能更好。
+3. 后续如果要用 range 路线做公平检索评估，要么取消 `max_owners` 截断，要么再设计一层 range 内采样策略。
+
 真实结果：
 
 1. `20,000` 个 owner profile

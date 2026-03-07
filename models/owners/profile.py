@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import json
+import math
 import re
 import time
 
@@ -147,6 +148,62 @@ def build_profile_text(name: str, top_tags: list[str], sample_titles: list[str])
     if sample_titles:
         parts.append(" ".join(sample_titles[:12]))
     return " ".join(part for part in parts if part).strip()
+
+
+def build_profile_upsert_filter(profile: dict) -> dict:
+    profile_id = profile.get("_id")
+    if profile_id is None:
+        raise ValueError("profile must contain _id before Mongo upsert")
+    return {"_id": profile_id}
+
+
+def build_owner_shard_expr(
+    owner_shard_count: int = 1,
+    owner_shard_id: int = 0,
+) -> dict | None:
+    if owner_shard_count in (None, 0, 1):
+        return None
+    if owner_shard_count < 1:
+        raise ValueError("owner_shard_count must be >= 1")
+    if owner_shard_id < 0 or owner_shard_id >= owner_shard_count:
+        raise ValueError(f"owner_shard_id must be in [0, {owner_shard_count})")
+    return {"$eq": [{"$mod": ["$owner.mid", owner_shard_count]}, owner_shard_id]}
+
+
+def build_owner_range_query(
+    owner_mid_min: int = None,
+    owner_mid_max: int = None,
+) -> dict | None:
+    range_query = {}
+    if owner_mid_min is not None:
+        range_query["$gte"] = int(owner_mid_min)
+    if owner_mid_max is not None:
+        range_query["$lte"] = int(owner_mid_max)
+    if not range_query:
+        return None
+    return {"owner.mid": range_query}
+
+
+def split_owner_mid_range(
+    owner_mid_min: int,
+    owner_mid_max: int,
+    owner_shard_count: int = 1,
+    owner_shard_id: int = 0,
+) -> tuple[int, int]:
+    if owner_mid_min is None or owner_mid_max is None:
+        raise ValueError("owner_mid_min and owner_mid_max must both be set")
+    if int(owner_mid_max) < int(owner_mid_min):
+        raise ValueError("owner_mid_max must be >= owner_mid_min")
+    if owner_shard_count < 1:
+        raise ValueError("owner_shard_count must be >= 1")
+    if owner_shard_id < 0 or owner_shard_id >= owner_shard_count:
+        raise ValueError(f"owner_shard_id must be in [0, {owner_shard_count})")
+
+    total_span = int(owner_mid_max) - int(owner_mid_min) + 1
+    shard_span = max(math.ceil(total_span / owner_shard_count), 1)
+    shard_min = int(owner_mid_min) + shard_span * owner_shard_id
+    shard_max = min(int(owner_mid_max), shard_min + shard_span - 1)
+    return shard_min, shard_max
 
 
 def merge_profile_docs(
@@ -410,7 +467,14 @@ class OwnerProfileBuilder:
         top_k: int = 128,
         feature_buckets: int = DEFAULT_FEATURE_BUCKETS,
         mongo_batch_size: int = 1000,
+        mongo_read_batch_size: int = 5000,
         log_every: int = 200000,
+        mongo_hint: str = None,
+        owner_shard_mode: str = "mod",
+        owner_shard_count: int = 1,
+        owner_shard_id: int = 0,
+        owner_mid_min: int = None,
+        owner_mid_max: int = None,
     ):
         self.mongo_collection = mongo_collection
         self.output_collection = output_collection
@@ -423,7 +487,18 @@ class OwnerProfileBuilder:
         self.top_k = top_k
         self.feature_buckets = feature_buckets
         self.mongo_batch_size = mongo_batch_size
+        self.mongo_read_batch_size = mongo_read_batch_size
         self.log_every = log_every
+        self.mongo_hint = mongo_hint or (
+            "owner.mid_1" if owner_shard_mode == "range" else None
+        )
+        self.owner_shard_mode = owner_shard_mode
+        self.owner_shard_count = owner_shard_count
+        self.owner_shard_id = owner_shard_id
+        self.owner_mid_min = owner_mid_min
+        self.owner_mid_max = owner_mid_max
+        self.resolved_owner_mid_min = owner_mid_min
+        self.resolved_owner_mid_max = owner_mid_max
         self.init_mongo()
 
     def init_mongo(self):
@@ -437,6 +512,16 @@ class OwnerProfileBuilder:
         )
 
     def validate_budget(self):
+        if self.owner_shard_mode not in {"mod", "range"}:
+            raise ValueError("owner_shard_mode must be one of: mod, range")
+        build_owner_shard_expr(self.owner_shard_count, self.owner_shard_id)
+        if self.owner_mid_min is not None and self.owner_mid_max is not None:
+            split_owner_mid_range(
+                self.owner_mid_min,
+                self.owner_mid_max,
+                max(self.owner_shard_count, 1),
+                min(self.owner_shard_id, max(self.owner_shard_count - 1, 0)),
+            )
         if self.allow_full_scan:
             return
         if self.max_owners or self.max_scanned_videos:
@@ -448,7 +533,7 @@ class OwnerProfileBuilder:
             "--max-scanned-videos, a pubdate window, or pass --allow-full-scan explicitly."
         )
 
-    def build_query(self) -> dict:
+    def build_base_query(self) -> dict:
         query = {"owner.mid": {"$exists": True}, "owner.name": {"$exists": True}}
         pubdate_filter = {}
         if self.start_pubdate:
@@ -459,16 +544,134 @@ class OwnerProfileBuilder:
             query["pubdate"] = pubdate_filter
         return query
 
+    def get_owner_mid_bounds(self, query: dict) -> tuple[int | None, int | None]:
+        pipeline = [
+            {"$match": query},
+            {
+                "$group": {
+                    "_id": None,
+                    "min_mid": {"$min": "$owner.mid"},
+                    "max_mid": {"$max": "$owner.mid"},
+                }
+            },
+        ]
+        result = list(self.videos_col.aggregate(pipeline, allowDiskUse=False))
+        if not result:
+            return None, None
+        item = result[0]
+        return item.get("min_mid"), item.get("max_mid")
+
+    def plan_owner_mid_ranges(
+        self,
+        query: dict,
+        bucket_count: int = None,
+    ) -> list[dict]:
+        bucket_count = bucket_count or self.owner_shard_count or 1
+        if bucket_count <= 1:
+            min_mid, max_mid = self.get_owner_mid_bounds(query)
+            if min_mid is None or max_mid is None:
+                return []
+            return [
+                {
+                    "owner_mid_min": int(min_mid),
+                    "owner_mid_max": int(max_mid),
+                    "owner_count": None,
+                }
+            ]
+
+        pipeline = [
+            {"$match": query},
+            {"$group": {"_id": "$owner.mid"}},
+            {"$sort": {"_id": 1}},
+            {
+                "$bucketAuto": {
+                    "groupBy": "$_id",
+                    "buckets": bucket_count,
+                    "output": {
+                        "owner_mid_min": {"$min": "$_id"},
+                        "owner_mid_max": {"$max": "$_id"},
+                        "owner_count": {"$sum": 1},
+                    },
+                }
+            },
+        ]
+        result = list(self.videos_col.aggregate(pipeline, allowDiskUse=True))
+        return [
+            {
+                "owner_mid_min": int(item.get("owner_mid_min")),
+                "owner_mid_max": int(item.get("owner_mid_max")),
+                "owner_count": int(item.get("owner_count") or 0),
+            }
+            for item in result
+            if item.get("owner_mid_min") is not None
+            and item.get("owner_mid_max") is not None
+        ]
+
+    def resolve_owner_mid_range(self, query: dict) -> tuple[int | None, int | None]:
+        if self.owner_shard_mode != "range":
+            return self.owner_mid_min, self.owner_mid_max
+
+        owner_mid_min = self.owner_mid_min
+        owner_mid_max = self.owner_mid_max
+        if owner_mid_min is None or owner_mid_max is None:
+            if self.owner_shard_count > 1:
+                planned_ranges = self.plan_owner_mid_ranges(
+                    query,
+                    bucket_count=self.owner_shard_count,
+                )
+                if len(planned_ranges) > self.owner_shard_id:
+                    shard_range = planned_ranges[self.owner_shard_id]
+                    return (
+                        int(shard_range["owner_mid_min"]),
+                        int(shard_range["owner_mid_max"]),
+                    )
+            auto_min, auto_max = self.get_owner_mid_bounds(query)
+            owner_mid_min = auto_min if owner_mid_min is None else owner_mid_min
+            owner_mid_max = auto_max if owner_mid_max is None else owner_mid_max
+
+        if owner_mid_min is None or owner_mid_max is None:
+            return None, None
+
+        if self.owner_shard_count <= 1:
+            return int(owner_mid_min), int(owner_mid_max)
+
+        return split_owner_mid_range(
+            int(owner_mid_min),
+            int(owner_mid_max),
+            self.owner_shard_count,
+            self.owner_shard_id,
+        )
+
+    def build_query(self) -> dict:
+        query = self.build_base_query()
+        if self.owner_shard_mode == "range":
+            owner_mid_min, owner_mid_max = self.resolve_owner_mid_range(query)
+            self.resolved_owner_mid_min = owner_mid_min
+            self.resolved_owner_mid_max = owner_mid_max
+            range_query = build_owner_range_query(owner_mid_min, owner_mid_max)
+            if range_query is not None:
+                query.update(range_query)
+            return query
+
+        shard_expr = build_owner_shard_expr(
+            self.owner_shard_count,
+            self.owner_shard_id,
+        )
+        if shard_expr is not None:
+            query["$expr"] = shard_expr
+        self.resolved_owner_mid_min = self.owner_mid_min
+        self.resolved_owner_mid_max = self.owner_mid_max
+        return query
+
     def get_cursor(self):
         self.validate_budget()
         query = self.build_query()
         logger.note("> Owner profile query:")
-        logger.mesg(dict_to_str(query), indent=2)
-        return (
-            self.videos_col.find(query, VIDEO_PROJECTION)
-            .sort("owner.mid", 1)
-            .batch_size(5000)
-        )
+        logger.mesg(json.dumps(query, ensure_ascii=False, indent=2), indent=2)
+        cursor = self.videos_col.find(query, VIDEO_PROJECTION)
+        if self.mongo_hint:
+            cursor = cursor.hint(self.mongo_hint)
+        return cursor.sort("owner.mid", 1).batch_size(self.mongo_read_batch_size)
 
     def dump_profiles(self, profiles: list[dict], path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -481,7 +684,7 @@ class OwnerProfileBuilder:
         if self.output_col is None or not profiles:
             return 0
         operations = [
-            ReplaceOne({"mid": profile["mid"]}, profile, upsert=True)
+            ReplaceOne(build_profile_upsert_filter(profile), profile, upsert=True)
             for profile in profiles
         ]
         result = self.output_col.bulk_write(operations, ordered=False)
@@ -573,6 +776,12 @@ class OwnerProfileBuilder:
             "output_collection": self.output_collection,
             "profile_version": "v2",
             "feature_buckets": self.feature_buckets,
+            "mongo_hint": self.mongo_hint,
+            "owner_shard_mode": self.owner_shard_mode,
+            "owner_shard_count": self.owner_shard_count,
+            "owner_shard_id": self.owner_shard_id,
+            "owner_mid_min": self.resolved_owner_mid_min,
+            "owner_mid_max": self.resolved_owner_mid_max,
         }
         logger.success(
             f"  ✓ Owner profiles built: {profile_count:,} from {scanned_videos:,} videos in {elapsed:.1f}s"
@@ -596,11 +805,19 @@ class OwnerProfileArgParser(argparse.ArgumentParser):
             "--snapshots-path", type=Path, default=OWNER_PROFILE_SNAPSHOTS_PATH
         )
         self.add_argument("--mongo-batch-size", type=int, default=1000)
+        self.add_argument("--mongo-read-batch-size", type=int, default=5000)
+        self.add_argument("--mongo-hint", type=str, default=None)
         self.add_argument("--top-k", type=int, default=128)
         self.add_argument(
             "--feature-buckets", type=int, default=DEFAULT_FEATURE_BUCKETS
         )
         self.add_argument("--log-every", type=int, default=200000)
+        self.add_argument("--owner-shard-mode", choices=["mod", "range"], default="mod")
+        self.add_argument("--owner-shard-count", type=int, default=1)
+        self.add_argument("--owner-shard-id", type=int, default=0)
+        self.add_argument("--owner-mid-min", type=int, default=None)
+        self.add_argument("--owner-mid-max", type=int, default=None)
+        self.add_argument("--plan-owner-shards", action="store_true")
         self.add_argument("--build-only", action="store_true")
 
 
@@ -619,8 +836,20 @@ def main(args: argparse.Namespace):
         top_k=args.top_k,
         feature_buckets=args.feature_buckets,
         mongo_batch_size=args.mongo_batch_size,
+        mongo_read_batch_size=args.mongo_read_batch_size,
         log_every=args.log_every,
+        mongo_hint=args.mongo_hint,
+        owner_shard_mode=args.owner_shard_mode,
+        owner_shard_count=args.owner_shard_count,
+        owner_shard_id=args.owner_shard_id,
+        owner_mid_min=args.owner_mid_min,
+        owner_mid_max=args.owner_mid_max,
     )
+    if args.plan_owner_shards:
+        planned_ranges = builder.plan_owner_mid_ranges(builder.build_base_query())
+        logger.note("> Planned owner shard ranges:")
+        logger.mesg(json.dumps(planned_ranges, ensure_ascii=False, indent=2), indent=2)
+        return
     summary = builder.build_profiles()
 
     if args.build_only:
