@@ -19,6 +19,11 @@ from configs.envs import DATA_ROOT, MONGO_ENVS
 OWNER_PROFILE_ROOT = DATA_ROOT / "owners"
 OWNER_PROFILE_SNAPSHOTS_PATH = OWNER_PROFILE_ROOT / "owner_profile_snapshots.jsonl"
 DEFAULT_FEATURE_BUCKETS = 4096
+PROFILE_SAMPLE_TITLES_LIMIT = 6
+PROFILE_TOP_TAGS_LIMIT = 16
+PROFILE_TOPIC_PHRASES_LIMIT = 12
+DEFAULT_PROFILE_TOP_K = 96
+OWNER_PROFILE_VERSION = "v2slim1"
 
 DEFAULT_PROFILE_FIELD_WEIGHTS = {
     "owner_name": 3.0,
@@ -141,15 +146,6 @@ def merge_unique_lists(*parts: list[str], limit: int) -> list[str]:
     return merged
 
 
-def build_profile_text(name: str, top_tags: list[str], sample_titles: list[str]) -> str:
-    parts = [name.strip()] if name else []
-    if top_tags:
-        parts.append(" ".join(top_tags[:20]))
-    if sample_titles:
-        parts.append(" ".join(sample_titles[:12]))
-    return " ".join(part for part in parts if part).strip()
-
-
 def build_profile_upsert_filter(profile: dict) -> dict:
     profile_id = profile.get("_id")
     if profile_id is None:
@@ -209,7 +205,7 @@ def split_owner_mid_range(
 def merge_profile_docs(
     base: dict,
     delta: dict,
-    top_k: int = 128,
+    top_k: int = DEFAULT_PROFILE_TOP_K,
 ) -> dict:
     merged = dict(base or {})
     base_features = dict(
@@ -232,10 +228,6 @@ def merge_profile_docs(
         "total_like",
         "total_coin",
         "total_favorite",
-        "total_danmaku",
-        "total_reply",
-        "total_share",
-        "total_duration",
         "recent_30d_videos",
         "recent_7d_videos",
     ]:
@@ -261,32 +253,29 @@ def merge_profile_docs(
     merged["sample_titles"] = merge_unique_lists(
         base.get("sample_titles") or [],
         delta.get("sample_titles") or [],
-        limit=12,
+        limit=PROFILE_SAMPLE_TITLES_LIMIT,
     )
     merged["top_tags"] = merge_unique_lists(
         base.get("top_tags") or [],
         delta.get("top_tags") or [],
-        limit=30,
+        limit=PROFILE_TOP_TAGS_LIMIT,
     )
     merged["topic_phrases"] = merge_unique_lists(
         base.get("topic_phrases") or [],
         delta.get("topic_phrases") or [],
-        limit=24,
+        limit=PROFILE_TOPIC_PHRASES_LIMIT,
     )
     merged["latest_bvid"] = delta.get("latest_bvid") or base.get("latest_bvid")
     merged["latest_pic"] = delta.get("latest_pic") or base.get("latest_pic")
     merged["primary_tid"] = delta.get("primary_tid") or base.get("primary_tid") or 0
     merged["primary_ptid"] = delta.get("primary_ptid") or base.get("primary_ptid") or 0
-    merged["profile_text"] = build_profile_text(
-        merged.get("name") or "",
-        merged.get("top_tags") or [],
-        merged.get("sample_titles") or [],
-    )
     merged["snapshot_at"] = int(
         delta.get("snapshot_at") or base.get("snapshot_at") or 0
     )
     merged["profile_version"] = (
-        delta.get("profile_version") or base.get("profile_version") or "v2"
+        delta.get("profile_version")
+        or base.get("profile_version")
+        or OWNER_PROFILE_VERSION
     )
     return merged
 
@@ -297,7 +286,7 @@ class OwnerProfileAccumulator:
         doc: dict,
         field_weights: dict[str, float] = None,
         now_ts: int = None,
-        top_k: int = 128,
+        top_k: int = DEFAULT_PROFILE_TOP_K,
         feature_buckets: int = DEFAULT_FEATURE_BUCKETS,
     ):
         self.field_weights = field_weights or DEFAULT_PROFILE_FIELD_WEIGHTS
@@ -313,10 +302,6 @@ class OwnerProfileAccumulator:
         self.total_like = 0
         self.total_coin = 0
         self.total_favorite = 0
-        self.total_danmaku = 0
-        self.total_reply = 0
-        self.total_share = 0
-        self.total_duration = 0
         self.total_stat_score = 0.0
         self.latest_pubdate = 0
         self.earliest_pubdate = 0
@@ -348,10 +333,6 @@ class OwnerProfileAccumulator:
         self.total_like += int(stat.get("like") or 0)
         self.total_coin += int(stat.get("coin") or 0)
         self.total_favorite += int(stat.get("favorite") or 0)
-        self.total_danmaku += int(stat.get("danmaku") or 0)
-        self.total_reply += int(stat.get("reply") or 0)
-        self.total_share += int(stat.get("share") or 0)
-        self.total_duration += int(doc.get("duration") or 0)
         self.total_stat_score += float(doc.get("stat_score") or 0.0)
 
         if pubdate >= self.latest_pubdate:
@@ -406,7 +387,11 @@ class OwnerProfileAccumulator:
             bucket_count=self.feature_buckets,
         )
 
-        if title and title not in self._seen_titles and len(self.sample_titles) < 12:
+        if (
+            title
+            and title not in self._seen_titles
+            and len(self.sample_titles) < PROFILE_SAMPLE_TITLES_LIMIT
+        ):
             self.sample_titles.append(title)
             self._seen_titles.add(title)
 
@@ -416,9 +401,13 @@ class OwnerProfileAccumulator:
             for token, weight in self.feature_counter.most_common(self.top_k)
             if weight > 0
         }
-        top_tags = [tag for tag, _ in self.tag_counter.most_common(30)]
+        top_tags = [
+            tag for tag, _ in self.tag_counter.most_common(PROFILE_TOP_TAGS_LIMIT)
+        ]
         topic_phrases = merge_unique_lists(
-            top_tags[:12], self.sample_titles[:12], limit=24
+            top_tags[: min(PROFILE_TOPIC_PHRASES_LIMIT, 8)],
+            self.sample_titles[:PROFILE_SAMPLE_TITLES_LIMIT],
+            limit=PROFILE_TOPIC_PHRASES_LIMIT,
         )
         return {
             "_id": self.mid,
@@ -429,10 +418,6 @@ class OwnerProfileAccumulator:
             "total_like": self.total_like,
             "total_coin": self.total_coin,
             "total_favorite": self.total_favorite,
-            "total_danmaku": self.total_danmaku,
-            "total_reply": self.total_reply,
-            "total_share": self.total_share,
-            "total_duration": self.total_duration,
             "total_stat_score": round(self.total_stat_score, 4),
             "latest_pubdate": self.latest_pubdate,
             "earliest_pubdate": self.earliest_pubdate,
@@ -443,12 +428,11 @@ class OwnerProfileAccumulator:
             "top_tags": top_tags,
             "sample_titles": self.sample_titles,
             "topic_phrases": topic_phrases,
-            "profile_text": build_profile_text(self.name, top_tags, self.sample_titles),
             "topic_terms": list(feature_weights.keys()),
             "feature_weights": feature_weights,
             "primary_tid": compute_mode(self.tid_list),
             "primary_ptid": compute_mode(self.ptid_list),
-            "profile_version": "v2",
+            "profile_version": OWNER_PROFILE_VERSION,
             "snapshot_at": self.now_ts,
         }
 
@@ -464,7 +448,7 @@ class OwnerProfileBuilder:
         max_scanned_videos: int = None,
         allow_full_scan: bool = False,
         field_weights: dict[str, float] = None,
-        top_k: int = 128,
+        top_k: int = DEFAULT_PROFILE_TOP_K,
         feature_buckets: int = DEFAULT_FEATURE_BUCKETS,
         mongo_batch_size: int = 1000,
         mongo_read_batch_size: int = 5000,
@@ -774,7 +758,7 @@ class OwnerProfileBuilder:
             "video_rate": round(scanned_videos / max(elapsed, 0.001), 2),
             "profile_rate": round(profile_count / max(elapsed, 0.001), 2),
             "output_collection": self.output_collection,
-            "profile_version": "v2",
+            "profile_version": OWNER_PROFILE_VERSION,
             "feature_buckets": self.feature_buckets,
             "mongo_hint": self.mongo_hint,
             "owner_shard_mode": self.owner_shard_mode,
@@ -807,7 +791,7 @@ class OwnerProfileArgParser(argparse.ArgumentParser):
         self.add_argument("--mongo-batch-size", type=int, default=1000)
         self.add_argument("--mongo-read-batch-size", type=int, default=5000)
         self.add_argument("--mongo-hint", type=str, default=None)
-        self.add_argument("--top-k", type=int, default=128)
+        self.add_argument("--top-k", type=int, default=DEFAULT_PROFILE_TOP_K)
         self.add_argument(
             "--feature-buckets", type=int, default=DEFAULT_FEATURE_BUCKETS
         )

@@ -37,11 +37,12 @@ VIDEO_PROJECTION = {
 DEFAULT_LABEL_GROUPS = [
     group for group in REGION_MONGO_FILTERS.keys() if group not in {"recent", "test"}
 ]
+DEFAULT_WEIGHTED_ALPHA = 0.5
 DEFAULT_WEIGHTED_FIELD_WEIGHTS = {
-    "owner_name": 4.0,
-    "top_tags": 3.0,
-    "sample_titles": 2.0,
-    "desc_samples": 1.0,
+    "owner_name": 5.0,
+    "top_tags": 4.0,
+    "sample_titles": 1.0,
+    "desc_samples": 0.5,
 }
 DEFAULT_WEIGHT_TUNE_GRID = {
     "owner_name": [3.0, 4.0, 5.0],
@@ -898,7 +899,7 @@ def evaluate_multiple_models(
         )
     if model_name == "naive_bayes_weighted":
         classifier = OwnerDomainNaiveBayesClassifier(
-            field_weights=DEFAULT_WEIGHTED_FIELD_WEIGHTS
+            alpha=DEFAULT_WEIGHTED_ALPHA, field_weights=DEFAULT_WEIGHTED_FIELD_WEIGHTS
         )
         return evaluate_classifier(
             classifier, samples, test_ratio=test_ratio, seed=seed
@@ -923,7 +924,8 @@ def evaluate_multiple_models(
             "centroid": OwnerDomainCentroidClassifier(),
             "naive_bayes": OwnerDomainNaiveBayesClassifier(),
             "naive_bayes_weighted": OwnerDomainNaiveBayesClassifier(
-                field_weights=DEFAULT_WEIGHTED_FIELD_WEIGHTS
+                alpha=DEFAULT_WEIGHTED_ALPHA,
+                field_weights=DEFAULT_WEIGHTED_FIELD_WEIGHTS,
             ),
             "linear": OwnerDomainLinearClassifier(),
         }.items():
