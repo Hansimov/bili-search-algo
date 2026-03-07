@@ -193,6 +193,19 @@ python -m models.owners.domain --model compare -m 300 --max-scanned-videos 20000
 
 The compare mode now also includes `naive_bayes_weighted`, which cheaply upweights `owner_name`, `top_tags`, `sample_titles`, and `desc_samples` inside each owner profile.
 
+Tune the weighted naive Bayes search space on the same bounded split:
+
+```sh
+python -m models.owners.domain --model tune_naive_bayes_weighted -m 300 --max-scanned-videos 200000 -s "2026-02-01 00:00:00" -e "2026-03-07 00:00:00"
+```
+
+The current bounded DEV experiment found a best accuracy of `0.7143` with:
+- `alpha=1.5`
+- `owner_name=3.0`
+- `top_tags=3.0`
+- `sample_titles=1.0`
+- `desc_samples=0.5`
+
 Evaluate from an existing sample file:
 
 ```sh

@@ -43,6 +43,13 @@ DEFAULT_WEIGHTED_FIELD_WEIGHTS = {
     "sample_titles": 2.0,
     "desc_samples": 1.0,
 }
+DEFAULT_WEIGHT_TUNE_GRID = {
+    "owner_name": [3.0, 4.0, 5.0],
+    "top_tags": [2.0, 3.0, 4.0],
+    "sample_titles": [1.0, 2.0, 3.0],
+    "desc_samples": [0.5, 1.0, 1.5],
+}
+DEFAULT_ALPHA_GRID = [0.5, 1.0, 1.5]
 LATIN_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_\-\.]{1,}")
 CJK_SPAN_RE = re.compile(r"[\u4e00-\u9fff]+")
 
@@ -203,6 +210,117 @@ def summarize_prediction_errors(
         }
         for truth, _ in error_counts.most_common()
     }
+
+
+def iter_weight_candidates(grid: dict[str, list[float]]) -> list[dict[str, float]]:
+    candidates = [{}]
+    for field, values in grid.items():
+        next_candidates = []
+        for candidate in candidates:
+            for value in values:
+                next_candidates.append({**candidate, field: float(value)})
+        candidates = next_candidates
+    return candidates
+
+
+def evaluate_fixed_split(
+    classifier,
+    train_samples: list[dict],
+    test_samples: list[dict],
+    samples_by_label: dict[str, list[dict]],
+) -> dict:
+    classifier.fit(train_samples)
+
+    correct = 0
+    predictions = []
+    confusion = defaultdict(Counter)
+    for sample in test_samples:
+        pred_label, scores = classifier.predict(sample)
+        truth = sample["label"]
+        if pred_label == truth:
+            correct += 1
+        confusion[truth][pred_label or "<none>"] += 1
+        predictions.append(
+            {
+                "mid": sample["mid"],
+                "owner_name": sample["owner_name"],
+                "truth": truth,
+                "pred": pred_label,
+                "scores": scores,
+            }
+        )
+
+    metrics = {
+        "train_size": len(train_samples),
+        "test_size": len(test_samples),
+        "label_count": len({sample["label"] for sample in train_samples}),
+        "accuracy": round(correct / max(len(test_samples), 1), 4),
+        "labels": {
+            label: len(label_samples)
+            for label, label_samples in samples_by_label.items()
+        },
+        "confusion": {label: dict(counter) for label, counter in confusion.items()},
+        "error_summary": summarize_prediction_errors(predictions),
+        "model": classifier.__class__.__name__,
+    }
+    return {"metrics": metrics, "predictions": predictions}
+
+
+def tune_weighted_naive_bayes(
+    samples: list[dict],
+    test_ratio: float = 0.2,
+    seed: int = 42,
+    weight_grid: dict[str, list[float]] = None,
+    alpha_grid: list[float] = None,
+    top_k: int = 5,
+) -> dict:
+    weight_grid = weight_grid or DEFAULT_WEIGHT_TUNE_GRID
+    alpha_grid = alpha_grid or DEFAULT_ALPHA_GRID
+    train_samples, test_samples, samples_by_label = split_samples(
+        samples, test_ratio=test_ratio, seed=seed
+    )
+
+    leaderboard = []
+    best_result = None
+    best_score = -1.0
+    best_config = None
+    for field_weights in iter_weight_candidates(weight_grid):
+        for alpha in alpha_grid:
+            classifier = OwnerDomainNaiveBayesClassifier(
+                alpha=alpha,
+                field_weights=field_weights,
+            )
+            result = evaluate_fixed_split(
+                classifier,
+                train_samples,
+                test_samples,
+                samples_by_label,
+            )
+            accuracy = result["metrics"]["accuracy"]
+            leaderboard.append(
+                {
+                    "accuracy": accuracy,
+                    "alpha": alpha,
+                    "field_weights": field_weights,
+                }
+            )
+            if accuracy > best_score:
+                best_score = accuracy
+                best_result = result
+                best_config = {
+                    "alpha": alpha,
+                    "field_weights": field_weights,
+                }
+
+    leaderboard = sorted(leaderboard, key=lambda item: item["accuracy"], reverse=True)
+    best_result["metrics"]["best_config"] = best_config
+    best_result["metrics"]["leaderboard"] = leaderboard[:top_k]
+    best_result["metrics"]["search_space"] = {
+        "alpha_grid": alpha_grid,
+        "weight_grid": weight_grid,
+        "candidate_count": len(leaderboard),
+    }
+    return best_result
 
 
 class OwnerDomainSampleBuilder:
@@ -729,42 +847,12 @@ def evaluate_classifier(
     train_samples, test_samples, samples_by_label = split_samples(
         samples, test_ratio=test_ratio, seed=seed
     )
-    classifier.fit(train_samples)
-
-    correct = 0
-    predictions = []
-    confusion = defaultdict(Counter)
-    for sample in test_samples:
-        pred_label, scores = classifier.predict(sample)
-        truth = sample["label"]
-        if pred_label == truth:
-            correct += 1
-        confusion[truth][pred_label or "<none>"] += 1
-        predictions.append(
-            {
-                "mid": sample["mid"],
-                "owner_name": sample["owner_name"],
-                "truth": truth,
-                "pred": pred_label,
-                "scores": scores,
-            }
-        )
-
-    accuracy = correct / max(len(test_samples), 1)
-    metrics = {
-        "train_size": len(train_samples),
-        "test_size": len(test_samples),
-        "label_count": len({sample["label"] for sample in train_samples}),
-        "accuracy": round(accuracy, 4),
-        "labels": {
-            label: len(label_samples)
-            for label, label_samples in samples_by_label.items()
-        },
-        "confusion": {label: dict(counter) for label, counter in confusion.items()},
-        "error_summary": summarize_prediction_errors(predictions),
-        "model": classifier.__class__.__name__,
-    }
-    return {"metrics": metrics, "predictions": predictions}
+    return evaluate_fixed_split(
+        classifier,
+        train_samples,
+        test_samples,
+        samples_by_label,
+    )
 
 
 def evaluate_multiple_models(
@@ -795,6 +883,12 @@ def evaluate_multiple_models(
         return evaluate_classifier(
             classifier, samples, test_ratio=test_ratio, seed=seed
         )
+    if model_name == "tune_naive_bayes_weighted":
+        return tune_weighted_naive_bayes(
+            samples,
+            test_ratio=test_ratio,
+            seed=seed,
+        )
     if model_name == "compare":
         train_samples, test_samples, samples_by_label = split_samples(
             samples, test_ratio=test_ratio, seed=seed
@@ -808,44 +902,12 @@ def evaluate_multiple_models(
             ),
             "linear": OwnerDomainLinearClassifier(),
         }.items():
-            classifier.fit(train_samples)
-            correct = 0
-            confusion = defaultdict(Counter)
-            predictions = []
-            for sample in test_samples:
-                pred_label, scores = classifier.predict(sample)
-                truth = sample["label"]
-                if pred_label == truth:
-                    correct += 1
-                confusion[truth][pred_label or "<none>"] += 1
-                predictions.append(
-                    {
-                        "mid": sample["mid"],
-                        "owner_name": sample["owner_name"],
-                        "truth": truth,
-                        "pred": pred_label,
-                        "scores": scores,
-                    }
-                )
-            metrics = {
-                "train_size": len(train_samples),
-                "test_size": len(test_samples),
-                "label_count": len({sample["label"] for sample in train_samples}),
-                "accuracy": round(correct / max(len(test_samples), 1), 4),
-                "labels": {
-                    label: len(label_samples)
-                    for label, label_samples in samples_by_label.items()
-                },
-                "confusion": {
-                    label: dict(counter) for label, counter in confusion.items()
-                },
-                "error_summary": summarize_prediction_errors(predictions),
-                "model": classifier.__class__.__name__,
-            }
-            results[name] = {
-                "metrics": metrics,
-                "predictions": predictions,
-            }
+            results[name] = evaluate_fixed_split(
+                classifier,
+                train_samples,
+                test_samples,
+                samples_by_label,
+            )
         return results
     raise ValueError(f"Unsupported model: {model_name}")
 
@@ -888,6 +950,7 @@ class OwnerDomainArgParser(argparse.ArgumentParser):
                 "centroid",
                 "naive_bayes",
                 "naive_bayes_weighted",
+                "tune_naive_bayes_weighted",
                 "linear",
                 "compare",
             ],
