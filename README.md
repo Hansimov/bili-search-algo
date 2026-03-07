@@ -193,6 +193,14 @@ python -m models.owners.domain --model compare -m 300 --max-scanned-videos 20000
 
 The compare mode now also includes `naive_bayes_weighted`, which cheaply upweights `owner_name`, `top_tags`, `sample_titles`, and `desc_samples` inside each owner profile.
 
+On a larger real-window experiment aligned to the recent DEV video sampling window, a bounded 5,000-owner run built samples from about 186,789 videos and reached:
+- `centroid=0.5793`
+- `naive_bayes=0.6034`
+- `naive_bayes_weighted=0.6185`
+- `linear=0.5301`
+
+That larger-window result still favors `naive_bayes_weighted`, but by a smaller margin than the earlier 300-owner experiment, so weight tuning should be re-run on the larger sample instead of assuming the smaller-window optimum still holds.
+
 Tune the weighted naive Bayes search space on the same bounded split:
 
 ```sh

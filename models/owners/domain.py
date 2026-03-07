@@ -273,6 +273,7 @@ def tune_weighted_naive_bayes(
     weight_grid: dict[str, list[float]] = None,
     alpha_grid: list[float] = None,
     top_k: int = 5,
+    progress_log_every: int = 10,
 ) -> dict:
     weight_grid = weight_grid or DEFAULT_WEIGHT_TUNE_GRID
     alpha_grid = alpha_grid or DEFAULT_ALPHA_GRID
@@ -280,12 +281,21 @@ def tune_weighted_naive_bayes(
         samples, test_ratio=test_ratio, seed=seed
     )
 
+    weight_candidates = iter_weight_candidates(weight_grid)
+    candidate_count = len(weight_candidates) * len(alpha_grid)
+    logger.note(
+        f"> Tuning weighted naive Bayes over {candidate_count} candidates "
+        f"({len(weight_candidates)} weight sets x {len(alpha_grid)} alpha values)"
+    )
+
     leaderboard = []
     best_result = None
     best_score = -1.0
     best_config = None
-    for field_weights in iter_weight_candidates(weight_grid):
+    candidate_index = 0
+    for field_weights in weight_candidates:
         for alpha in alpha_grid:
+            candidate_index += 1
             classifier = OwnerDomainNaiveBayesClassifier(
                 alpha=alpha,
                 field_weights=field_weights,
@@ -311,6 +321,20 @@ def tune_weighted_naive_bayes(
                     "alpha": alpha,
                     "field_weights": field_weights,
                 }
+                logger.note(
+                    f"  * New best [{candidate_index}/{candidate_count}] "
+                    f"accuracy={accuracy:.4f}, alpha={alpha}, weights={field_weights}"
+                )
+
+            if progress_log_every > 0 and (
+                candidate_index % progress_log_every == 0
+                or candidate_index == candidate_count
+            ):
+                logger.note(
+                    f"  * Tune progress: {candidate_index}/{candidate_count} "
+                    f"({candidate_index / max(candidate_count, 1):.1%}), "
+                    f"best={best_score:.4f}"
+                )
 
     leaderboard = sorted(leaderboard, key=lambda item: item["accuracy"], reverse=True)
     best_result["metrics"]["best_config"] = best_config
@@ -319,6 +343,7 @@ def tune_weighted_naive_bayes(
         "alpha_grid": alpha_grid,
         "weight_grid": weight_grid,
         "candidate_count": len(leaderboard),
+        "progress_log_every": progress_log_every,
     }
     return best_result
 
@@ -958,6 +983,7 @@ class OwnerDomainArgParser(argparse.ArgumentParser):
         )
         self.add_argument("--test-ratio", type=float, default=0.2)
         self.add_argument("--seed", type=int, default=42)
+        self.add_argument("--tune-log-every", type=int, default=10)
         self.add_argument("--build-only", action="store_true")
         self.add_argument("--eval-only", action="store_true")
         self.add_argument(
@@ -1005,12 +1031,20 @@ def main(args: argparse.Namespace):
     if samples is None:
         samples = load_samples(args.samples_path)
 
-    eval_result = evaluate_multiple_models(
-        args.model,
-        samples,
-        test_ratio=args.test_ratio,
-        seed=args.seed,
-    )
+    if args.model == "tune_naive_bayes_weighted":
+        eval_result = tune_weighted_naive_bayes(
+            samples,
+            test_ratio=args.test_ratio,
+            seed=args.seed,
+            progress_log_every=args.tune_log_every,
+        )
+    else:
+        eval_result = evaluate_multiple_models(
+            args.model,
+            samples,
+            test_ratio=args.test_ratio,
+            seed=args.seed,
+        )
     if args.model == "compare":
         metrics = {
             model_name: result["metrics"] for model_name, result in eval_result.items()
