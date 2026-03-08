@@ -1,9 +1,11 @@
 from models.coretok.train import (
+    aggregate_scale_summaries,
     build_eval_dataset,
     collect_training_texts,
     compute_stability,
     default_tuning_configs,
     evaluate_owner_retrieval,
+    parse_seed_list,
     split_owner_rows,
     train_pipeline,
     DEFAULT_SCALES,
@@ -88,3 +90,89 @@ def test_compute_stability_flags_consistent_scores_as_stable():
 
     assert stability["stable"] is True
     assert stability["best_recall_at_5"] == 0.29
+
+
+def test_parse_seed_list_deduplicates_and_falls_back_to_default_seed():
+    assert parse_seed_list(None, 42) == [42]
+    assert parse_seed_list("7, 11, 7, 13", 42) == [7, 11, 13]
+    assert parse_seed_list(" , ", 42) == [42]
+
+
+def test_aggregate_scale_summaries_reports_cross_seed_stability():
+    aggregate = aggregate_scale_summaries(
+        "tiny",
+        [
+            {
+                "scale": "tiny",
+                "seed": 3,
+                "dataset": {
+                    "owner_count": 60,
+                    "train_owner_count": 45,
+                    "eval_owner_count": 15,
+                    "eval_query_count": 48,
+                },
+                "best": {
+                    "config": {"tag_novelty": 0.35, "text_novelty": 0.68},
+                    "metrics": {
+                        "query_coverage": 0.62,
+                        "empty_query_ratio": 0.38,
+                        "mrr": 0.41,
+                        "recall_at_1": 0.33,
+                        "recall_at_5": 0.36,
+                        "recall_at_10": 0.42,
+                    },
+                },
+                "stability": {"stable": True},
+            },
+            {
+                "scale": "tiny",
+                "seed": 7,
+                "dataset": {
+                    "owner_count": 60,
+                    "train_owner_count": 46,
+                    "eval_owner_count": 14,
+                    "eval_query_count": 44,
+                },
+                "best": {
+                    "config": {"tag_novelty": 0.35, "text_novelty": 0.68},
+                    "metrics": {
+                        "query_coverage": 0.58,
+                        "empty_query_ratio": 0.42,
+                        "mrr": 0.39,
+                        "recall_at_1": 0.31,
+                        "recall_at_5": 0.34,
+                        "recall_at_10": 0.4,
+                    },
+                },
+                "stability": {"stable": False},
+            },
+            {
+                "scale": "tiny",
+                "seed": 11,
+                "dataset": {
+                    "owner_count": 60,
+                    "train_owner_count": 47,
+                    "eval_owner_count": 13,
+                    "eval_query_count": 40,
+                },
+                "best": {
+                    "config": {"tag_novelty": 0.4, "text_novelty": 0.7},
+                    "metrics": {
+                        "query_coverage": 0.6,
+                        "empty_query_ratio": 0.4,
+                        "mrr": 0.43,
+                        "recall_at_1": 0.35,
+                        "recall_at_5": 0.38,
+                        "recall_at_10": 0.45,
+                    },
+                },
+                "stability": {"stable": True},
+            },
+        ],
+    )
+
+    assert aggregate["seed_count"] == 3
+    assert aggregate["stability"]["stable"] is True
+    assert aggregate["stability"]["stable_seed_count"] == 2
+    assert aggregate["metrics"]["recall_at_5"]["mean"] == 0.36
+    assert aggregate["best_config_counts"]

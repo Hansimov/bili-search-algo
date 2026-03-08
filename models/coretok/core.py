@@ -337,8 +337,10 @@ class CoreTokenLexicon:
         self.match_cache.clear()
         return token_id
 
-    def touch_token(self, token_id: int) -> int:
-        self.token_freqs[token_id] += 1
+    def touch_token(self, token_id: int, delta: int = 1) -> int:
+        if delta <= 0:
+            return token_id
+        self.token_freqs[token_id] += delta
         return token_id
 
     def get_token_id(self, token: str) -> int | None:
@@ -473,6 +475,7 @@ class _BaseCoreTokenizer:
         self.novelty_threshold = novelty_threshold
         self.reuse_threshold = reuse_threshold
         self.source = source
+        self._candidate_cache: dict[tuple[str, bool], list[str]] = {}
 
     def _score_candidate(self, candidate: str, budget: int) -> tuple[float, int, str]:
         whole_bonus = 4.0 if count_mixed_units(candidate) <= 8 else 0.0
@@ -486,11 +489,16 @@ class _BaseCoreTokenizer:
     def _choose_candidates(
         self, text: str, *, budget: int, for_stage1: bool
     ) -> list[str]:
-        candidates = extract_core_candidates(
-            text,
-            for_stage1=for_stage1,
-            corpus_stats=self.corpus_stats,
-        )
+        normalized = normalize_core_text(text)
+        cache_key = (normalized, for_stage1)
+        candidates = self._candidate_cache.get(cache_key)
+        if candidates is None:
+            candidates = extract_core_candidates(
+                normalized,
+                for_stage1=for_stage1,
+                corpus_stats=self.corpus_stats,
+            )
+            self._candidate_cache[cache_key] = candidates
         ranked = sorted(
             candidates,
             key=lambda candidate: self._score_candidate(candidate, budget),
@@ -558,9 +566,9 @@ class CoreTagTokenizer(_BaseCoreTokenizer):
                 token_ids = self.encode(tag, allow_new_tokens=True)
                 if token_ids:
                     encoded.extend([token_ids] * int(freq))
-                    for _ in range(max(int(freq) - 1, 0)):
-                        for token_id in token_ids:
-                            self.lexicon.touch_token(token_id)
+                    extra_repeats = max(int(freq) - 1, 0)
+                    for token_id in token_ids:
+                        self.lexicon.touch_token(token_id, delta=extra_repeats)
         return encoded
 
 
@@ -608,14 +616,18 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
     def fit(self, texts: list[str], epochs: int = 1) -> list[list[int]]:
         encoded = []
         text_counter = Counter(text for text in texts if normalize_core_text(text))
+        for text in text_counter:
+            self._choose_candidates(
+                text, budget=self._budget_for_text(text), for_stage1=False
+            )
         for _ in range(max(epochs, 1)):
             for text, freq in text_counter.most_common():
                 token_ids = self.encode(text, allow_new_tokens=True)
                 if token_ids:
                     encoded.extend([token_ids] * int(freq))
-                    for _ in range(max(int(freq) - 1, 0)):
-                        for token_id in token_ids:
-                            self.lexicon.touch_token(token_id)
+                    extra_repeats = max(int(freq) - 1, 0)
+                    for token_id in token_ids:
+                        self.lexicon.touch_token(token_id, delta=extra_repeats)
         return encoded
 
 
