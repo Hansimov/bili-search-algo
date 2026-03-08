@@ -1,6 +1,16 @@
 # bili-search-algo
 Algorithms and models for Bilibili Search Engine (blbl.top).
 
+## models.coretok
+
+Train the owner-domain core token model with iterative holdout retrieval evaluation:
+
+```bash
+python -m models.coretok.train --scales tiny --stop-on-unstable
+```
+
+The run artifacts are written to `data/coretok/runs/<run>/` and include per-iteration events, per-scale summaries, and the best serialized bundle for each stable scale.
+
 ## models.eng
 
 Extract English words from video texts (titles, tags and desc):

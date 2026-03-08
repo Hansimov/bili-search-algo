@@ -1,42 +1,66 @@
-# CoreTok Training Skeleton
+# CoreTok Training Pipeline
 
-`models/coretok` 是新的 owner-domain token 化主线入口。当前阶段先提供可运行、可测试的训练骨架，不再继续沿用旧的 `top_tags / topic_phrases / domain_text / vector_bucket_*` 方案。
+`models/coretok` 是 owner-domain token 化的主训练入口，目标不是继续手写语义词表，而是用可扩展、可监控、可回滚的训练链路，从真实视频文本中学习稳定的 token 词表和重要性统计。
 
-## Stage 1: CoreTagTokenizer
+## Current design
 
-目标：从高质量 tag 里学习一套小而稳的核心 token 词表。
+1. `CoreTagTokenizer`
+   从 tag 学词表，控制 token budget 和词表膨胀。
+2. `CoreTexTokenizer`
+   在 title / desc 上复用并扩展词表。
+3. `CoreCorpusStats`
+   根据训练语料学习高覆盖 stop candidates，替代固定的低信息词常量表。
+4. `CoreImpEvaluator`
+   用 tag/text 文档频次估计 token importance。
+5. `train.py`
+   提供分规模训练、holdout owner retrieval 评估、自动调参、JSONL 监控日志。
 
-当前实现包含：
+## Training loop
 
-1. 混合长度规则：每个中文字符记 1 个单位；每 3 个西文数字字符记 1 个单位。
-2. tag 过滤规则：总长度超过 8 单位丢弃；中文超过 8 字丢弃；西文数字超过 24 字符丢弃。
-3. token budget：
-   - `<= 3` 单位 -> `1` token
-   - `4` 单位 -> `1` token
-   - `5-6` 单位 -> `2` tokens
-   - `7-8` 单位 -> `3` tokens
-4. 候选生成避免无约束 bigram，优先 whole-form 和平衡切分片段。
+建议按 scale 从小到大推进：
 
-## Stage 2: CoreTexTokenizer
+1. `tiny`
+   验证词表是否收敛、query coverage 是否足够、holdout retrieval 是否明显优于随机。
+2. `small`
+   观察词表增长、stop candidate 学习是否稳定、Recall/MRR 波动是否可控。
+3. `medium`
+   只有在上一档 scale 的最佳配置稳定后才继续放大。
 
-目标：在 title / desc 上微调已有词表，并通过更高的新词阈值控制词表膨胀。
+每档 scale 都会：
 
-当前实现包含：
+1. 构建 owner holdout 数据集
+2. 训练多组阈值配置
+3. 记录每轮指标到 `data/coretok/runs/<run>/events.jsonl`
+4. 保存当前 scale 的最佳 bundle
+5. 计算当前 scale 的稳定性统计
 
-1. 复用 stage1 词表
-2. 更高 `novelty_threshold`
-3. 优先复用相似已有 token，再决定是否创建新 token
+## Evaluation target
 
-## Bypass: CoreImpEvaluator
+当前主指标不是人工标签分类，而是更贴近线上 owner search 的 holdout retrieval：
 
-目标：估计 token 的信息量和重要性。
+1. 用 owner 的一部分历史视频构造 support profile
+2. 用保留视频构造 query
+3. 用 token overlap 检索 support profiles
+4. 评估 `MRR`, `Recall@1`, `Recall@5`, `Recall@10`, `query_coverage`
 
-当前实现先提供一个轻量 baseline：
+这种做法的目的，是尽量减少手工先验标签和固定词典对训练结论的污染。
 
-1. tag/text 双文档频次统计
-2. 稀有度 `idf` 风格打分
-3. tag-dominant token 额外加权
+## Run examples
 
-## What is intentionally not implemented yet
+小规模起跑：
 
-这轮没有把线上 encoder/decoder 和 owner 索引写回完全打通，当前只先把训练骨架和 Mongo 数据流入口补齐，避免继续在旧噪声字段上投入。
+```bash
+python -m models.coretok.train --scales tiny --stop-on-unstable
+```
+
+从 `tiny` 扩到 `small`：
+
+```bash
+python -m models.coretok.train --scales tiny,small --start-date "2026-01-01 00:00:00"
+```
+
+输出目录：
+
+1. `data/coretok/runs/<run>/events.jsonl`
+2. `data/coretok/runs/<run>/<scale>/summary.json`
+3. `data/coretok/runs/<run>/<scale>/best_bundle.json`

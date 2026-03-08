@@ -1,4 +1,5 @@
 from models.coretok.core import (
+    CoreCorpusStats,
     CoreImpEvaluator,
     CoreTagTokenizer,
     CoreTexTokenizer,
@@ -81,3 +82,14 @@ def test_training_pipeline_keeps_shared_lexicon_between_stage1_and_stage2():
     assert pipeline.text_tokenizer is not None
     assert pipeline.tag_tokenizer.lexicon is pipeline.text_tokenizer.lexicon
     assert importance.score_sequence(stage2[0])
+
+
+def test_corpus_stats_learn_high_coverage_stop_candidates_without_fixed_term_list():
+    stats = CoreCorpusStats(min_docs_for_stop=3, stop_coverage_floor=0.2).fit(
+        ["日常", "日常", "日常", "日常记录", "黑神话悟空", "相机测评"],
+        for_stage1=True,
+    )
+
+    assert stats.total_docs >= 5
+    assert stats.is_stop_candidate("日常") is True
+    assert stats.is_stop_candidate("黑神话悟空") is False

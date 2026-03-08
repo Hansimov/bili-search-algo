@@ -7,6 +7,7 @@ from sedb import MongoOperator
 
 from configs.envs import MONGO_ENVS
 from models.coretok.core import (
+    CoreCorpusStats,
     CoreImpEvaluator,
     CoreTagTokenizer,
     CoreTexTokenizer,
@@ -76,13 +77,22 @@ class CoreTokTrainingPipeline:
     tag_tokenizer: CoreTagTokenizer | None = None
     text_tokenizer: CoreTexTokenizer | None = None
     importance: CoreImpEvaluator | None = None
+    tag_corpus_stats: CoreCorpusStats | None = None
+    text_corpus_stats: CoreCorpusStats | None = None
 
     def train_stage1(
         self,
         tags: list[str],
         epochs: int = 3,
     ) -> list[list[int]]:
-        self.tag_tokenizer = self.tag_tokenizer or CoreTagTokenizer()
+        self.tag_corpus_stats = self.tag_corpus_stats or CoreCorpusStats().fit(
+            tags,
+            for_stage1=True,
+        )
+        self.tag_tokenizer = self.tag_tokenizer or CoreTagTokenizer(
+            corpus_stats=self.tag_corpus_stats
+        )
+        self.tag_tokenizer.corpus_stats = self.tag_corpus_stats
         return self.tag_tokenizer.fit(tags, epochs=epochs)
 
     def train_stage2(
@@ -90,12 +100,18 @@ class CoreTokTrainingPipeline:
         texts: list[str],
         epochs: int = 1,
     ) -> list[list[int]]:
+        self.text_corpus_stats = self.text_corpus_stats or CoreCorpusStats().fit(
+            texts,
+            for_stage1=False,
+        )
         seed_lexicon = None
         if self.tag_tokenizer is not None:
             seed_lexicon = self.tag_tokenizer.lexicon
         self.text_tokenizer = self.text_tokenizer or CoreTexTokenizer(
-            lexicon=seed_lexicon
+            lexicon=seed_lexicon,
+            corpus_stats=self.text_corpus_stats,
         )
+        self.text_tokenizer.corpus_stats = self.text_corpus_stats
         return self.text_tokenizer.fit(texts, epochs=epochs)
 
     def train_importance(
@@ -127,6 +143,11 @@ class CoreTokTrainingPipeline:
                 "reuse_threshold": getattr(self.tag_tokenizer, "reuse_threshold", 0.5),
                 "source": "tag",
             },
+            "tag_corpus_stats": (
+                self.tag_corpus_stats.to_dict()
+                if self.tag_corpus_stats is not None
+                else CoreCorpusStats().to_dict()
+            ),
             "text_tokenizer": {
                 "novelty_threshold": getattr(
                     self.text_tokenizer, "novelty_threshold", 0.82
@@ -134,6 +155,11 @@ class CoreTokTrainingPipeline:
                 "reuse_threshold": getattr(self.text_tokenizer, "reuse_threshold", 0.6),
                 "source": "text",
             },
+            "text_corpus_stats": (
+                self.text_corpus_stats.to_dict()
+                if self.text_corpus_stats is not None
+                else CoreCorpusStats().to_dict()
+            ),
             "importance": (
                 self.importance.to_dict()
                 if self.importance is not None
@@ -164,10 +190,20 @@ class CoreTokTrainingPipeline:
         lexicon = CoreTokenLexicon.from_dict(payload.get("lexicon"))
         tag_cfg = payload.get("tag_tokenizer") or {}
         text_cfg = payload.get("text_tokenizer") or {}
+        tag_corpus_stats = CoreCorpusStats.from_dict(payload.get("tag_corpus_stats"))
+        text_corpus_stats = CoreCorpusStats.from_dict(payload.get("text_corpus_stats"))
         pipeline = cls(
-            tag_tokenizer=CoreTagTokenizer(lexicon=lexicon),
-            text_tokenizer=CoreTexTokenizer(lexicon=lexicon),
+            tag_tokenizer=CoreTagTokenizer(
+                lexicon=lexicon,
+                corpus_stats=tag_corpus_stats,
+            ),
+            text_tokenizer=CoreTexTokenizer(
+                lexicon=lexicon,
+                corpus_stats=text_corpus_stats,
+            ),
             importance=CoreImpEvaluator.from_dict(payload.get("importance")),
+            tag_corpus_stats=tag_corpus_stats,
+            text_corpus_stats=text_corpus_stats,
         )
         pipeline.tag_tokenizer.novelty_threshold = float(
             tag_cfg.get("novelty_threshold", pipeline.tag_tokenizer.novelty_threshold)

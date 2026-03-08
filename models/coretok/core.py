@@ -10,22 +10,18 @@ LATIN_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_\-\.]*")
 CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
 CJK_SPAN_RE = re.compile(r"[\u4e00-\u9fff]+")
 CORETEXT_SPLIT_RE = re.compile(r"[，,。.!！?？、;；:：()（）\[\]【】<>《》\-\|/\\\s]+")
-LOW_INFO_TERMS = {
-    "日常",
-    "生活",
-    "视频",
-    "分享",
-    "记录",
-    "合集",
-    "更新",
-    "原创",
-    "官方",
-    "频道",
-}
 
 
 def normalize_core_text(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def _is_degenerate_text(text: str) -> bool:
+    normalized = normalize_core_text(text)
+    if not normalized:
+        return True
+    unique_chars = {char for char in normalized if not char.isspace()}
+    return len(unique_chars) <= 1
 
 
 def count_mixed_units(text: str) -> int:
@@ -46,19 +42,149 @@ def count_latin_chars(text: str) -> int:
     return len(LATIN_CHAR_RE.findall(normalize_core_text(text)))
 
 
-def is_low_info_text(text: str) -> bool:
+@dataclass
+class CoreCorpusStats:
+    total_docs: int = 0
+    candidate_doc_freqs: Counter = field(default_factory=Counter)
+    stop_candidates: set[str] = field(default_factory=set)
+    stop_quantile: float = 0.98
+    min_docs_for_stop: int = 4
+    stop_coverage_floor: float = 0.005
+    stop_coverage_threshold: float = 0.0
+    max_stop_candidates: int = 64
+
+    def fit(self, texts: list[str], *, for_stage1: bool) -> "CoreCorpusStats":
+        self.total_docs = 0
+        self.candidate_doc_freqs = Counter()
+        self.stop_candidates = set()
+        self.stop_coverage_threshold = 0.0
+
+        for text in texts:
+            normalized = normalize_core_text(text)
+            if _is_degenerate_text(normalized):
+                continue
+            candidates = set(
+                extract_core_candidates(
+                    normalized,
+                    for_stage1=for_stage1,
+                    corpus_stats=None,
+                )
+            )
+            if not candidates:
+                continue
+            self.total_docs += 1
+            self.candidate_doc_freqs.update(candidates)
+
+        short_candidates = sorted(
+            [
+                (
+                    candidate,
+                    freq / max(self.total_docs, 1),
+                    int(freq),
+                )
+                for candidate, freq in self.candidate_doc_freqs.items()
+                if 2 <= count_mixed_units(candidate) <= 4
+            ],
+            key=lambda item: (item[1], item[2], len(item[0])),
+            reverse=True,
+        )
+        if short_candidates:
+            threshold_index = min(
+                max(int(len(short_candidates) * self.stop_quantile), 0),
+                len(short_candidates) - 1,
+            )
+            stop_limit = min(
+                max(int(math.sqrt(max(self.total_docs, 1)) / 8), 8),
+                self.max_stop_candidates,
+                len(short_candidates),
+            )
+            self.stop_coverage_threshold = max(
+                self.stop_coverage_floor,
+                short_candidates[threshold_index][1],
+                short_candidates[stop_limit - 1][1],
+            )
+
+        for candidate, coverage, freq in short_candidates[: self.max_stop_candidates]:
+            if (
+                freq >= self.min_docs_for_stop
+                and coverage >= self.stop_coverage_threshold
+            ):
+                self.stop_candidates.add(candidate)
+
+        for candidate, freq in self.candidate_doc_freqs.items():
+            if candidate in self.stop_candidates:
+                continue
+            coverage = self.coverage(candidate)
+            if (
+                2 <= count_mixed_units(candidate) <= 4
+                and freq >= self.min_docs_for_stop
+                and coverage >= self.stop_coverage_threshold
+            ):
+                self.stop_candidates.add(candidate)
+        return self
+
+    def coverage(self, candidate: str) -> float:
+        normalized = normalize_core_text(candidate)
+        if not normalized or self.total_docs <= 0:
+            return 0.0
+        return self.candidate_doc_freqs.get(normalized, 0) / max(self.total_docs, 1)
+
+    def is_stop_candidate(self, candidate: str) -> bool:
+        return normalize_core_text(candidate) in self.stop_candidates
+
+    def to_dict(self) -> dict:
+        return {
+            "total_docs": int(self.total_docs),
+            "candidate_doc_freqs": {
+                token: int(freq) for token, freq in self.candidate_doc_freqs.items()
+            },
+            "stop_candidates": sorted(self.stop_candidates),
+            "stop_quantile": float(self.stop_quantile),
+            "min_docs_for_stop": int(self.min_docs_for_stop),
+            "stop_coverage_floor": float(self.stop_coverage_floor),
+            "stop_coverage_threshold": float(self.stop_coverage_threshold),
+            "max_stop_candidates": int(self.max_stop_candidates),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict | None) -> "CoreCorpusStats":
+        payload = payload or {}
+        return cls(
+            total_docs=int(payload.get("total_docs") or 0),
+            candidate_doc_freqs=Counter(
+                {
+                    str(token): int(freq)
+                    for token, freq in (
+                        payload.get("candidate_doc_freqs") or {}
+                    ).items()
+                }
+            ),
+            stop_candidates=set(payload.get("stop_candidates") or []),
+            stop_quantile=float(payload.get("stop_quantile") or 0.98),
+            min_docs_for_stop=int(payload.get("min_docs_for_stop") or 4),
+            stop_coverage_floor=float(payload.get("stop_coverage_floor") or 0.005),
+            stop_coverage_threshold=float(
+                payload.get("stop_coverage_threshold") or 0.0
+            ),
+            max_stop_candidates=int(payload.get("max_stop_candidates") or 64),
+        )
+
+
+def is_low_info_text(text: str, corpus_stats: CoreCorpusStats | None = None) -> bool:
     normalized = normalize_core_text(text)
-    if not normalized:
+    if _is_degenerate_text(normalized):
         return True
-    if normalized in LOW_INFO_TERMS:
+    if corpus_stats is not None and corpus_stats.is_stop_candidate(normalized):
         return True
-    unique_chars = {char for char in normalized if not char.isspace()}
-    return len(unique_chars) <= 1
+    return False
 
 
-def is_valid_stage1_tag(tag: str) -> bool:
+def is_valid_stage1_tag(
+    tag: str,
+    corpus_stats: CoreCorpusStats | None = None,
+) -> bool:
     normalized = normalize_core_text(tag)
-    if not normalized or is_low_info_text(normalized):
+    if not normalized or is_low_info_text(normalized, corpus_stats=corpus_stats):
         return False
     if count_mixed_units(normalized) > 8:
         return False
@@ -130,7 +256,12 @@ def _balanced_cjk_parts(span: str) -> list[str]:
     ]
 
 
-def extract_core_candidates(text: str, *, for_stage1: bool) -> list[str]:
+def extract_core_candidates(
+    text: str,
+    *,
+    for_stage1: bool,
+    corpus_stats: CoreCorpusStats | None = None,
+) -> list[str]:
     normalized = normalize_core_text(text)
     if not normalized:
         return []
@@ -140,7 +271,11 @@ def extract_core_candidates(text: str, *, for_stage1: bool) -> list[str]:
 
     def add(value: str):
         candidate = normalize_core_text(value)
-        if not candidate or candidate in seen or is_low_info_text(candidate):
+        if (
+            not candidate
+            or candidate in seen
+            or is_low_info_text(candidate, corpus_stats=corpus_stats)
+        ):
             return
         seen.add(candidate)
         candidates.append(candidate)
@@ -172,6 +307,14 @@ class CoreTokenLexicon:
     token_freqs: Counter = field(default_factory=Counter)
     token_sources: dict[int, str] = field(default_factory=dict)
     next_token_id: int = 1
+    gram_to_ids: dict[str, set[int]] = field(default_factory=dict)
+    match_cache: dict[str, tuple[int | None, float]] = field(default_factory=dict)
+
+    def _index_token(self, token_id: int, token: str):
+        for gram in _char_ngrams(token):
+            if not gram:
+                continue
+            self.gram_to_ids.setdefault(gram, set()).add(token_id)
 
     def add_token(self, token: str, source: str) -> int:
         normalized = normalize_core_text(token)
@@ -190,6 +333,8 @@ class CoreTokenLexicon:
         self.id_to_token[token_id] = normalized
         self.token_sources[token_id] = source
         self.token_freqs[token_id] += 1
+        self._index_token(token_id, normalized)
+        self.match_cache.clear()
         return token_id
 
     def touch_token(self, token_id: int) -> int:
@@ -212,13 +357,50 @@ class CoreTokenLexicon:
         if exact_id is not None:
             return exact_id, 1.0
 
+        cached = self.match_cache.get(normalized)
+        if cached is not None:
+            return cached
+
         best_token_id = None
         best_score = 0.0
-        for token_id, existing in self.id_to_token.items():
+        gram_postings = []
+        for gram in _char_ngrams(normalized):
+            ids = self.gram_to_ids.get(gram)
+            if ids:
+                gram_postings.append((len(ids), ids))
+
+        candidate_ids = set()
+        for _, ids in sorted(gram_postings, key=lambda item: item[0])[:3]:
+            candidate_ids.update(ids)
+        if not candidate_ids:
+            first_char = normalized[:1]
+            candidate_ids = {
+                token_id
+                for token_id, existing in self.id_to_token.items()
+                if existing.startswith(first_char)
+            }
+        if not candidate_ids:
+            candidate_ids = set(self.id_to_token.keys())
+
+        normalized_units = count_mixed_units(normalized)
+        candidate_ids = {
+            token_id
+            for token_id in candidate_ids
+            if abs(
+                count_mixed_units(self.id_to_token.get(token_id, "")) - normalized_units
+            )
+            <= 4
+        } or candidate_ids
+
+        for token_id in candidate_ids:
+            existing = self.id_to_token.get(token_id)
+            if not existing:
+                continue
             score = _surface_overlap_score(normalized, existing)
             if score > best_score:
                 best_token_id = token_id
                 best_score = score
+        self.match_cache[normalized] = (best_token_id, best_score)
         return best_token_id, best_score
 
     def novelty_probability(self, token: str) -> float:
@@ -264,13 +446,16 @@ class CoreTokenLexicon:
         next_token_id = int(
             payload.get("next_token_id") or (max(id_to_token.keys(), default=0) + 1)
         )
-        return cls(
+        lexicon = cls(
             token_to_id=token_to_id,
             id_to_token=id_to_token,
             token_freqs=token_freqs,
             token_sources=token_sources,
             next_token_id=next_token_id,
         )
+        for token_id, token in id_to_token.items():
+            lexicon._index_token(token_id, token)
+        return lexicon
 
 
 class _BaseCoreTokenizer:
@@ -278,11 +463,13 @@ class _BaseCoreTokenizer:
         self,
         *,
         lexicon: CoreTokenLexicon | None = None,
+        corpus_stats: CoreCorpusStats | None = None,
         novelty_threshold: float,
         reuse_threshold: float,
         source: str,
     ):
         self.lexicon = lexicon or CoreTokenLexicon()
+        self.corpus_stats = corpus_stats
         self.novelty_threshold = novelty_threshold
         self.reuse_threshold = reuse_threshold
         self.source = source
@@ -299,7 +486,11 @@ class _BaseCoreTokenizer:
     def _choose_candidates(
         self, text: str, *, budget: int, for_stage1: bool
     ) -> list[str]:
-        candidates = extract_core_candidates(text, for_stage1=for_stage1)
+        candidates = extract_core_candidates(
+            text,
+            for_stage1=for_stage1,
+            corpus_stats=self.corpus_stats,
+        )
         ranked = sorted(
             candidates,
             key=lambda candidate: self._score_candidate(candidate, budget),
@@ -330,16 +521,22 @@ class _BaseCoreTokenizer:
 
 
 class CoreTagTokenizer(_BaseCoreTokenizer):
-    def __init__(self, *, lexicon: CoreTokenLexicon | None = None):
+    def __init__(
+        self,
+        *,
+        lexicon: CoreTokenLexicon | None = None,
+        corpus_stats: CoreCorpusStats | None = None,
+    ):
         super().__init__(
             lexicon=lexicon,
+            corpus_stats=corpus_stats,
             novelty_threshold=0.55,
             reuse_threshold=0.5,
             source="tag",
         )
 
     def encode(self, tag: str, *, allow_new_tokens: bool = False) -> list[int]:
-        if not is_valid_stage1_tag(tag):
+        if not is_valid_stage1_tag(tag, corpus_stats=self.corpus_stats):
             return []
         budget = suggest_token_budget(tag)
         token_ids = []
@@ -355,18 +552,28 @@ class CoreTagTokenizer(_BaseCoreTokenizer):
 
     def fit(self, tags: list[str], epochs: int = 3) -> list[list[int]]:
         encoded = []
+        tag_counter = Counter(tag for tag in tags if normalize_core_text(tag))
         for _ in range(max(epochs, 1)):
-            for tag in tags:
+            for tag, freq in tag_counter.most_common():
                 token_ids = self.encode(tag, allow_new_tokens=True)
                 if token_ids:
-                    encoded.append(token_ids)
+                    encoded.extend([token_ids] * int(freq))
+                    for _ in range(max(int(freq) - 1, 0)):
+                        for token_id in token_ids:
+                            self.lexicon.touch_token(token_id)
         return encoded
 
 
 class CoreTexTokenizer(_BaseCoreTokenizer):
-    def __init__(self, *, lexicon: CoreTokenLexicon | None = None):
+    def __init__(
+        self,
+        *,
+        lexicon: CoreTokenLexicon | None = None,
+        corpus_stats: CoreCorpusStats | None = None,
+    ):
         super().__init__(
             lexicon=lexicon,
+            corpus_stats=corpus_stats,
             novelty_threshold=0.82,
             reuse_threshold=0.6,
             source="text",
@@ -400,11 +607,15 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
 
     def fit(self, texts: list[str], epochs: int = 1) -> list[list[int]]:
         encoded = []
+        text_counter = Counter(text for text in texts if normalize_core_text(text))
         for _ in range(max(epochs, 1)):
-            for text in texts:
+            for text, freq in text_counter.most_common():
                 token_ids = self.encode(text, allow_new_tokens=True)
                 if token_ids:
-                    encoded.append(token_ids)
+                    encoded.extend([token_ids] * int(freq))
+                    for _ in range(max(int(freq) - 1, 0)):
+                        for token_id in token_ids:
+                            self.lexicon.touch_token(token_id)
         return encoded
 
 
