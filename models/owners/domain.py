@@ -37,10 +37,10 @@ VIDEO_PROJECTION = {
 DEFAULT_LABEL_GROUPS = [
     group for group in REGION_MONGO_FILTERS.keys() if group not in {"recent", "test"}
 ]
-DEFAULT_WEIGHTED_ALPHA = 0.5
+DEFAULT_WEIGHTED_ALPHA = 1.0
 DEFAULT_WEIGHTED_FIELD_WEIGHTS = {
-    "owner_name": 5.0,
-    "top_tags": 4.0,
+    "owner_name": 3.0,
+    "top_tags": 3.0,
     "sample_titles": 1.0,
     "desc_samples": 0.5,
 }
