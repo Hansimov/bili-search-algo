@@ -92,6 +92,18 @@ def test_prepared_training_corpus_contains_reusable_candidate_plans():
     assert prepared["text_unique_count"] == len(prepared["text_candidate_plans"])
 
 
+def test_train_pipeline_exposes_stage2_substage_stats():
+    pipeline = train_pipeline(
+        ["黑神话悟空", "相机测评"],
+        ["黑神话悟空流程解析", "相机拆解视频", "相机拆解视频"],
+        default_tuning_configs(DEFAULT_SCALES["tiny"])[0],
+    )
+
+    assert pipeline.text_tokenizer is not None
+    assert pipeline.text_tokenizer.last_fit_stats["stage2_unique_candidate_count"] > 0
+    assert "stage2_materialize_seconds" in pipeline.text_tokenizer.last_fit_stats
+
+
 def test_compute_stability_flags_consistent_scores_as_stable():
     stability = compute_stability(
         [

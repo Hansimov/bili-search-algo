@@ -113,6 +113,7 @@ class CoreTokTrainingPipeline:
         text_counter: Counter | None = None,
         text_frequency_items: list[tuple[str, int]] | None = None,
         text_candidate_plans: dict[str, dict] | None = None,
+        min_new_token_freq: int | None = None,
     ) -> list[list[int]]:
         self.text_corpus_stats = self.text_corpus_stats or CoreCorpusStats().fit(
             texts,
@@ -133,6 +134,7 @@ class CoreTokTrainingPipeline:
             text_counter=text_counter,
             frequency_items=text_frequency_items,
             candidate_plans=text_candidate_plans,
+            min_new_token_freq=min_new_token_freq,
         )
 
     def train_importance(

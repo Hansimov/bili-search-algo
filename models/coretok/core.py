@@ -1,8 +1,15 @@
 import math
 import re
+import time
+import zlib
 
 from collections import Counter
 from dataclasses import dataclass, field
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 
 LATIN_CHAR_RE = re.compile(r"[a-z0-9]")
@@ -10,6 +17,15 @@ LATIN_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_\-\.]*")
 CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
 CJK_SPAN_RE = re.compile(r"[\u4e00-\u9fff]+")
 CORETEXT_SPLIT_RE = re.compile(r"[，,。.!！?？、;；:：()（）\[\]【】<>《》\-\|/\\\s]+")
+SIGNATURE_WORD_COUNT = 4
+SIGNATURE_BIT_COUNT = SIGNATURE_WORD_COUNT * 64
+SIGNATURE_SHORTLIST_SIZE = 96
+SIGNATURE_SHORTLIST_MIN_CANDIDATES = 128
+POPCOUNT_TABLE = (
+    np.array([bin(index).count("1") for index in range(256)], dtype=np.uint8)
+    if np is not None
+    else None
+)
 
 
 def normalize_core_text(text: str) -> str:
@@ -259,6 +275,18 @@ def _char_ngrams(text: str) -> set[str]:
     return grams
 
 
+def _signature_words(text: str) -> tuple[int, ...]:
+    words = [0] * SIGNATURE_WORD_COUNT
+    for gram in _char_ngrams(text):
+        if not gram:
+            continue
+        bucket = zlib.crc32(gram.encode("utf-8")) % SIGNATURE_BIT_COUNT
+        word_index = bucket // 64
+        bit_index = bucket % 64
+        words[word_index] |= 1 << bit_index
+    return tuple(words)
+
+
 def _surface_overlap_score(left: str, right: str) -> float:
     if left == right:
         return 1.0
@@ -353,6 +381,7 @@ class CoreTokenLexicon:
     gram_to_ids: dict[str, set[int]] = field(default_factory=dict)
     first_char_to_ids: dict[str, set[int]] = field(default_factory=dict)
     match_cache: dict[str, tuple[int | None, float]] = field(default_factory=dict)
+    token_signature_words: dict[int, tuple[int, ...]] = field(default_factory=dict)
 
     def _index_token(self, token_id: int, token: str):
         for gram in _char_ngrams(token):
@@ -363,6 +392,51 @@ class CoreTokenLexicon:
         if first_char:
             self.first_char_to_ids.setdefault(first_char, set()).add(token_id)
         self.token_units[token_id] = count_mixed_units(token)
+        self.token_signature_words[token_id] = _signature_words(token)
+
+    def _shortlist_candidate_ids(
+        self,
+        normalized: str,
+        candidate_ids: set[int],
+        normalized_units: int,
+    ) -> list[int]:
+        if (
+            np is None
+            or POPCOUNT_TABLE is None
+            or len(candidate_ids) < SIGNATURE_SHORTLIST_MIN_CANDIDATES
+        ):
+            return list(candidate_ids)
+
+        ids_array = np.fromiter(candidate_ids, dtype=np.int32)
+        unit_array = np.fromiter(
+            (self.token_units.get(int(token_id), 0) for token_id in ids_array),
+            dtype=np.int16,
+            count=ids_array.size,
+        )
+        unit_mask = np.abs(unit_array - normalized_units) <= 4
+        filtered_ids = ids_array[unit_mask]
+        if filtered_ids.size == 0:
+            filtered_ids = ids_array
+        if filtered_ids.size <= SIGNATURE_SHORTLIST_SIZE:
+            return filtered_ids.astype(int).tolist()
+
+        signature_matrix = np.asarray(
+            [self.token_signature_words[int(token_id)] for token_id in filtered_ids],
+            dtype=np.uint64,
+        )
+        query_signature = np.asarray(_signature_words(normalized), dtype=np.uint64)
+        and_bytes = np.bitwise_and(signature_matrix, query_signature).view(np.uint8)
+        or_bytes = np.bitwise_or(signature_matrix, query_signature).view(np.uint8)
+        intersections = POPCOUNT_TABLE[and_bytes].sum(axis=1, dtype=np.uint16)
+        unions = POPCOUNT_TABLE[or_bytes].sum(axis=1, dtype=np.uint16)
+        approx_scores = intersections / np.maximum(unions, 1)
+
+        shortlist_size = min(SIGNATURE_SHORTLIST_SIZE, filtered_ids.size)
+        shortlist_indices = np.argpartition(approx_scores, -shortlist_size)[
+            -shortlist_size:
+        ]
+        shortlist_ids = filtered_ids[shortlist_indices]
+        return shortlist_ids.astype(int).tolist()
 
     def add_token(self, token: str, source: str) -> int:
         normalized = normalize_core_text(token)
@@ -429,11 +503,19 @@ class CoreTokenLexicon:
             candidate_ids = set(self.id_to_token.keys())
 
         normalized_units = count_mixed_units(normalized)
-        candidate_ids = {
-            token_id
-            for token_id in candidate_ids
-            if abs(self.token_units.get(token_id, 0) - normalized_units) <= 4
-        } or candidate_ids
+        shortlisted_candidate_ids = self._shortlist_candidate_ids(
+            normalized,
+            candidate_ids,
+            normalized_units,
+        )
+        if shortlisted_candidate_ids:
+            candidate_ids = shortlisted_candidate_ids
+        else:
+            candidate_ids = {
+                token_id
+                for token_id in candidate_ids
+                if abs(self.token_units.get(token_id, 0) - normalized_units) <= 4
+            } or candidate_ids
 
         for token_id in candidate_ids:
             existing = self.id_to_token.get(token_id)
@@ -526,6 +608,7 @@ class _BaseCoreTokenizer:
         self.reuse_threshold = reuse_threshold
         self.source = source
         self._candidate_plan_cache: dict[tuple[str, bool], dict] = {}
+        self.last_fit_stats: dict = {}
 
     def _score_candidate(self, candidate: str, budget: int) -> tuple[float, int, str]:
         whole_bonus = 4.0 if count_mixed_units(candidate) <= 8 else 0.0
@@ -693,12 +776,137 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
             reuse_threshold=0.6,
             source="text",
         )
+        self.base_match_token_ids = (
+            set((lexicon.id_to_token or {}).keys()) if lexicon else set()
+        )
+        self.base_gram_to_ids: dict[str, set[int]] = {}
+        self.base_first_char_to_ids: dict[str, set[int]] = {}
+        self.base_match_cache: dict[str, tuple[int | None, float]] = {}
+        for token_id in self.base_match_token_ids:
+            token = self.lexicon.id_to_token.get(token_id)
+            if not token:
+                continue
+            for gram in _char_ngrams(token):
+                if gram:
+                    self.base_gram_to_ids.setdefault(gram, set()).add(token_id)
+            first_char = token[:1]
+            if first_char:
+                self.base_first_char_to_ids.setdefault(first_char, set()).add(token_id)
 
     def _budget_for_text(self, text: str) -> int:
         units = count_mixed_units(text)
         if units <= 0:
             return 0
         return max(1, min(6, math.ceil(units / 3)))
+
+    def _resolve_min_new_token_freq(
+        self,
+        frequency_items: list[tuple[str, int]],
+        min_new_token_freq: int | None,
+    ) -> int:
+        if min_new_token_freq is not None:
+            return max(int(min_new_token_freq), 1)
+        return 1
+
+    def _rank_text_candidates(
+        self,
+        text: str,
+        *,
+        candidate_plan: dict | None = None,
+    ) -> list[str]:
+        normalized = normalize_core_text(text)
+        if not normalized:
+            return []
+        budget = self._budget_for_text(normalized)
+        if budget <= 0:
+            return []
+        return [
+            candidate
+            for candidate in self._choose_candidates(
+                normalized,
+                budget=budget,
+                for_stage1=False,
+                prepared_plan=candidate_plan,
+            )
+            if count_mixed_units(candidate) <= 8
+        ]
+
+    def _find_base_match(self, token: str) -> tuple[int | None, float]:
+        normalized = normalize_core_text(token)
+        if not normalized:
+            return None, 0.0
+
+        cached = self.base_match_cache.get(normalized)
+        if cached is not None:
+            return cached
+
+        exact_id = self.lexicon.get_token_id(normalized)
+        if exact_id is not None and exact_id in self.base_match_token_ids:
+            self.base_match_cache[normalized] = (exact_id, 1.0)
+            return exact_id, 1.0
+
+        best_token_id = None
+        best_score = 0.0
+        gram_postings = []
+        for gram in _char_ngrams(normalized):
+            ids = self.base_gram_to_ids.get(gram)
+            if ids:
+                gram_postings.append((len(ids), ids))
+
+        candidate_ids = set()
+        for _, ids in sorted(gram_postings, key=lambda item: item[0])[:3]:
+            candidate_ids.update(ids)
+        if not candidate_ids:
+            candidate_ids = set(self.base_first_char_to_ids.get(normalized[:1]) or ())
+        if not candidate_ids:
+            candidate_ids = set(self.base_match_token_ids)
+
+        normalized_units = count_mixed_units(normalized)
+        candidate_ids = {
+            token_id
+            for token_id in candidate_ids
+            if abs(self.lexicon.token_units.get(token_id, 0) - normalized_units) <= 4
+        } or candidate_ids
+
+        for token_id in candidate_ids:
+            existing = self.lexicon.id_to_token.get(token_id)
+            if not existing:
+                continue
+            score = _surface_overlap_score(normalized, existing)
+            if score > best_score:
+                best_token_id = token_id
+                best_score = score
+
+        self.base_match_cache[normalized] = (best_token_id, best_score)
+        return best_token_id, best_score
+
+    def _materialize_text_candidate(
+        self,
+        candidate: str,
+        *,
+        allow_new_tokens: bool,
+        candidate_total_freq: int,
+        min_new_token_freq: int,
+    ) -> tuple[int | None, str]:
+        existing_id = self.lexicon.get_token_id(candidate)
+        if existing_id is not None:
+            return self.lexicon.touch_token(existing_id), "exact"
+
+        best_token_id, best_score = self._find_base_match(candidate)
+        if best_token_id is not None and best_score >= self.reuse_threshold:
+            return self.lexicon.touch_token(best_token_id), "reuse"
+
+        if (
+            best_token_id is not None
+            and round(1.0 - best_score, 4) < self.novelty_threshold
+        ):
+            return self.lexicon.touch_token(best_token_id), "fallback_reuse"
+
+        if not allow_new_tokens:
+            return None, "skipped"
+        if candidate_total_freq < min_new_token_freq:
+            return None, "blocked_new"
+        return self.lexicon.add_token(candidate, source=self.source), "new"
 
     def encode(
         self,
@@ -736,34 +944,132 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
         text_counter: Counter | None = None,
         frequency_items: list[tuple[str, int]] | None = None,
         candidate_plans: dict[str, dict] | None = None,
+        min_new_token_freq: int | None = None,
     ) -> list[list[int]]:
         encoded = []
+        fit_started = time.perf_counter()
         if frequency_items is None:
             text_counter = text_counter or Counter(
                 text for text in (texts or []) if normalize_core_text(text)
             )
             frequency_items = text_counter.most_common()
-        for text, _ in frequency_items:
-            self._choose_candidates(
-                text,
-                budget=self._budget_for_text(text),
-                for_stage1=False,
-                prepared_plan=(candidate_plans or {}).get(normalize_core_text(text)),
-            )
-        for _ in range(max(epochs, 1)):
+        resolved_min_new_token_freq = self._resolve_min_new_token_freq(
+            frequency_items,
+            min_new_token_freq,
+        )
+
+        rank_seconds = 0.0
+        materialize_seconds = 0.0
+        emit_seconds = 0.0
+        unique_candidate_count = 0
+        active_text_count = 0
+        decision_counts = Counter()
+
+        if resolved_min_new_token_freq <= 1:
+            stage_started = time.perf_counter()
+            candidate_counter = Counter()
             for text, freq in frequency_items:
-                token_ids = self.encode(
+                ranked_candidates = self._rank_text_candidates(
                     text,
-                    allow_new_tokens=True,
                     candidate_plan=(candidate_plans or {}).get(
                         normalize_core_text(text)
                     ),
                 )
-                if token_ids:
-                    encoded.extend([token_ids] * int(freq))
-                    extra_repeats = max(int(freq) - 1, 0)
-                    for token_id in token_ids:
-                        self.lexicon.touch_token(token_id, delta=extra_repeats)
+                if not ranked_candidates:
+                    continue
+                active_text_count += 1
+                for candidate in ranked_candidates:
+                    candidate_counter[candidate] += int(freq)
+            rank_seconds += time.perf_counter() - stage_started
+            unique_candidate_count = len(candidate_counter)
+
+            for _ in range(max(epochs, 1)):
+                for text, freq in frequency_items:
+                    encode_started = time.perf_counter()
+                    token_ids = self.encode(
+                        text,
+                        allow_new_tokens=True,
+                        candidate_plan=(candidate_plans or {}).get(
+                            normalize_core_text(text)
+                        ),
+                    )
+                    materialize_seconds += time.perf_counter() - encode_started
+                    emit_started = time.perf_counter()
+                    if token_ids:
+                        encoded.extend([token_ids] * int(freq))
+                        extra_repeats = max(int(freq) - 1, 0)
+                        for token_id in token_ids:
+                            self.lexicon.touch_token(token_id, delta=extra_repeats)
+                    emit_seconds += time.perf_counter() - emit_started
+        else:
+            for _ in range(max(epochs, 1)):
+                stage_started = time.perf_counter()
+                candidate_counter = Counter()
+                ranked_text_plans = []
+                for text, freq in frequency_items:
+                    ranked_candidates = self._rank_text_candidates(
+                        text,
+                        candidate_plan=(candidate_plans or {}).get(
+                            normalize_core_text(text)
+                        ),
+                    )
+                    if not ranked_candidates:
+                        continue
+                    ranked_text_plans.append((ranked_candidates, int(freq)))
+                    for candidate in ranked_candidates:
+                        candidate_counter[candidate] += int(freq)
+                rank_seconds += time.perf_counter() - stage_started
+
+                active_text_count = len(ranked_text_plans)
+                unique_candidate_count = max(
+                    unique_candidate_count, len(candidate_counter)
+                )
+
+                for ranked_candidates, freq in ranked_text_plans:
+                    materialize_started = time.perf_counter()
+                    token_ids = []
+                    for candidate in ranked_candidates:
+                        token_id, decision = self._materialize_text_candidate(
+                            candidate,
+                            allow_new_tokens=True,
+                            candidate_total_freq=int(
+                                candidate_counter.get(candidate, 1)
+                            ),
+                            min_new_token_freq=resolved_min_new_token_freq,
+                        )
+                        decision_counts[decision] += 1
+                        if token_id is not None and token_id not in token_ids:
+                            token_ids.append(token_id)
+                    materialize_seconds += time.perf_counter() - materialize_started
+
+                    emit_started = time.perf_counter()
+                    if token_ids:
+                        encoded.extend([token_ids] * int(freq))
+                        extra_repeats = max(int(freq) - 1, 0)
+                        for token_id in token_ids:
+                            self.lexicon.touch_token(token_id, delta=extra_repeats)
+                    emit_seconds += time.perf_counter() - emit_started
+
+        self.last_fit_stats = {
+            "stage2_rank_seconds": round(rank_seconds, 4),
+            "stage2_materialize_seconds": round(materialize_seconds, 4),
+            "stage2_emit_seconds": round(emit_seconds, 4),
+            "stage2_unique_text_count": len(frequency_items),
+            "stage2_active_text_count": active_text_count,
+            "stage2_unique_candidate_count": unique_candidate_count,
+            "stage2_min_new_token_freq": resolved_min_new_token_freq,
+            "stage2_exact_candidate_count": int(decision_counts.get("exact", 0)),
+            "stage2_reuse_candidate_count": int(decision_counts.get("reuse", 0)),
+            "stage2_fallback_reuse_count": int(
+                decision_counts.get("fallback_reuse", 0)
+            ),
+            "stage2_new_candidate_count": int(decision_counts.get("new", 0)),
+            "stage2_blocked_new_candidate_count": int(
+                decision_counts.get("blocked_new", 0)
+            ),
+            "stage2_skipped_candidate_count": int(decision_counts.get("skipped", 0)),
+            "stage2_fit_seconds": round(time.perf_counter() - fit_started, 4),
+        }
         return encoded
 
 

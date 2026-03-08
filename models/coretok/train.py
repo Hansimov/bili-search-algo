@@ -650,6 +650,7 @@ def train_pipeline_with_stats(
         text_candidate_plans=text_candidate_plans,
     )
     stage2_seconds = time.perf_counter() - stage_started
+    stage2_fit_stats = getattr(pipeline.text_tokenizer, "last_fit_stats", {})
 
     stage_started = time.perf_counter()
     pipeline.train_importance(tag_sequences, text_sequences)
@@ -659,6 +660,7 @@ def train_pipeline_with_stats(
         "stage1_seconds": round(stage1_seconds, 4),
         "stage2_seconds": round(stage2_seconds, 4),
         "importance_seconds": round(importance_seconds, 4),
+        **stage2_fit_stats,
         "train_seconds": round(
             stage1_seconds + stage2_seconds + importance_seconds,
             4,

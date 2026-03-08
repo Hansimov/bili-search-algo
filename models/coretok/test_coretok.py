@@ -4,6 +4,7 @@ from models.coretok.core import (
     CoreImpEvaluator,
     CoreTagTokenizer,
     CoreTexTokenizer,
+    CoreTokenLexicon,
     count_mixed_units,
     is_valid_stage1_tag,
     suggest_token_budget,
@@ -68,6 +69,33 @@ def test_candidate_plan_can_be_reused_for_text_encoding():
     direct_ids = text_tokenizer.encode("黑神话悟空流程解析", allow_new_tokens=False)
 
     assert planned_ids == direct_ids
+
+
+def test_core_tex_tokenizer_can_block_singleton_new_tokens_in_stage2():
+    tag_tokenizer = CoreTagTokenizer()
+    tag_tokenizer.fit(["黑神话悟空", "相机测评"], epochs=1)
+
+    text_tokenizer = CoreTexTokenizer(lexicon=tag_tokenizer.lexicon)
+    text_tokenizer.fit(
+        ["只出现一次的新概念", "黑神话悟空流程解析", "黑神话悟空流程解析"],
+        epochs=1,
+        min_new_token_freq=2,
+    )
+
+    assert text_tokenizer.lexicon.get_token_id("只出现一次的新概念") is None
+    assert text_tokenizer.last_fit_stats["stage2_blocked_new_candidate_count"] >= 1
+
+
+def test_large_candidate_match_shortlist_keeps_expected_best_match():
+    lexicon = CoreTokenLexicon()
+    for index in range(160):
+        lexicon.add_token(f"黑神话攻略扩展词条{index}", source="text")
+    expected_id = lexicon.add_token("黑神话流程解析", source="text")
+
+    matched_id, matched_score = lexicon.find_best_match("黑神话流程解析实机演示")
+
+    assert matched_id == expected_id
+    assert matched_score > 0.5
 
 
 def test_core_imp_evaluator_prefers_tag_dominant_tokens():
