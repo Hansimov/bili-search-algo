@@ -1,4 +1,5 @@
 from models.coretok.core import (
+    build_candidate_plan,
     CoreCorpusStats,
     CoreImpEvaluator,
     CoreTagTokenizer,
@@ -51,6 +52,22 @@ def test_core_tex_tokenizer_reuses_seed_tokens_before_creating_new_ones():
     assert any("黑神话悟空" in token for token in known_tokens)
     assert novel_tokens
     assert any("纳塔剧情拆包" in token or "纳塔剧情" in token for token in novel_tokens)
+
+
+def test_candidate_plan_can_be_reused_for_text_encoding():
+    tag_tokenizer = CoreTagTokenizer()
+    tag_tokenizer.fit(["黑神话悟空", "相机测评"], epochs=1)
+
+    text_tokenizer = CoreTexTokenizer(lexicon=tag_tokenizer.lexicon)
+    plan = build_candidate_plan("黑神话悟空流程解析", for_stage1=False)
+    planned_ids = text_tokenizer.encode(
+        "黑神话悟空流程解析",
+        allow_new_tokens=False,
+        candidate_plan=plan,
+    )
+    direct_ids = text_tokenizer.encode("黑神话悟空流程解析", allow_new_tokens=False)
+
+    assert planned_ids == direct_ids
 
 
 def test_core_imp_evaluator_prefers_tag_dominant_tokens():

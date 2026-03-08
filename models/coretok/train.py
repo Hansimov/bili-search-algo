@@ -9,6 +9,7 @@ import shutil
 import statistics
 import time
 
+from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -18,7 +19,13 @@ from sedb import MongoOperator
 from tclogger import dict_to_str, logger, str_to_ts
 
 from configs.envs import DATA_ROOT, MONGO_ENVS
-from models.coretok.core import CoreTagTokenizer, CoreTexTokenizer
+from models.coretok.core import (
+    build_candidate_plan,
+    CoreCorpusStats,
+    CoreTagTokenizer,
+    CoreTexTokenizer,
+    normalize_core_text,
+)
 from models.coretok.pipeline import CoreTokTrainingPipeline
 
 
@@ -517,15 +524,77 @@ def collect_training_texts(owner_rows: list[dict]) -> tuple[list[str], list[str]
     return tags, texts
 
 
+def build_frequency_items(values: list[str]) -> list[tuple[str, int]]:
+    counter = Counter()
+    for value in values:
+        normalized = normalize_core_text(value)
+        if not normalized:
+            continue
+        counter[normalized] += 1
+    return counter.most_common()
+
+
+def build_prepared_training_corpus(tags: list[str], texts: list[str]) -> dict:
+    tag_frequency_items = build_frequency_items(tags)
+    text_frequency_items = build_frequency_items(texts)
+    tag_counter = Counter(dict(tag_frequency_items))
+    text_counter = Counter(dict(text_frequency_items))
+    tag_corpus_stats = CoreCorpusStats().fit(
+        for_stage1=True,
+        text_counter=tag_counter,
+    )
+    text_corpus_stats = CoreCorpusStats().fit(
+        for_stage1=False,
+        text_counter=text_counter,
+    )
+    tag_candidate_plans = {
+        tag: build_candidate_plan(
+            tag,
+            for_stage1=True,
+            corpus_stats=tag_corpus_stats,
+        )
+        for tag, _ in tag_frequency_items
+    }
+    text_candidate_plans = {
+        text: build_candidate_plan(
+            text,
+            for_stage1=False,
+            corpus_stats=text_corpus_stats,
+        )
+        for text, _ in text_frequency_items
+    }
+    return {
+        "tag_frequency_items": tag_frequency_items,
+        "text_frequency_items": text_frequency_items,
+        "tag_corpus_stats": tag_corpus_stats.to_dict(),
+        "text_corpus_stats": text_corpus_stats.to_dict(),
+        "tag_candidate_plans": tag_candidate_plans,
+        "text_candidate_plans": text_candidate_plans,
+        "tag_unique_count": len(tag_frequency_items),
+        "text_unique_count": len(text_frequency_items),
+    }
+
+
 def train_pipeline(
-    tags: list[str], texts: list[str], config: TuningConfig
+    tags: list[str],
+    texts: list[str],
+    config: TuningConfig,
+    prepared_corpus: dict | None = None,
 ) -> CoreTokTrainingPipeline:
-    pipeline, _ = train_pipeline_with_stats(tags, texts, config)
+    pipeline, _ = train_pipeline_with_stats(
+        tags,
+        texts,
+        config,
+        prepared_corpus=prepared_corpus,
+    )
     return pipeline
 
 
 def train_pipeline_with_stats(
-    tags: list[str], texts: list[str], config: TuningConfig
+    tags: list[str],
+    texts: list[str],
+    config: TuningConfig,
+    prepared_corpus: dict | None = None,
 ) -> tuple[CoreTokTrainingPipeline, dict]:
     pipeline = CoreTokTrainingPipeline(
         tag_tokenizer=CoreTagTokenizer(),
@@ -534,8 +603,38 @@ def train_pipeline_with_stats(
     pipeline.tag_tokenizer.novelty_threshold = config.tag_novelty
     pipeline.tag_tokenizer.reuse_threshold = config.tag_reuse
 
+    tag_frequency_items = None
+    text_frequency_items = None
+    tag_counter = None
+    text_counter = None
+    tag_candidate_plans = None
+    text_candidate_plans = None
+    if prepared_corpus:
+        tag_frequency_items = [
+            tuple(item) for item in prepared_corpus["tag_frequency_items"]
+        ]
+        text_frequency_items = [
+            tuple(item) for item in prepared_corpus["text_frequency_items"]
+        ]
+        tag_counter = Counter(dict(tag_frequency_items))
+        text_counter = Counter(dict(text_frequency_items))
+        tag_candidate_plans = prepared_corpus.get("tag_candidate_plans") or {}
+        text_candidate_plans = prepared_corpus.get("text_candidate_plans") or {}
+        pipeline.tag_corpus_stats = CoreCorpusStats.from_dict(
+            prepared_corpus.get("tag_corpus_stats")
+        )
+        pipeline.text_corpus_stats = CoreCorpusStats.from_dict(
+            prepared_corpus.get("text_corpus_stats")
+        )
+
     stage_started = time.perf_counter()
-    tag_sequences = pipeline.train_stage1(tags, epochs=config.stage1_epochs)
+    tag_sequences = pipeline.train_stage1(
+        tags if not prepared_corpus else None,
+        epochs=config.stage1_epochs,
+        tag_counter=tag_counter,
+        tag_frequency_items=tag_frequency_items,
+        tag_candidate_plans=tag_candidate_plans,
+    )
     stage1_seconds = time.perf_counter() - stage_started
 
     pipeline.text_tokenizer = CoreTexTokenizer(lexicon=pipeline.tag_tokenizer.lexicon)
@@ -543,7 +642,13 @@ def train_pipeline_with_stats(
     pipeline.text_tokenizer.reuse_threshold = config.text_reuse
 
     stage_started = time.perf_counter()
-    text_sequences = pipeline.train_stage2(texts, epochs=config.stage2_epochs)
+    text_sequences = pipeline.train_stage2(
+        texts if not prepared_corpus else None,
+        epochs=config.stage2_epochs,
+        text_counter=text_counter,
+        text_frequency_items=text_frequency_items,
+        text_candidate_plans=text_candidate_plans,
+    )
     stage2_seconds = time.perf_counter() - stage_started
 
     stage_started = time.perf_counter()
@@ -818,13 +923,15 @@ def build_seed_dataset(scale: ScaleSpec, owner_rows: list[dict], seed: int) -> d
         owner_rows, scale.eval_owner_count, seed=seed
     )
     tags, texts = collect_training_texts(train_rows)
+    prepared_corpus_started = time.perf_counter()
+    prepared_corpus = build_prepared_training_corpus(tags, texts)
+    prepared_corpus_seconds = time.perf_counter() - prepared_corpus_started
     eval_profiles, eval_queries = build_eval_dataset(
         eval_rows, query_per_owner=scale.query_per_owner
     )
     return {
         "seed": seed,
-        "tags": tags,
-        "texts": texts,
+        "prepared_corpus": prepared_corpus,
         "eval_profiles": eval_profiles,
         "eval_queries": eval_queries,
         "dataset": {
@@ -833,8 +940,13 @@ def build_seed_dataset(scale: ScaleSpec, owner_rows: list[dict], seed: int) -> d
             "eval_owner_count": len(eval_rows),
             "tag_count": len(tags),
             "text_count": len(texts),
+            "tag_unique_count": prepared_corpus["tag_unique_count"],
+            "text_unique_count": prepared_corpus["text_unique_count"],
+            "tag_plan_count": len(prepared_corpus.get("tag_candidate_plans") or {}),
+            "text_plan_count": len(prepared_corpus.get("text_candidate_plans") or {}),
             "eval_profile_count": len(eval_profiles),
             "eval_query_count": len(eval_queries),
+            "prepared_corpus_seconds": round(prepared_corpus_seconds, 4),
         },
     }
 
@@ -896,15 +1008,19 @@ def run_tuning_iteration(
     seed: int,
     iteration: int,
     config_payload: dict,
-    tags: list[str],
-    texts: list[str],
+    prepared_corpus: dict | None,
     eval_profiles: list[dict],
     eval_queries: list[dict],
     candidate_bundle_path: str,
 ) -> dict:
     started = time.perf_counter()
     config = TuningConfig(**config_payload)
-    pipeline, train_perf = train_pipeline_with_stats(tags, texts, config)
+    pipeline, train_perf = train_pipeline_with_stats(
+        [],
+        [],
+        config,
+        prepared_corpus=prepared_corpus,
+    )
     metrics = evaluate_owner_retrieval(pipeline, eval_profiles, eval_queries)
     model_stats = summarize_pipeline(pipeline)
     pipeline.save_bundle(candidate_bundle_path, bundle_version=f"coretok-{scale_name}")
@@ -1051,8 +1167,7 @@ def run_scale(
                     "seed": seed,
                     "iteration": iteration,
                     "config_payload": asdict(config),
-                    "tags": dataset["tags"],
-                    "texts": dataset["texts"],
+                    "prepared_corpus": dataset["prepared_corpus"],
                     "eval_profiles": dataset["eval_profiles"],
                     "eval_queries": dataset["eval_queries"],
                     "candidate_bundle_path": str(candidate_bundle_path),

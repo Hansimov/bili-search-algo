@@ -1,5 +1,6 @@
 import json
 
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -82,27 +83,41 @@ class CoreTokTrainingPipeline:
 
     def train_stage1(
         self,
-        tags: list[str],
+        tags: list[str] | None = None,
         epochs: int = 3,
+        tag_counter: Counter | None = None,
+        tag_frequency_items: list[tuple[str, int]] | None = None,
+        tag_candidate_plans: dict[str, dict] | None = None,
     ) -> list[list[int]]:
         self.tag_corpus_stats = self.tag_corpus_stats or CoreCorpusStats().fit(
             tags,
             for_stage1=True,
+            text_counter=tag_counter,
         )
         self.tag_tokenizer = self.tag_tokenizer or CoreTagTokenizer(
             corpus_stats=self.tag_corpus_stats
         )
         self.tag_tokenizer.corpus_stats = self.tag_corpus_stats
-        return self.tag_tokenizer.fit(tags, epochs=epochs)
+        return self.tag_tokenizer.fit(
+            tags,
+            epochs=epochs,
+            tag_counter=tag_counter,
+            frequency_items=tag_frequency_items,
+            candidate_plans=tag_candidate_plans,
+        )
 
     def train_stage2(
         self,
-        texts: list[str],
+        texts: list[str] | None = None,
         epochs: int = 1,
+        text_counter: Counter | None = None,
+        text_frequency_items: list[tuple[str, int]] | None = None,
+        text_candidate_plans: dict[str, dict] | None = None,
     ) -> list[list[int]]:
         self.text_corpus_stats = self.text_corpus_stats or CoreCorpusStats().fit(
             texts,
             for_stage1=False,
+            text_counter=text_counter,
         )
         seed_lexicon = None
         if self.tag_tokenizer is not None:
@@ -112,7 +127,13 @@ class CoreTokTrainingPipeline:
             corpus_stats=self.text_corpus_stats,
         )
         self.text_tokenizer.corpus_stats = self.text_corpus_stats
-        return self.text_tokenizer.fit(texts, epochs=epochs)
+        return self.text_tokenizer.fit(
+            texts,
+            epochs=epochs,
+            text_counter=text_counter,
+            frequency_items=text_frequency_items,
+            candidate_plans=text_candidate_plans,
+        )
 
     def train_importance(
         self,

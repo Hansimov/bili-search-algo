@@ -16,6 +16,10 @@ def normalize_core_text(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 
+def _compact_core_text(text: str) -> str:
+    return re.sub(r"\s+", "", normalize_core_text(text))
+
+
 def _is_degenerate_text(text: str) -> bool:
     normalized = normalize_core_text(text)
     if not normalized:
@@ -53,13 +57,24 @@ class CoreCorpusStats:
     stop_coverage_threshold: float = 0.0
     max_stop_candidates: int = 64
 
-    def fit(self, texts: list[str], *, for_stage1: bool) -> "CoreCorpusStats":
+    def fit(
+        self,
+        texts: list[str] | None = None,
+        *,
+        for_stage1: bool,
+        text_counter: Counter | None = None,
+    ) -> "CoreCorpusStats":
         self.total_docs = 0
         self.candidate_doc_freqs = Counter()
         self.stop_candidates = set()
         self.stop_coverage_threshold = 0.0
 
-        for text in texts:
+        if text_counter is None:
+            text_counter = Counter(
+                text for text in (texts or []) if normalize_core_text(text)
+            )
+
+        for text, freq in text_counter.items():
             normalized = normalize_core_text(text)
             if _is_degenerate_text(normalized):
                 continue
@@ -72,8 +87,9 @@ class CoreCorpusStats:
             )
             if not candidates:
                 continue
-            self.total_docs += 1
-            self.candidate_doc_freqs.update(candidates)
+            self.total_docs += int(freq)
+            for candidate in candidates:
+                self.candidate_doc_freqs[candidate] += int(freq)
 
         short_candidates = sorted(
             [
@@ -208,8 +224,34 @@ def suggest_token_budget(text: str) -> int:
     return 3
 
 
+def build_candidate_plan(
+    text: str,
+    *,
+    for_stage1: bool,
+    corpus_stats: CoreCorpusStats | None = None,
+) -> dict:
+    normalized = normalize_core_text(text)
+    if not normalized:
+        return {"text": "", "budget": 0, "candidates": []}
+
+    if for_stage1:
+        budget = suggest_token_budget(normalized)
+    else:
+        budget = max(1, min(6, math.ceil(count_mixed_units(normalized) / 3)))
+
+    return {
+        "text": normalized,
+        "budget": budget,
+        "candidates": extract_core_candidates(
+            normalized,
+            for_stage1=for_stage1,
+            corpus_stats=corpus_stats,
+        ),
+    }
+
+
 def _char_ngrams(text: str) -> set[str]:
-    compact = re.sub(r"\s+", "", normalize_core_text(text))
+    compact = _compact_core_text(text)
     if len(compact) <= 2:
         return {compact} if compact else set()
     grams = {compact[index : index + 2] for index in range(len(compact) - 1)}
@@ -220,8 +262,8 @@ def _char_ngrams(text: str) -> set[str]:
 def _surface_overlap_score(left: str, right: str) -> float:
     if left == right:
         return 1.0
-    compact_left = re.sub(r"\s+", "", normalize_core_text(left))
-    compact_right = re.sub(r"\s+", "", normalize_core_text(right))
+    compact_left = _compact_core_text(left)
+    compact_right = _compact_core_text(right)
     if compact_left and compact_right:
         shorter = min(len(compact_left), len(compact_right))
         longer = max(len(compact_left), len(compact_right))
@@ -483,7 +525,7 @@ class _BaseCoreTokenizer:
         self.novelty_threshold = novelty_threshold
         self.reuse_threshold = reuse_threshold
         self.source = source
-        self._candidate_cache: dict[tuple[str, bool], list[str]] = {}
+        self._candidate_plan_cache: dict[tuple[str, bool], dict] = {}
 
     def _score_candidate(self, candidate: str, budget: int) -> tuple[float, int, str]:
         whole_bonus = 4.0 if count_mixed_units(candidate) <= 8 else 0.0
@@ -494,19 +536,48 @@ class _BaseCoreTokenizer:
         length_bonus = min(count_mixed_units(candidate), budget * 2)
         return (whole_bonus + freq_bonus + length_bonus, len(candidate), candidate)
 
-    def _choose_candidates(
-        self, text: str, *, budget: int, for_stage1: bool
-    ) -> list[str]:
+    def _get_candidate_plan(
+        self,
+        text: str,
+        *,
+        for_stage1: bool,
+        prepared_plan: dict | None = None,
+    ) -> dict:
         normalized = normalize_core_text(text)
         cache_key = (normalized, for_stage1)
-        candidates = self._candidate_cache.get(cache_key)
-        if candidates is None:
-            candidates = extract_core_candidates(
+        if prepared_plan is not None:
+            plan = {
+                "text": normalize_core_text(prepared_plan.get("text") or normalized),
+                "budget": int(prepared_plan.get("budget") or 0),
+                "candidates": list(prepared_plan.get("candidates") or []),
+            }
+            self._candidate_plan_cache[cache_key] = plan
+            return plan
+
+        plan = self._candidate_plan_cache.get(cache_key)
+        if plan is None:
+            plan = build_candidate_plan(
                 normalized,
                 for_stage1=for_stage1,
                 corpus_stats=self.corpus_stats,
             )
-            self._candidate_cache[cache_key] = candidates
+            self._candidate_plan_cache[cache_key] = plan
+        return plan
+
+    def _choose_candidates(
+        self,
+        text: str,
+        *,
+        budget: int,
+        for_stage1: bool,
+        prepared_plan: dict | None = None,
+    ) -> list[str]:
+        plan = self._get_candidate_plan(
+            text,
+            for_stage1=for_stage1,
+            prepared_plan=prepared_plan,
+        )
+        candidates = plan["candidates"]
         ranked = sorted(
             candidates,
             key=lambda candidate: self._score_candidate(candidate, budget),
@@ -551,12 +622,23 @@ class CoreTagTokenizer(_BaseCoreTokenizer):
             source="tag",
         )
 
-    def encode(self, tag: str, *, allow_new_tokens: bool = False) -> list[int]:
+    def encode(
+        self,
+        tag: str,
+        *,
+        allow_new_tokens: bool = False,
+        candidate_plan: dict | None = None,
+    ) -> list[int]:
         if not is_valid_stage1_tag(tag, corpus_stats=self.corpus_stats):
             return []
         budget = suggest_token_budget(tag)
         token_ids = []
-        for candidate in self._choose_candidates(tag, budget=budget, for_stage1=True):
+        for candidate in self._choose_candidates(
+            tag,
+            budget=budget,
+            for_stage1=True,
+            prepared_plan=candidate_plan,
+        ):
             token_id = self._materialize_token(
                 candidate, allow_new_tokens=allow_new_tokens
             )
@@ -566,12 +648,29 @@ class CoreTagTokenizer(_BaseCoreTokenizer):
                 break
         return token_ids
 
-    def fit(self, tags: list[str], epochs: int = 3) -> list[list[int]]:
+    def fit(
+        self,
+        tags: list[str] | None = None,
+        epochs: int = 3,
+        tag_counter: Counter | None = None,
+        frequency_items: list[tuple[str, int]] | None = None,
+        candidate_plans: dict[str, dict] | None = None,
+    ) -> list[list[int]]:
         encoded = []
-        tag_counter = Counter(tag for tag in tags if normalize_core_text(tag))
+        if frequency_items is None:
+            tag_counter = tag_counter or Counter(
+                tag for tag in (tags or []) if normalize_core_text(tag)
+            )
+            frequency_items = tag_counter.most_common()
         for _ in range(max(epochs, 1)):
-            for tag, freq in tag_counter.most_common():
-                token_ids = self.encode(tag, allow_new_tokens=True)
+            for tag, freq in frequency_items:
+                token_ids = self.encode(
+                    tag,
+                    allow_new_tokens=True,
+                    candidate_plan=(candidate_plans or {}).get(
+                        normalize_core_text(tag)
+                    ),
+                )
                 if token_ids:
                     encoded.extend([token_ids] * int(freq))
                     extra_repeats = max(int(freq) - 1, 0)
@@ -601,14 +700,23 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
             return 0
         return max(1, min(6, math.ceil(units / 3)))
 
-    def encode(self, text: str, *, allow_new_tokens: bool = False) -> list[int]:
+    def encode(
+        self,
+        text: str,
+        *,
+        allow_new_tokens: bool = False,
+        candidate_plan: dict | None = None,
+    ) -> list[int]:
         normalized = normalize_core_text(text)
         if not normalized:
             return []
         budget = self._budget_for_text(normalized)
         token_ids = []
         for candidate in self._choose_candidates(
-            normalized, budget=budget, for_stage1=False
+            normalized,
+            budget=budget,
+            for_stage1=False,
+            prepared_plan=candidate_plan,
         ):
             if count_mixed_units(candidate) > 8:
                 continue
@@ -621,16 +729,36 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
                 break
         return token_ids
 
-    def fit(self, texts: list[str], epochs: int = 1) -> list[list[int]]:
+    def fit(
+        self,
+        texts: list[str] | None = None,
+        epochs: int = 1,
+        text_counter: Counter | None = None,
+        frequency_items: list[tuple[str, int]] | None = None,
+        candidate_plans: dict[str, dict] | None = None,
+    ) -> list[list[int]]:
         encoded = []
-        text_counter = Counter(text for text in texts if normalize_core_text(text))
-        for text in text_counter:
+        if frequency_items is None:
+            text_counter = text_counter or Counter(
+                text for text in (texts or []) if normalize_core_text(text)
+            )
+            frequency_items = text_counter.most_common()
+        for text, _ in frequency_items:
             self._choose_candidates(
-                text, budget=self._budget_for_text(text), for_stage1=False
+                text,
+                budget=self._budget_for_text(text),
+                for_stage1=False,
+                prepared_plan=(candidate_plans or {}).get(normalize_core_text(text)),
             )
         for _ in range(max(epochs, 1)):
-            for text, freq in text_counter.most_common():
-                token_ids = self.encode(text, allow_new_tokens=True)
+            for text, freq in frequency_items:
+                token_ids = self.encode(
+                    text,
+                    allow_new_tokens=True,
+                    candidate_plan=(candidate_plans or {}).get(
+                        normalize_core_text(text)
+                    ),
+                )
                 if token_ids:
                     encoded.extend([token_ids] * int(freq))
                     extra_repeats = max(int(freq) - 1, 0)

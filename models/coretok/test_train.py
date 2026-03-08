@@ -1,5 +1,6 @@
 from models.coretok.train import (
     aggregate_scale_summaries,
+    build_prepared_training_corpus,
     build_eval_dataset,
     collect_training_texts,
     compute_stability,
@@ -77,6 +78,18 @@ def test_holdout_eval_pipeline_returns_nonzero_retrieval_metrics():
     assert metrics["profile_count"] == len(profiles)
     assert metrics["query_coverage"] > 0
     assert metrics["recall_at_5"] >= metrics["recall_at_1"]
+
+
+def test_prepared_training_corpus_contains_reusable_candidate_plans():
+    prepared = build_prepared_training_corpus(
+        ["黑神话悟空", "黑神话流程", "相机测评"],
+        ["黑神话悟空流程解析", "相机拆解视频"],
+    )
+
+    assert prepared["tag_candidate_plans"]
+    assert prepared["text_candidate_plans"]
+    assert prepared["tag_unique_count"] == len(prepared["tag_candidate_plans"])
+    assert prepared["text_unique_count"] == len(prepared["text_candidate_plans"])
 
 
 def test_compute_stability_flags_consistent_scores_as_stable():
