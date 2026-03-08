@@ -1,11 +1,10 @@
+from models.coretok.pipeline import CoreTokTrainingPipeline
 from models.owners.profile import (
+    OwnerCoreTokProfileRefiner,
     OwnerProfileAccumulator,
-    OwnerSemanticProfileRefiner,
     build_owner_range_query,
     build_owner_shard_expr,
     build_profile_upsert_filter,
-    build_semantic_profile,
-    compute_profile_idf,
     merge_profile_docs,
     split_owner_mid_range,
 )
@@ -160,7 +159,19 @@ def test_build_profile_upsert_filter_uses__id_key():
     assert build_profile_upsert_filter({"_id": 123, "mid": 123}) == {"_id": 123}
 
 
-def test_compute_profile_idf_and_build_semantic_profile_reduce_generic_terms():
+def test_owner_coretok_profile_refiner_outputs_token_fields():
+    pipeline = CoreTokTrainingPipeline()
+    tag_sequences = pipeline.train_stage1(["科技", "数码", "游戏", "黑神话悟空"])
+    text_sequences = pipeline.train_stage2(
+        [
+            "科技观察室",
+            "相机测评",
+            "长期做硬件和相机评测",
+            "黑神话悟空流程攻略",
+        ]
+    )
+    pipeline.train_importance(tag_sequences, text_sequences)
+
     raw_profiles = [
         {
             "_id": 1,
@@ -169,7 +180,6 @@ def test_compute_profile_idf_and_build_semantic_profile_reduce_generic_terms():
             "top_tags": ["科技", "数码", "日常"],
             "sample_titles": ["相机测评", "芯片拆解"],
             "desc_samples": ["长期做硬件和相机评测"],
-            "topic_phrases": ["科技", "相机测评"],
             "influence_score": 0.6,
             "quality_score": 0.7,
             "activity_score": 0.5,
@@ -182,89 +192,27 @@ def test_compute_profile_idf_and_build_semantic_profile_reduce_generic_terms():
             "total_like": 3000,
             "total_coin": 500,
             "total_favorite": 1000,
-            "primary_tid": 36,
-            "primary_ptid": 202,
-            "latest_pic": "https://img.example/1.jpg",
-            "snapshot_at": 1700000100,
-        },
-        {
-            "_id": 2,
-            "mid": 2,
-            "name": "游戏研究所",
-            "top_tags": ["游戏", "攻略", "日常"],
-            "sample_titles": ["黑神话悟空流程攻略"],
-            "desc_samples": ["单机攻略和实况"],
-            "topic_phrases": ["黑神话悟空"],
-            "influence_score": 0.5,
-            "quality_score": 0.6,
-            "activity_score": 0.7,
-            "latest_pubdate": 1700000001,
-            "recent_30d_videos": 5,
-            "recent_7d_videos": 2,
-            "days_since_last": 2,
-            "total_videos": 18,
-            "total_view": 80000,
-            "total_like": 2000,
-            "total_coin": 400,
-            "total_favorite": 800,
-            "primary_tid": 17,
-            "primary_ptid": 171,
-            "latest_pic": "https://img.example/2.jpg",
-            "snapshot_at": 1700000100,
-        },
-    ]
-
-    idf = compute_profile_idf(raw_profiles, min_df=1)
-    semantic_profile = build_semantic_profile(
-        raw_profiles[0], idf=idf, semantic_top_terms=12
-    )
-
-    assert semantic_profile["profile_version"] == "v3idf2"
-    assert semantic_profile["semantic_terms"]
-    assert (
-        "相机" in semantic_profile["domain_text"]
-        or "相机测评" in semantic_profile["domain_text"]
-    )
-    assert len(semantic_profile["vector_bucket_ids"]) == len(
-        semantic_profile["vector_bucket_weights"]
-    )
-    assert "日常" not in semantic_profile["semantic_terms"]
-
-
-def test_owner_semantic_profile_refiner_reports_size_reduction():
-    raw_profiles = [
-        {
-            "_id": 1,
-            "mid": 1,
-            "name": "科技观察室",
-            "top_tags": ["科技", "数码", "日常"],
-            "sample_titles": ["相机测评", "芯片拆解"],
-            "desc_samples": ["长期做硬件和相机评测"],
-            "topic_phrases": ["科技", "相机测评"],
-            "feature_weights": {f"b{i}": float(100 - i) for i in range(64)},
-            "topic_terms": [f"b{i}" for i in range(64)],
-            "influence_score": 0.6,
-            "quality_score": 0.7,
-            "activity_score": 0.5,
-            "latest_pubdate": 1700000000,
-            "recent_30d_videos": 4,
-            "recent_7d_videos": 1,
-            "days_since_last": 5,
-            "total_videos": 20,
-            "total_view": 100000,
-            "total_like": 3000,
-            "total_coin": 500,
-            "total_favorite": 1000,
-            "primary_tid": 36,
-            "primary_ptid": 202,
-            "latest_pic": "https://img.example/1.jpg",
             "snapshot_at": 1700000100,
         }
     ]
 
-    refiner = OwnerSemanticProfileRefiner(semantic_top_terms=8, semantic_min_df=1)
+    refiner = OwnerCoreTokProfileRefiner(
+        pipeline=pipeline,
+        bundle_version="coretok-test",
+        core_tag_limit=8,
+        core_text_limit=8,
+    )
     refined_profiles, stats = refiner.refine(raw_profiles)
 
     assert len(refined_profiles) == 1
-    assert refined_profiles[0]["semantic_terms"]
-    assert stats["size_reduction_ratio"] > 0
+    refined = refined_profiles[0]
+    assert refined["core_tokenizer_version"] == "coretok-test"
+    assert refined["profile_domain_ready"] is True
+    assert refined["core_tag_token_ids"]
+    assert refined["core_text_token_ids"]
+    assert len(refined["core_tag_token_ids"]) == len(refined["core_tag_token_weights"])
+    assert len(refined["core_text_token_ids"]) == len(
+        refined["core_text_token_weights"]
+    )
+    assert stats["domain_ready_count"] == 1
+    assert "size_reduction_ratio" in stats

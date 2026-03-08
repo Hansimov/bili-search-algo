@@ -225,6 +225,53 @@ class CoreTokenLexicon:
         _, best_score = self.find_best_match(token)
         return round(1.0 - best_score, 4)
 
+    def to_dict(self) -> dict:
+        return {
+            "token_to_id": dict(self.token_to_id),
+            "id_to_token": {
+                str(token_id): token for token_id, token in self.id_to_token.items()
+            },
+            "token_freqs": {
+                str(token_id): int(freq) for token_id, freq in self.token_freqs.items()
+            },
+            "token_sources": {
+                str(token_id): source for token_id, source in self.token_sources.items()
+            },
+            "next_token_id": int(self.next_token_id),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict | None) -> "CoreTokenLexicon":
+        payload = payload or {}
+        token_to_id = {
+            str(token): int(token_id)
+            for token, token_id in (payload.get("token_to_id") or {}).items()
+        }
+        id_to_token = {
+            int(token_id): str(token)
+            for token_id, token in (payload.get("id_to_token") or {}).items()
+        }
+        token_freqs = Counter(
+            {
+                int(token_id): int(freq)
+                for token_id, freq in (payload.get("token_freqs") or {}).items()
+            }
+        )
+        token_sources = {
+            int(token_id): str(source)
+            for token_id, source in (payload.get("token_sources") or {}).items()
+        }
+        next_token_id = int(
+            payload.get("next_token_id") or (max(id_to_token.keys(), default=0) + 1)
+        )
+        return cls(
+            token_to_id=token_to_id,
+            id_to_token=id_to_token,
+            token_freqs=token_freqs,
+            token_sources=token_sources,
+            next_token_id=next_token_id,
+        )
+
 
 class _BaseCoreTokenizer:
     def __init__(
@@ -399,3 +446,35 @@ class CoreImpEvaluator:
         raw = [(token_id, self.score_token(token_id)) for token_id in token_ids]
         total = sum(score for _, score in raw) or 1.0
         return [(token_id, round(score / total, 4)) for token_id, score in raw]
+
+    def to_dict(self) -> dict:
+        return {
+            "tag_doc_count": int(self.tag_doc_count),
+            "text_doc_count": int(self.text_doc_count),
+            "tag_df": {
+                str(token_id): int(freq) for token_id, freq in self.tag_df.items()
+            },
+            "text_df": {
+                str(token_id): int(freq) for token_id, freq in self.text_df.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict | None) -> "CoreImpEvaluator":
+        payload = payload or {}
+        return cls(
+            tag_doc_count=int(payload.get("tag_doc_count") or 0),
+            text_doc_count=int(payload.get("text_doc_count") or 0),
+            tag_df=Counter(
+                {
+                    int(token_id): int(freq)
+                    for token_id, freq in (payload.get("tag_df") or {}).items()
+                }
+            ),
+            text_df=Counter(
+                {
+                    int(token_id): int(freq)
+                    for token_id, freq in (payload.get("text_df") or {}).items()
+                }
+            ),
+        )

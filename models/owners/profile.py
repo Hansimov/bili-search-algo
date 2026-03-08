@@ -15,6 +15,7 @@ from sedb import MongoOperator
 from tclogger import dict_to_str, logger, str_to_ts
 
 from configs.envs import DATA_ROOT, MONGO_ENVS
+from models.coretok.pipeline import CoreTokTrainingPipeline
 
 
 OWNER_PROFILE_ROOT = DATA_ROOT / "owners"
@@ -27,8 +28,8 @@ PROFILE_TOPIC_PHRASES_LIMIT = 12
 PROFILE_DESC_SAMPLES_LIMIT = 3
 DEFAULT_PROFILE_TOP_K = 96
 OWNER_PROFILE_VERSION = "v2slim1"
-OWNER_SEMANTIC_PROFILE_VERSION = "v3idf2"
-DEFAULT_SEMANTIC_TOP_TERMS = 24
+DEFAULT_CORE_TAG_LIMIT = 16
+DEFAULT_CORE_TEXT_LIMIT = 24
 DEFAULT_VECTOR_BUCKETS = 512
 DEFAULT_VECTOR_LIMIT = 48
 DEFAULT_SEMANTIC_MIN_DF = 2
@@ -232,6 +233,47 @@ def estimate_doc_bytes(doc: dict) -> int:
     )
 
 
+def _score_token_sequence(
+    token_ids: list[int],
+    evaluator,
+) -> list[tuple[int, float]]:
+    if not token_ids:
+        return []
+    if evaluator is None:
+        weight = round(1.0 / max(len(token_ids), 1), 4)
+        return [(token_id, weight) for token_id in token_ids]
+    return evaluator.score_sequence(token_ids)
+
+
+def _accumulate_token_scores(
+    counter: Counter,
+    token_ids: list[int],
+    evaluator,
+    field_weight: float,
+):
+    if field_weight <= 0:
+        return
+    for token_id, score in _score_token_sequence(token_ids, evaluator):
+        counter[int(token_id)] += float(score) * float(field_weight)
+
+
+def _finalize_token_scores(
+    counter: Counter,
+    limit: int,
+) -> tuple[list[int], list[float]]:
+    items = [
+        (int(token_id), float(weight))
+        for token_id, weight in counter.items()
+        if weight > 0
+    ]
+    items.sort(key=lambda item: (item[1], -item[0]), reverse=True)
+    items = items[:limit]
+    total = sum(weight for _, weight in items) or 1.0
+    token_ids = [token_id for token_id, _ in items]
+    token_weights = [round(weight / total, 4) for _, weight in items]
+    return token_ids, token_weights
+
+
 def log_normalize(value: float, max_val: float) -> float:
     if value <= 0:
         return 0.0
@@ -361,127 +403,115 @@ def compute_profile_idf(
     return idf
 
 
-def build_sparse_semantic_vector(
-    weighted_terms: dict[str, float],
-    bucket_count: int = DEFAULT_VECTOR_BUCKETS,
-    vector_limit: int = DEFAULT_VECTOR_LIMIT,
-) -> tuple[list[int], list[float]]:
-    bucket_counter = Counter()
-    for term, weight in weighted_terms.items():
-        bucket_counter[hash_bucket_id(term, bucket_count=bucket_count)] += float(weight)
-    if not bucket_counter:
-        return [], []
-    items = bucket_counter.most_common(vector_limit)
-    norm = math.sqrt(sum(weight * weight for _, weight in items)) or 1.0
-    ids = [int(bucket_id) for bucket_id, _ in items]
-    weights = [round(weight / norm, 6) for _, weight in items]
-    return ids, weights
-
-
-def build_semantic_profile(
-    raw_profile: dict,
-    idf: dict[str, float],
-    field_weights: dict[str, float] = None,
-    semantic_top_terms: int = DEFAULT_SEMANTIC_TOP_TERMS,
-    vector_bucket_count: int = DEFAULT_VECTOR_BUCKETS,
-    vector_limit: int = DEFAULT_VECTOR_LIMIT,
-    semantic_min_idf: float = DEFAULT_SEMANTIC_MIN_IDF,
-) -> dict:
-    field_weights = field_weights or DEFAULT_PROFILE_FIELD_WEIGHTS
-    term_counter = build_profile_term_counter(raw_profile, field_weights=field_weights)
-    weighted_terms = {}
-    for term, tf in term_counter.items():
-        idf_value = idf.get(term)
-        if not idf_value or idf_value < semantic_min_idf:
-            continue
-        if term in COMMON_LOW_INFO_TERMS:
-            continue
-        weighted_terms[term] = round(math.log1p(tf) * idf_value, 6)
-    top_terms = dict(
-        sorted(weighted_terms.items(), key=lambda item: item[1], reverse=True)[
-            :semantic_top_terms
-        ]
-    )
-    vector_bucket_ids, vector_bucket_weights = build_sparse_semantic_vector(
-        top_terms,
-        bucket_count=vector_bucket_count,
-        vector_limit=vector_limit,
-    )
-    domain_parts = []
-    domain_parts.extend(raw_profile.get("top_tags") or [])
-    domain_parts.extend(raw_profile.get("topic_phrases") or [])
-    domain_parts.extend(list(top_terms.keys())[: semantic_top_terms // 2])
-    domain_text = " ".join(dict.fromkeys(part for part in domain_parts if part)).strip()
-    return {
-        "_id": raw_profile["_id"],
-        "mid": raw_profile["mid"],
-        "name": raw_profile.get("name") or "",
-        "total_videos": int(raw_profile.get("total_videos") or 0),
-        "total_view": int(raw_profile.get("total_view") or 0),
-        "total_like": int(raw_profile.get("total_like") or 0),
-        "total_coin": int(raw_profile.get("total_coin") or 0),
-        "total_favorite": int(raw_profile.get("total_favorite") or 0),
-        "influence_score": float(raw_profile.get("influence_score") or 0.0),
-        "quality_score": float(raw_profile.get("quality_score") or 0.0),
-        "activity_score": float(raw_profile.get("activity_score") or 0.0),
-        "latest_pubdate": int(raw_profile.get("latest_pubdate") or 0),
-        "recent_30d_videos": int(raw_profile.get("recent_30d_videos") or 0),
-        "recent_7d_videos": int(raw_profile.get("recent_7d_videos") or 0),
-        "days_since_last": int(raw_profile.get("days_since_last") or 0),
-        "top_tags": list(raw_profile.get("top_tags") or [])[:PROFILE_TOP_TAGS_LIMIT],
-        "topic_phrases": list(raw_profile.get("topic_phrases") or [])[
-            :PROFILE_TOPIC_PHRASES_LIMIT
-        ],
-        "domain_text": domain_text,
-        "semantic_terms": list(top_terms.keys()),
-        "vector_bucket_ids": vector_bucket_ids,
-        "vector_bucket_weights": vector_bucket_weights,
-        "primary_tid": int(raw_profile.get("primary_tid") or 0),
-        "primary_ptid": int(raw_profile.get("primary_ptid") or 0),
-        "latest_pic": raw_profile.get("latest_pic") or "",
-        "snapshot_at": int(raw_profile.get("snapshot_at") or 0),
-        "profile_version": OWNER_SEMANTIC_PROFILE_VERSION,
-    }
-
-
-class OwnerSemanticProfileRefiner:
+class OwnerCoreTokProfileRefiner:
     def __init__(
         self,
+        pipeline: CoreTokTrainingPipeline | None = None,
+        bundle_version: str = "coretok-v1",
+        bundle_path: str | None = None,
         field_weights: dict[str, float] = None,
-        semantic_top_terms: int = DEFAULT_SEMANTIC_TOP_TERMS,
-        vector_bucket_count: int = DEFAULT_VECTOR_BUCKETS,
-        vector_limit: int = DEFAULT_VECTOR_LIMIT,
-        semantic_min_df: int = DEFAULT_SEMANTIC_MIN_DF,
-        semantic_min_idf: float = DEFAULT_SEMANTIC_MIN_IDF,
+        core_tag_limit: int = DEFAULT_CORE_TAG_LIMIT,
+        core_text_limit: int = DEFAULT_CORE_TEXT_LIMIT,
     ):
+        self.pipeline = pipeline or CoreTokTrainingPipeline()
+        self.bundle_version = bundle_version
+        self.bundle_path = bundle_path
         self.field_weights = field_weights or DEFAULT_PROFILE_FIELD_WEIGHTS
-        self.semantic_top_terms = semantic_top_terms
-        self.vector_bucket_count = vector_bucket_count
-        self.vector_limit = vector_limit
-        self.semantic_min_df = semantic_min_df
-        self.semantic_min_idf = semantic_min_idf
+        self.core_tag_limit = core_tag_limit
+        self.core_text_limit = core_text_limit
+
+    @classmethod
+    def from_bundle_path(
+        cls,
+        bundle_path: str | Path,
+        **kwargs,
+    ) -> "OwnerCoreTokProfileRefiner":
+        payload = json.loads(Path(bundle_path).read_text(encoding="utf-8"))
+        return cls(
+            pipeline=CoreTokTrainingPipeline.from_bundle_dict(payload),
+            bundle_version=payload.get("bundle_version", "coretok-v1"),
+            bundle_path=str(bundle_path),
+            **kwargs,
+        )
+
+    def build_profile(self, raw_profile: dict) -> dict:
+        tag_scores = Counter()
+        text_scores = Counter()
+
+        tag_tokenizer = self.pipeline.tag_tokenizer
+        text_tokenizer = self.pipeline.text_tokenizer
+        evaluator = self.pipeline.importance
+
+        if tag_tokenizer is not None:
+            for tag in raw_profile.get("top_tags") or []:
+                _accumulate_token_scores(
+                    tag_scores,
+                    tag_tokenizer.encode(tag, allow_new_tokens=False),
+                    evaluator,
+                    self.field_weights.get("tags", 0.0),
+                )
+
+        if text_tokenizer is not None:
+            text_inputs = [
+                (
+                    raw_profile.get("name") or "",
+                    self.field_weights.get("owner_name", 0.0),
+                ),
+            ]
+            text_inputs.extend(
+                (value, self.field_weights.get("title", 0.0))
+                for value in (raw_profile.get("sample_titles") or [])
+            )
+            text_inputs.extend(
+                (value, self.field_weights.get("desc", 0.0))
+                for value in (raw_profile.get("desc_samples") or [])
+            )
+            for value, field_weight in text_inputs:
+                _accumulate_token_scores(
+                    text_scores,
+                    text_tokenizer.encode(value, allow_new_tokens=False),
+                    evaluator,
+                    field_weight,
+                )
+
+        core_tag_token_ids, core_tag_token_weights = _finalize_token_scores(
+            tag_scores,
+            limit=self.core_tag_limit,
+        )
+        core_text_token_ids, core_text_token_weights = _finalize_token_scores(
+            text_scores,
+            limit=self.core_text_limit,
+        )
+
+        return {
+            "_id": raw_profile["_id"],
+            "mid": raw_profile["mid"],
+            "name": raw_profile.get("name") or "",
+            "total_videos": int(raw_profile.get("total_videos") or 0),
+            "total_view": int(raw_profile.get("total_view") or 0),
+            "total_like": int(raw_profile.get("total_like") or 0),
+            "total_coin": int(raw_profile.get("total_coin") or 0),
+            "total_favorite": int(raw_profile.get("total_favorite") or 0),
+            "influence_score": float(raw_profile.get("influence_score") or 0.0),
+            "quality_score": float(raw_profile.get("quality_score") or 0.0),
+            "activity_score": float(raw_profile.get("activity_score") or 0.0),
+            "latest_pubdate": int(raw_profile.get("latest_pubdate") or 0),
+            "recent_30d_videos": int(raw_profile.get("recent_30d_videos") or 0),
+            "recent_7d_videos": int(raw_profile.get("recent_7d_videos") or 0),
+            "days_since_last": int(raw_profile.get("days_since_last") or 0),
+            "core_tag_token_ids": core_tag_token_ids,
+            "core_tag_token_weights": core_tag_token_weights,
+            "core_text_token_ids": core_text_token_ids,
+            "core_text_token_weights": core_text_token_weights,
+            "core_tokenizer_version": self.bundle_version,
+            "profile_domain_ready": bool(core_tag_token_ids or core_text_token_ids),
+            "snapshot_at": int(raw_profile.get("snapshot_at") or 0),
+        }
 
     def refine(self, raw_profiles: list[dict]) -> tuple[list[dict], dict]:
-        idf = compute_profile_idf(
-            raw_profiles,
-            field_weights=self.field_weights,
-            min_df=self.semantic_min_df,
-        )
-        refined_profiles = [
-            build_semantic_profile(
-                profile,
-                idf=idf,
-                field_weights=self.field_weights,
-                semantic_top_terms=self.semantic_top_terms,
-                vector_bucket_count=self.vector_bucket_count,
-                vector_limit=self.vector_limit,
-                semantic_min_idf=self.semantic_min_idf,
-            )
-            for profile in raw_profiles
-        ]
+        refined_profiles = [self.build_profile(profile) for profile in raw_profiles]
         stats = {
             "profile_count": len(refined_profiles),
-            "idf_term_count": len(idf),
             "avg_raw_doc_bytes": round(
                 sum(estimate_doc_bytes(doc) for doc in raw_profiles)
                 / max(len(raw_profiles), 1),
@@ -492,11 +522,13 @@ class OwnerSemanticProfileRefiner:
                 / max(len(refined_profiles), 1),
                 2,
             ),
-            "semantic_top_terms": self.semantic_top_terms,
-            "vector_bucket_count": self.vector_bucket_count,
-            "vector_limit": self.vector_limit,
-            "semantic_min_df": self.semantic_min_df,
-            "semantic_min_idf": self.semantic_min_idf,
+            "core_tag_limit": self.core_tag_limit,
+            "core_text_limit": self.core_text_limit,
+            "core_tokenizer_version": self.bundle_version,
+            "coretok_bundle_path": self.bundle_path,
+            "domain_ready_count": sum(
+                1 for doc in refined_profiles if doc.get("profile_domain_ready")
+            ),
             "size_reduction_ratio": round(
                 1
                 - (
@@ -901,12 +933,9 @@ class OwnerProfileBuilder:
         top_k: int = DEFAULT_PROFILE_TOP_K,
         feature_buckets: int = DEFAULT_FEATURE_BUCKETS,
         output_db_name: str = ALGO_MONGO_DBNAME,
-        semantic_refine: bool = True,
-        semantic_top_terms: int = DEFAULT_SEMANTIC_TOP_TERMS,
-        semantic_vector_buckets: int = DEFAULT_VECTOR_BUCKETS,
-        semantic_vector_limit: int = DEFAULT_VECTOR_LIMIT,
-        semantic_min_df: int = DEFAULT_SEMANTIC_MIN_DF,
-        semantic_min_idf: float = DEFAULT_SEMANTIC_MIN_IDF,
+        coretok_bundle_path: str | None = None,
+        core_tag_limit: int = DEFAULT_CORE_TAG_LIMIT,
+        core_text_limit: int = DEFAULT_CORE_TEXT_LIMIT,
         mongo_batch_size: int = 1000,
         mongo_read_batch_size: int = 5000,
         log_every: int = 200000,
@@ -928,12 +957,9 @@ class OwnerProfileBuilder:
         self.top_k = top_k
         self.feature_buckets = feature_buckets
         self.output_db_name = output_db_name
-        self.semantic_refine = semantic_refine
-        self.semantic_top_terms = semantic_top_terms
-        self.semantic_vector_buckets = semantic_vector_buckets
-        self.semantic_vector_limit = semantic_vector_limit
-        self.semantic_min_df = semantic_min_df
-        self.semantic_min_idf = semantic_min_idf
+        self.coretok_bundle_path = coretok_bundle_path
+        self.core_tag_limit = core_tag_limit
+        self.core_text_limit = core_text_limit
         self.mongo_batch_size = mongo_batch_size
         self.mongo_read_batch_size = mongo_read_batch_size
         self.log_every = log_every
@@ -1208,18 +1234,13 @@ class OwnerProfileBuilder:
         ):
             flush_profile(accumulator)
 
-        semantic_summary = {}
-        refined_profiles = raw_profiles
-        if self.semantic_refine:
-            refiner = OwnerSemanticProfileRefiner(
-                field_weights=self.field_weights,
-                semantic_top_terms=self.semantic_top_terms,
-                vector_bucket_count=self.semantic_vector_buckets,
-                vector_limit=self.semantic_vector_limit,
-                semantic_min_df=self.semantic_min_df,
-                semantic_min_idf=self.semantic_min_idf,
-            )
-            refined_profiles, semantic_summary = refiner.refine(raw_profiles)
+        refiner = OwnerCoreTokProfileRefiner.from_bundle_path(
+            self.coretok_bundle_path,
+            field_weights=self.field_weights,
+            core_tag_limit=self.core_tag_limit,
+            core_text_limit=self.core_text_limit,
+        )
+        refined_profiles, semantic_summary = refiner.refine(raw_profiles)
 
         if self.output_col is not None and refined_profiles:
             for start_idx in range(0, len(refined_profiles), self.mongo_batch_size):
@@ -1240,9 +1261,6 @@ class OwnerProfileBuilder:
             "output_collection": self.output_collection,
             "output_db": self.output_db_name,
             "profile_version": OWNER_PROFILE_VERSION,
-            "semantic_profile_version": (
-                OWNER_SEMANTIC_PROFILE_VERSION if self.semantic_refine else None
-            ),
             "feature_buckets": self.feature_buckets,
             "mongo_hint": self.mongo_hint,
             "owner_shard_mode": self.owner_shard_mode,
@@ -1281,22 +1299,11 @@ class OwnerProfileArgParser(argparse.ArgumentParser):
         self.add_argument(
             "--feature-buckets", type=int, default=DEFAULT_FEATURE_BUCKETS
         )
+        self.add_argument("--coretok-bundle-path", type=str, required=True)
+        self.add_argument("--core-tag-limit", type=int, default=DEFAULT_CORE_TAG_LIMIT)
         self.add_argument(
-            "--semantic-top-terms", type=int, default=DEFAULT_SEMANTIC_TOP_TERMS
+            "--core-text-limit", type=int, default=DEFAULT_CORE_TEXT_LIMIT
         )
-        self.add_argument(
-            "--semantic-vector-buckets", type=int, default=DEFAULT_VECTOR_BUCKETS
-        )
-        self.add_argument(
-            "--semantic-vector-limit", type=int, default=DEFAULT_VECTOR_LIMIT
-        )
-        self.add_argument(
-            "--semantic-min-df", type=int, default=DEFAULT_SEMANTIC_MIN_DF
-        )
-        self.add_argument(
-            "--semantic-min-idf", type=float, default=DEFAULT_SEMANTIC_MIN_IDF
-        )
-        self.add_argument("--disable-semantic-refine", action="store_true")
         self.add_argument("--log-every", type=int, default=200000)
         self.add_argument("--owner-shard-mode", choices=["mod", "range"], default="mod")
         self.add_argument("--owner-shard-count", type=int, default=1)
@@ -1322,12 +1329,9 @@ def main(args: argparse.Namespace):
         top_k=args.top_k,
         feature_buckets=args.feature_buckets,
         output_db_name=args.mongo_output_db,
-        semantic_refine=not args.disable_semantic_refine,
-        semantic_top_terms=args.semantic_top_terms,
-        semantic_vector_buckets=args.semantic_vector_buckets,
-        semantic_vector_limit=args.semantic_vector_limit,
-        semantic_min_df=args.semantic_min_df,
-        semantic_min_idf=args.semantic_min_idf,
+        coretok_bundle_path=args.coretok_bundle_path,
+        core_tag_limit=args.core_tag_limit,
+        core_text_limit=args.core_text_limit,
         mongo_batch_size=args.mongo_batch_size,
         mongo_read_batch_size=args.mongo_read_batch_size,
         log_every=args.log_every,
