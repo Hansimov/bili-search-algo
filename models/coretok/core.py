@@ -306,8 +306,10 @@ class CoreTokenLexicon:
     id_to_token: dict[int, str] = field(default_factory=dict)
     token_freqs: Counter = field(default_factory=Counter)
     token_sources: dict[int, str] = field(default_factory=dict)
+    token_units: dict[int, int] = field(default_factory=dict)
     next_token_id: int = 1
     gram_to_ids: dict[str, set[int]] = field(default_factory=dict)
+    first_char_to_ids: dict[str, set[int]] = field(default_factory=dict)
     match_cache: dict[str, tuple[int | None, float]] = field(default_factory=dict)
 
     def _index_token(self, token_id: int, token: str):
@@ -315,6 +317,10 @@ class CoreTokenLexicon:
             if not gram:
                 continue
             self.gram_to_ids.setdefault(gram, set()).add(token_id)
+        first_char = token[:1]
+        if first_char:
+            self.first_char_to_ids.setdefault(first_char, set()).add(token_id)
+        self.token_units[token_id] = count_mixed_units(token)
 
     def add_token(self, token: str, source: str) -> int:
         normalized = normalize_core_text(token)
@@ -376,11 +382,7 @@ class CoreTokenLexicon:
             candidate_ids.update(ids)
         if not candidate_ids:
             first_char = normalized[:1]
-            candidate_ids = {
-                token_id
-                for token_id, existing in self.id_to_token.items()
-                if existing.startswith(first_char)
-            }
+            candidate_ids = set(self.first_char_to_ids.get(first_char) or ())
         if not candidate_ids:
             candidate_ids = set(self.id_to_token.keys())
 
@@ -388,10 +390,7 @@ class CoreTokenLexicon:
         candidate_ids = {
             token_id
             for token_id in candidate_ids
-            if abs(
-                count_mixed_units(self.id_to_token.get(token_id, "")) - normalized_units
-            )
-            <= 4
+            if abs(self.token_units.get(token_id, 0) - normalized_units) <= 4
         } or candidate_ids
 
         for token_id in candidate_ids:
@@ -421,6 +420,10 @@ class CoreTokenLexicon:
             "token_sources": {
                 str(token_id): source for token_id, source in self.token_sources.items()
             },
+            "token_units": {
+                str(token_id): int(units)
+                for token_id, units in self.token_units.items()
+            },
             "next_token_id": int(self.next_token_id),
         }
 
@@ -445,6 +448,10 @@ class CoreTokenLexicon:
             int(token_id): str(source)
             for token_id, source in (payload.get("token_sources") or {}).items()
         }
+        token_units = {
+            int(token_id): int(units)
+            for token_id, units in (payload.get("token_units") or {}).items()
+        }
         next_token_id = int(
             payload.get("next_token_id") or (max(id_to_token.keys(), default=0) + 1)
         )
@@ -453,6 +460,7 @@ class CoreTokenLexicon:
             id_to_token=id_to_token,
             token_freqs=token_freqs,
             token_sources=token_sources,
+            token_units=token_units,
             next_token_id=next_token_id,
         )
         for token_id, token in id_to_token.items():

@@ -9,7 +9,7 @@ import shutil
 import statistics
 import time
 
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Callable
@@ -935,6 +935,40 @@ def resolve_worker_count(max_workers: int | None, task_count: int) -> int:
     return max(1, min(available, task_count))
 
 
+def _format_seconds(seconds: float | None) -> str:
+    if seconds is None:
+        return "n/a"
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, remain = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m{int(remain):02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{int(hours)}h{int(minutes):02d}m{int(remain):02d}s"
+
+
+def _summarize_seed_progress(
+    seeds: list[int],
+    seed_states: dict[int, dict],
+    total_iterations: int,
+) -> str:
+    parts = []
+    for seed in seeds:
+        state = seed_states[seed]
+        completed = len(state["events"])
+        best = state.get("best")
+        best_recall = (
+            best["metrics"].get("recall_at_5") if best and best.get("metrics") else None
+        )
+        if best_recall is None:
+            parts.append(f"seed={seed}:{completed}/{total_iterations}")
+        else:
+            parts.append(
+                f"seed={seed}:{completed}/{total_iterations},best_r5={best_recall:.4f}"
+            )
+    return " | ".join(parts)
+
+
 def run_scale(
     scale: ScaleSpec,
     *,
@@ -944,6 +978,7 @@ def run_scale(
     run_dir: Path,
     max_workers: int | None,
     progress_interval: int,
+    progress_log_seconds: int,
 ) -> list[dict]:
     logger.note(f"> CoreTok scale: {scale.name}")
     logger.mesg(dict_to_str(asdict(scale)), indent=2)
@@ -1046,70 +1081,144 @@ def run_scale(
     )
 
     completed_tasks = 0
+    started_at = time.perf_counter()
     with ProcessPoolExecutor(max_workers=worker_count) as executor:
         future_to_task = {
             executor.submit(run_tuning_iteration, **task): task for task in tasks
         }
-        for future in as_completed(future_to_task):
-            event = future.result()
-            seed = event["seed"]
-            state = seed_states[seed]
-            monitor = seed_monitors[seed]
-            state["events"].append(event)
-            monitor.log_event(event)
-
-            score = (
-                event["metrics"]["recall_at_5"],
-                event["metrics"]["mrr"],
-                event["metrics"]["query_coverage"],
+        pending_futures = set(future_to_task.keys())
+        while pending_futures:
+            done_futures, pending_futures = wait(
+                pending_futures,
+                timeout=max(progress_log_seconds, 1),
+                return_when=FIRST_COMPLETED,
             )
-            best = state["best"]
-            if best is None or score > (
-                best["metrics"]["recall_at_5"],
-                best["metrics"]["mrr"],
-                best["metrics"]["query_coverage"],
-            ):
-                state["best"] = event
-                best_bundle_path = (
-                    state["seed_run_dir"] / scale.name / "best_bundle.json"
+
+            if not done_futures:
+                elapsed = time.perf_counter() - started_at
+                throughput = completed_tasks / elapsed if elapsed > 0 else 0.0
+                remaining_tasks = len(tasks) - completed_tasks
+                eta_seconds = remaining_tasks / throughput if throughput > 0 else None
+                seed_progress = _summarize_seed_progress(
+                    seeds,
+                    seed_states,
+                    len(tuning_configs),
                 )
-                best_bundle_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(event["candidate_bundle_path"], best_bundle_path)
-                monitor.log_event(
+                logger.note(
+                    "  · Pool heartbeat: "
+                    f"{completed_tasks}/{len(tasks)} tasks complete, "
+                    f"elapsed={_format_seconds(elapsed)}, "
+                    f"throughput={throughput:.3f} tasks/s, "
+                    f"eta={_format_seconds(eta_seconds)}"
+                )
+                logger.mesg(seed_progress, indent=4)
+                scale_monitor.log_event(
                     {
-                        "event": "best_model_updated",
+                        "event": "iteration_pool_heartbeat",
                         "scale": scale.name,
-                        "seed": seed,
-                        "iteration": event["iteration"],
-                        "bundle_path": str(best_bundle_path),
-                        "metrics": event["metrics"],
-                        "performance": event["performance"],
+                        "completed_tasks": completed_tasks,
+                        "total_tasks": len(tasks),
+                        "elapsed_seconds": round(elapsed, 4),
+                        "throughput_tasks_per_second": round(throughput, 6),
+                        "eta_seconds": (
+                            round(eta_seconds, 4) if eta_seconds is not None else None
+                        ),
+                        "seed_progress": seed_progress,
                     }
                 )
+                scale_monitor.update_status(
+                    {
+                        "phase": "running_iterations",
+                        "scale": scale.name,
+                        "task_count": len(tasks),
+                        "worker_count": worker_count,
+                        "completed_tasks": completed_tasks,
+                        "total_tasks": len(tasks),
+                        "elapsed_seconds": round(elapsed, 4),
+                        "eta_seconds": (
+                            round(eta_seconds, 4) if eta_seconds is not None else None
+                        ),
+                        "seed_progress": seed_progress,
+                    }
+                )
+                continue
 
-            completed_tasks += 1
-            monitor.update_status(
-                {
-                    "phase": "running_iterations",
-                    "scale": scale.name,
-                    "seed": seed,
-                    "completed_iterations": len(state["events"]),
-                    "total_iterations": len(tuning_configs),
-                    "last_iteration": event["iteration"],
-                    "best_so_far": state["best"]["metrics"] if state["best"] else None,
-                    "latest_performance": event["performance"],
-                }
-            )
-            scale_monitor.update_status(
-                {
-                    "phase": "running_iterations",
-                    "scale": scale.name,
-                    "task_count": len(tasks),
-                    "worker_count": worker_count,
-                    "completed_tasks": completed_tasks,
-                    "total_tasks": len(tasks),
-                }
-            )
+            for future in done_futures:
+                event = future.result()
+                seed = event["seed"]
+                state = seed_states[seed]
+                monitor = seed_monitors[seed]
+                state["events"].append(event)
+                monitor.log_event(event)
+
+                score = (
+                    event["metrics"]["recall_at_5"],
+                    event["metrics"]["mrr"],
+                    event["metrics"]["query_coverage"],
+                )
+                best = state["best"]
+                if best is None or score > (
+                    best["metrics"]["recall_at_5"],
+                    best["metrics"]["mrr"],
+                    best["metrics"]["query_coverage"],
+                ):
+                    state["best"] = event
+                    best_bundle_path = (
+                        state["seed_run_dir"] / scale.name / "best_bundle.json"
+                    )
+                    best_bundle_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(event["candidate_bundle_path"], best_bundle_path)
+                    monitor.log_event(
+                        {
+                            "event": "best_model_updated",
+                            "scale": scale.name,
+                            "seed": seed,
+                            "iteration": event["iteration"],
+                            "bundle_path": str(best_bundle_path),
+                            "metrics": event["metrics"],
+                            "performance": event["performance"],
+                        }
+                    )
+
+                completed_tasks += 1
+                logger.note(
+                    "  · Iteration complete: "
+                    f"seed={seed}, iter={event['iteration']}/{len(tuning_configs)}, "
+                    f"recall@5={event['metrics']['recall_at_5']:.4f}, "
+                    f"train={event['performance']['train_seconds']:.2f}s, "
+                    f"stage2={event['performance']['stage2_seconds']:.2f}s, "
+                    f"eval={event['performance']['eval_seconds']:.2f}s"
+                )
+                monitor.update_status(
+                    {
+                        "phase": "running_iterations",
+                        "scale": scale.name,
+                        "seed": seed,
+                        "completed_iterations": len(state["events"]),
+                        "total_iterations": len(tuning_configs),
+                        "last_iteration": event["iteration"],
+                        "best_so_far": (
+                            state["best"]["metrics"] if state["best"] else None
+                        ),
+                        "latest_performance": event["performance"],
+                    }
+                )
+                scale_monitor.update_status(
+                    {
+                        "phase": "running_iterations",
+                        "scale": scale.name,
+                        "task_count": len(tasks),
+                        "worker_count": worker_count,
+                        "completed_tasks": completed_tasks,
+                        "total_tasks": len(tasks),
+                        "elapsed_seconds": round(time.perf_counter() - started_at, 4),
+                        "seed_progress": _summarize_seed_progress(
+                            seeds,
+                            seed_states,
+                            len(tuning_configs),
+                        ),
+                    }
+                )
 
     summaries = []
     for seed in seeds:
@@ -1211,6 +1320,7 @@ def main(args: argparse.Namespace):
             run_dir=run_dir,
             max_workers=args.max_workers,
             progress_interval=args.progress_interval,
+            progress_log_seconds=args.progress_log_seconds,
         )
 
         if len(seed_summaries) == 1:
@@ -1254,6 +1364,7 @@ class CoreTokTrainArgParser(argparse.ArgumentParser):
         self.add_argument("--candidate-limit-override", type=int, default=None)
         self.add_argument("--max-workers", type=int, default=None)
         self.add_argument("--progress-interval", type=int, default=5000)
+        self.add_argument("--progress-log-seconds", type=int, default=15)
 
 
 if __name__ == "__main__":
