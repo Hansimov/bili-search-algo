@@ -24,6 +24,7 @@ def main() -> None:
     parser.add_argument("--text-reuse", type=float, default=0.50)
     parser.add_argument("--stage1-epochs", type=int, default=2)
     parser.add_argument("--stage2-epochs", type=int, default=1)
+    parser.add_argument("--corpus-workers", type=int, default=None)
     args = parser.parse_args()
 
     owner_rows = json.loads(Path(args.owner_rows_path).read_text(encoding="utf-8"))
@@ -31,7 +32,12 @@ def main() -> None:
     scale = DEFAULT_SCALES[args.scale]
 
     dataset_started = time.perf_counter()
-    dataset = build_seed_dataset(scale, owner_rows, seed=args.seed)
+    dataset = build_seed_dataset(
+        scale,
+        owner_rows,
+        seed=args.seed,
+        corpus_workers=args.corpus_workers,
+    )
     dataset_seconds = time.perf_counter() - dataset_started
 
     config = TuningConfig(

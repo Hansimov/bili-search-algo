@@ -122,6 +122,17 @@ DEFAULT_SCALES = {
         stage1_epochs=2,
         stage2_epochs=2,
     ),
+    "xxlarge": ScaleSpec(
+        name="xxlarge",
+        max_videos=1000000,
+        max_owners=15000,
+        min_owner_videos=8,
+        eval_owner_count=960,
+        candidate_limit=8,
+        query_per_owner=4,
+        stage1_epochs=2,
+        stage2_epochs=2,
+    ),
 }
 
 
@@ -615,27 +626,109 @@ def build_frequency_items(values: list[str]) -> list[tuple[str, int]]:
     return counter.most_common()
 
 
-def build_prepared_training_corpus(tags: list[str], texts: list[str]) -> dict:
+def _chunk_texts(texts: list[str], chunk_size: int) -> list[list[str]]:
+    if chunk_size <= 0:
+        return [texts]
+    return [
+        texts[index : index + chunk_size] for index in range(0, len(texts), chunk_size)
+    ]
+
+
+def _build_candidate_plan_batch(
+    texts: list[str],
+    *,
+    for_stage1: bool,
+    corpus_stats_payload: dict | None = None,
+    base_plans: dict[str, dict] | None = None,
+) -> dict[str, dict]:
+    corpus_stats = (
+        CoreCorpusStats.from_dict(corpus_stats_payload)
+        if corpus_stats_payload is not None
+        else None
+    )
+    plans = {}
+    for text in texts:
+        base_plan = (base_plans or {}).get(text) or {}
+        plans[text] = build_candidate_plan(
+            text,
+            for_stage1=for_stage1,
+            corpus_stats=corpus_stats,
+            normalized_text=base_plan.get("text"),
+            base_candidates=base_plan.get("candidates"),
+            base_candidate_units=base_plan.get("candidate_units"),
+        )
+    return plans
+
+
+def resolve_corpus_worker_count(max_workers: int | None, item_count: int) -> int:
+    if item_count < 20000:
+        return 1
+    available = os.cpu_count() or 1
+    if max_workers is not None:
+        return max(1, min(int(max_workers), available))
+    return max(1, min(available // 2, 32))
+
+
+def parallel_build_candidate_plans(
+    frequency_items: list[tuple[str, int]],
+    *,
+    for_stage1: bool,
+    corpus_stats: CoreCorpusStats | None = None,
+    base_plans: dict[str, dict] | None = None,
+    max_workers: int | None = None,
+) -> dict[str, dict]:
+    texts = [text for text, _ in frequency_items]
+    worker_count = resolve_corpus_worker_count(max_workers, len(texts))
+    if worker_count <= 1:
+        return _build_candidate_plan_batch(
+            texts,
+            for_stage1=for_stage1,
+            corpus_stats_payload=(corpus_stats.to_dict() if corpus_stats else None),
+            base_plans=base_plans,
+        )
+
+    chunk_size = max(256, math.ceil(len(texts) / (worker_count * 4)))
+    text_chunks = _chunk_texts(texts, chunk_size)
+    corpus_stats_payload = corpus_stats.to_dict() if corpus_stats else None
+    merged_plans = {}
+    with ProcessPoolExecutor(max_workers=worker_count) as executor:
+        futures = [
+            executor.submit(
+                _build_candidate_plan_batch,
+                text_chunk,
+                for_stage1=for_stage1,
+                corpus_stats_payload=corpus_stats_payload,
+                base_plans={text: (base_plans or {}).get(text) for text in text_chunk},
+            )
+            for text_chunk in text_chunks
+        ]
+        for future in futures:
+            merged_plans.update(future.result())
+    return merged_plans
+
+
+def build_prepared_training_corpus(
+    tags: list[str],
+    texts: list[str],
+    *,
+    corpus_workers: int | None = None,
+) -> dict:
     tag_frequency_items = build_frequency_items(tags)
     text_frequency_items = build_frequency_items(texts)
     tag_counter = Counter(dict(tag_frequency_items))
     text_counter = Counter(dict(text_frequency_items))
-    raw_tag_candidate_plans = {
-        tag: build_candidate_plan(
-            tag,
-            for_stage1=True,
-            corpus_stats=None,
-        )
-        for tag, _ in tag_frequency_items
-    }
-    raw_text_candidate_plans = {
-        text: build_candidate_plan(
-            text,
-            for_stage1=False,
-            corpus_stats=None,
-        )
-        for text, _ in text_frequency_items
-    }
+    raw_tag_candidate_plans = parallel_build_candidate_plans(
+        tag_frequency_items,
+        for_stage1=True,
+        corpus_stats=None,
+        max_workers=corpus_workers,
+    )
+    raw_text_candidate_plans = parallel_build_candidate_plans(
+        text_frequency_items,
+        for_stage1=False,
+        corpus_stats=None,
+        max_workers=corpus_workers,
+    )
     tag_corpus_stats = CoreCorpusStats().fit(
         for_stage1=True,
         text_counter=tag_counter,
@@ -646,34 +739,20 @@ def build_prepared_training_corpus(tags: list[str], texts: list[str]) -> dict:
         text_counter=text_counter,
         candidate_plans=raw_text_candidate_plans,
     )
-    tag_candidate_plans = {
-        tag: build_candidate_plan(
-            tag,
-            for_stage1=True,
-            corpus_stats=tag_corpus_stats,
-            normalized_text=(raw_tag_candidate_plans.get(tag) or {}).get("text"),
-            base_candidates=(raw_tag_candidate_plans.get(tag) or {}).get("candidates"),
-            base_candidate_units=(raw_tag_candidate_plans.get(tag) or {}).get(
-                "candidate_units"
-            ),
-        )
-        for tag, _ in tag_frequency_items
-    }
-    text_candidate_plans = {
-        text: build_candidate_plan(
-            text,
-            for_stage1=False,
-            corpus_stats=text_corpus_stats,
-            normalized_text=(raw_text_candidate_plans.get(text) or {}).get("text"),
-            base_candidates=(raw_text_candidate_plans.get(text) or {}).get(
-                "candidates"
-            ),
-            base_candidate_units=(raw_text_candidate_plans.get(text) or {}).get(
-                "candidate_units"
-            ),
-        )
-        for text, _ in text_frequency_items
-    }
+    tag_candidate_plans = parallel_build_candidate_plans(
+        tag_frequency_items,
+        for_stage1=True,
+        corpus_stats=tag_corpus_stats,
+        base_plans=raw_tag_candidate_plans,
+        max_workers=corpus_workers,
+    )
+    text_candidate_plans = parallel_build_candidate_plans(
+        text_frequency_items,
+        for_stage1=False,
+        corpus_stats=text_corpus_stats,
+        base_plans=raw_text_candidate_plans,
+        max_workers=corpus_workers,
+    )
     return {
         "tag_frequency_items": tag_frequency_items,
         "text_frequency_items": text_frequency_items,
@@ -1031,13 +1110,23 @@ def load_or_collect_owner_rows(
     return owner_rows, stats
 
 
-def build_seed_dataset(scale: ScaleSpec, owner_rows: list[dict], seed: int) -> dict:
+def build_seed_dataset(
+    scale: ScaleSpec,
+    owner_rows: list[dict],
+    seed: int,
+    *,
+    corpus_workers: int | None = None,
+) -> dict:
     train_rows, eval_rows = split_owner_rows(
         owner_rows, scale.eval_owner_count, seed=seed
     )
     tags, texts = collect_training_texts(train_rows)
     prepared_corpus_started = time.perf_counter()
-    prepared_corpus = build_prepared_training_corpus(tags, texts)
+    prepared_corpus = build_prepared_training_corpus(
+        tags,
+        texts,
+        corpus_workers=corpus_workers,
+    )
     prepared_corpus_seconds = time.perf_counter() - prepared_corpus_started
     eval_profiles, eval_queries = build_eval_dataset(
         eval_rows, query_per_owner=scale.query_per_owner
@@ -1206,6 +1295,7 @@ def run_scale(
     seeds: list[int],
     run_dir: Path,
     max_workers: int | None,
+    corpus_workers: int | None,
     progress_interval: int,
     progress_log_seconds: int,
 ) -> list[dict]:
@@ -1240,7 +1330,12 @@ def run_scale(
     for seed in seeds:
         seed_run_dir = run_dir / f"seed-{seed}" if len(seeds) > 1 else run_dir
         monitor = CoreTokExperimentMonitor(seed_run_dir / scale.name)
-        dataset = build_seed_dataset(scale, owner_rows, seed)
+        dataset = build_seed_dataset(
+            scale,
+            owner_rows,
+            seed,
+            corpus_workers=corpus_workers,
+        )
         monitor.log_event(
             {
                 "event": "scale_dataset_ready",
@@ -1547,6 +1642,7 @@ def main(args: argparse.Namespace):
             seeds=seeds,
             run_dir=run_dir,
             max_workers=args.max_workers,
+            corpus_workers=args.corpus_workers,
             progress_interval=args.progress_interval,
             progress_log_seconds=args.progress_log_seconds,
         )
@@ -1591,6 +1687,7 @@ class CoreTokTrainArgParser(argparse.ArgumentParser):
         self.add_argument("--eval-owner-count-override", type=int, default=None)
         self.add_argument("--candidate-limit-override", type=int, default=None)
         self.add_argument("--max-workers", type=int, default=None)
+        self.add_argument("--corpus-workers", type=int, default=None)
         self.add_argument("--progress-interval", type=int, default=5000)
         self.add_argument("--progress-log-seconds", type=int, default=15)
 

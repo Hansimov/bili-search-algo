@@ -899,13 +899,28 @@ class _BaseCoreTokenizer:
         source_text: str | None,
         best_score: float,
     ) -> bool:
+        return self._allow_approximate_reuse_normalized(
+            normalize_core_text(candidate),
+            normalize_core_text(existing_token),
+            source_text=(normalize_core_text(source_text) if source_text else None),
+            best_score=best_score,
+        )
+
+    def _allow_approximate_reuse_normalized(
+        self,
+        candidate: str,
+        existing_token: str,
+        *,
+        source_text: str | None,
+        best_score: float,
+    ) -> bool:
         if best_score >= 0.98:
             return True
         if not source_text:
             return False
-        compact_source = _compact_core_text(source_text)
-        compact_existing = _compact_core_text(existing_token)
-        compact_candidate = _compact_core_text(candidate)
+        compact_source = _compact_normalized_text(source_text)
+        compact_existing = _compact_normalized_text(existing_token)
+        compact_candidate = _compact_normalized_text(candidate)
         if not compact_source or not compact_existing:
             return False
         if compact_existing in compact_source:
@@ -922,6 +937,22 @@ class _BaseCoreTokenizer:
         source_text: str | None = None,
     ) -> int | None:
         normalized_candidate = normalize_core_text(candidate)
+        normalized_source_text = (
+            normalize_core_text(source_text) if source_text else None
+        )
+        return self._materialize_token_normalized(
+            normalized_candidate,
+            allow_new_tokens=allow_new_tokens,
+            source_text=normalized_source_text,
+        )
+
+    def _materialize_token_normalized(
+        self,
+        normalized_candidate: str,
+        *,
+        allow_new_tokens: bool,
+        source_text: str | None = None,
+    ) -> int | None:
         if not normalized_candidate:
             return None
 
@@ -935,7 +966,7 @@ class _BaseCoreTokenizer:
         can_reuse_best = False
         if best_token_id is not None and best_score >= self.reuse_threshold:
             existing_token = self.lexicon.id_to_token.get(best_token_id) or ""
-            can_reuse_best = self._allow_approximate_reuse(
+            can_reuse_best = self._allow_approximate_reuse_normalized(
                 normalized_candidate,
                 existing_token,
                 source_text=source_text,
@@ -1004,6 +1035,27 @@ class CoreTagTokenizer(_BaseCoreTokenizer):
                 candidate,
                 allow_new_tokens=allow_new_tokens,
                 source_text=normalized,
+            )
+            if token_id is not None and token_id not in token_ids:
+                token_ids.append(token_id)
+            if len(token_ids) >= budget:
+                break
+        return token_ids
+
+    def _encode_normalized_candidates(
+        self,
+        candidates: list[str],
+        *,
+        allow_new_tokens: bool,
+        source_text: str,
+        budget: int,
+    ) -> list[int]:
+        token_ids = []
+        for candidate in candidates:
+            token_id = self._materialize_token_normalized(
+                candidate,
+                allow_new_tokens=allow_new_tokens,
+                source_text=source_text,
             )
             if token_id is not None and token_id not in token_ids:
                 token_ids.append(token_id)
@@ -1311,11 +1363,22 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
             unique_candidate_count = len(unique_candidates)
 
             persistent_exact_materialize_cache: dict[str, int | None] = {}
+            lexicon_touch_token = self.lexicon.touch_token
             for _ in range(max(epochs, 1)):
                 materialize_cache: dict[str, int | None] = dict(
                     persistent_exact_materialize_cache
                 )
-                for text, freq, ranked_candidates in ranked_text_plans:
+                pending_touch_deltas: dict[int, int] = {}
+
+                def flush_pending_touch_deltas():
+                    for token_id, delta in pending_touch_deltas.items():
+                        lexicon_touch_token(token_id, delta=delta)
+                    pending_touch_deltas.clear()
+
+                for text_index, (text, freq, ranked_candidates) in enumerate(
+                    ranked_text_plans,
+                    start=1,
+                ):
                     materialize_started = time.perf_counter()
                     token_ids = []
                     for candidate in ranked_candidates:
@@ -1323,7 +1386,9 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
                             materialize_cache_hits += 1
                             token_id = materialize_cache[candidate]
                             if token_id is not None:
-                                self.lexicon.touch_token(token_id)
+                                pending_touch_deltas[token_id] = (
+                                    pending_touch_deltas.get(token_id, 0) + 1
+                                )
                         else:
                             materialize_cache_misses += 1
                             token_id = self._materialize_token(
@@ -1344,9 +1409,19 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
                     if token_ids:
                         encoded.extend([token_ids] * int(freq))
                         extra_repeats = max(int(freq) - 1, 0)
-                        for token_id in token_ids:
-                            self.lexicon.touch_token(token_id, delta=extra_repeats)
+                        if extra_repeats:
+                            for token_id in token_ids:
+                                pending_touch_deltas[token_id] = (
+                                    pending_touch_deltas.get(token_id, 0)
+                                    + extra_repeats
+                                )
                     emit_seconds += time.perf_counter() - emit_started
+
+                    if text_index % 4096 == 0 or len(pending_touch_deltas) >= 65536:
+                        flush_pending_touch_deltas()
+
+                if pending_touch_deltas:
+                    flush_pending_touch_deltas()
         else:
             for _ in range(max(epochs, 1)):
                 stage_started = time.perf_counter()
