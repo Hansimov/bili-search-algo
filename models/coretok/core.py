@@ -418,10 +418,45 @@ class CoreTokenLexicon:
     token_signature_words: dict[int, tuple[int, ...]] = field(default_factory=dict)
     token_compact_texts: dict[int, str] = field(default_factory=dict)
     token_char_grams: dict[int, frozenset[str]] = field(default_factory=dict)
+    np_token_units: object | None = field(default=None, repr=False)
+    np_token_signatures: object | None = field(default=None, repr=False)
+    np_capacity: int = 0
+
+    def _ensure_numpy_capacity(self, token_id: int):
+        if np is None:
+            return
+        required_size = int(token_id) + 1
+        if (
+            self.np_token_units is not None
+            and self.np_token_signatures is not None
+            and self.np_capacity >= required_size
+        ):
+            return
+
+        capacity = max(self.np_capacity or 32, 32)
+        while capacity < required_size:
+            capacity *= 2
+
+        new_units = np.zeros(capacity, dtype=np.int16)
+        new_signatures = np.zeros(
+            (capacity, SIGNATURE_WORD_COUNT),
+            dtype=np.uint64,
+        )
+        if self.np_token_units is not None and self.np_token_signatures is not None:
+            new_units[: self.np_capacity] = self.np_token_units[: self.np_capacity]
+            new_signatures[: self.np_capacity] = self.np_token_signatures[
+                : self.np_capacity
+            ]
+
+        self.np_token_units = new_units
+        self.np_token_signatures = new_signatures
+        self.np_capacity = capacity
 
     def _index_token(self, token_id: int, token: str):
         token_compact = _compact_normalized_text(token)
         token_grams = frozenset(_char_ngrams_from_compact(token_compact))
+        token_units = count_mixed_units(token)
+        token_signature_words = _signature_words(token)
         for gram in token_grams:
             if not gram:
                 continue
@@ -429,10 +464,14 @@ class CoreTokenLexicon:
         first_char = token[:1]
         if first_char:
             self.first_char_to_ids.setdefault(first_char, set()).add(token_id)
-        self.token_units[token_id] = count_mixed_units(token)
-        self.token_signature_words[token_id] = _signature_words(token)
+        self.token_units[token_id] = token_units
+        self.token_signature_words[token_id] = token_signature_words
         self.token_compact_texts[token_id] = token_compact
         self.token_char_grams[token_id] = token_grams
+        self._ensure_numpy_capacity(token_id)
+        if self.np_token_units is not None and self.np_token_signatures is not None:
+            self.np_token_units[token_id] = token_units
+            self.np_token_signatures[token_id] = token_signature_words
 
     def _shortlist_candidate_ids(
         self,
@@ -448,11 +487,14 @@ class CoreTokenLexicon:
             return list(candidate_ids)
 
         ids_array = np.fromiter(candidate_ids, dtype=np.int32)
-        unit_array = np.fromiter(
-            (self.token_units.get(int(token_id), 0) for token_id in ids_array),
-            dtype=np.int16,
-            count=ids_array.size,
-        )
+        if self.np_token_units is not None:
+            unit_array = self.np_token_units[ids_array]
+        else:
+            unit_array = np.fromiter(
+                (self.token_units.get(int(token_id), 0) for token_id in ids_array),
+                dtype=np.int16,
+                count=ids_array.size,
+            )
         unit_mask = np.abs(unit_array - normalized_units) <= 4
         filtered_ids = ids_array[unit_mask]
         if filtered_ids.size == 0:
@@ -460,10 +502,16 @@ class CoreTokenLexicon:
         if filtered_ids.size <= SIGNATURE_SHORTLIST_SIZE:
             return filtered_ids.astype(int).tolist()
 
-        signature_matrix = np.asarray(
-            [self.token_signature_words[int(token_id)] for token_id in filtered_ids],
-            dtype=np.uint64,
-        )
+        if self.np_token_signatures is not None:
+            signature_matrix = self.np_token_signatures[filtered_ids]
+        else:
+            signature_matrix = np.asarray(
+                [
+                    self.token_signature_words[int(token_id)]
+                    for token_id in filtered_ids
+                ],
+                dtype=np.uint64,
+            )
         query_signature = np.asarray(_signature_words(normalized), dtype=np.uint64)
         and_bytes = np.bitwise_and(signature_matrix, query_signature).view(np.uint8)
         or_bytes = np.bitwise_or(signature_matrix, query_signature).view(np.uint8)
