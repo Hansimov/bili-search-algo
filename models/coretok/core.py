@@ -42,6 +42,10 @@ def _compact_core_text(text: str) -> str:
 
 def _is_degenerate_text(text: str) -> bool:
     normalized = normalize_core_text(text)
+    return _is_degenerate_normalized_text(normalized)
+
+
+def _is_degenerate_normalized_text(normalized: str) -> bool:
     if not normalized:
         return True
     unique_chars = {char for char in normalized if not char.isspace()}
@@ -108,18 +112,17 @@ class CoreCorpusStats:
 
         for text, freq in text_counter.items():
             normalized = normalize_core_text(text)
-            if _is_degenerate_text(normalized):
+            if _is_degenerate_normalized_text(normalized):
                 continue
             prepared_plan = (candidate_plans or {}).get(normalized)
             candidates = set((prepared_plan or {}).get("candidates") or [])
             if not candidates:
-                candidates = set(
-                    extract_core_candidates(
-                        normalized,
-                        for_stage1=for_stage1,
-                        corpus_stats=None,
-                    )
+                candidates, _ = _extract_core_candidates_and_units_normalized(
+                    normalized,
+                    for_stage1=for_stage1,
+                    corpus_stats=None,
                 )
+                candidates = set(candidates)
             if not candidates:
                 continue
             self.total_docs += int(freq)
@@ -223,7 +226,14 @@ class CoreCorpusStats:
 
 def is_low_info_text(text: str, corpus_stats: CoreCorpusStats | None = None) -> bool:
     normalized = normalize_core_text(text)
-    if _is_degenerate_text(normalized):
+    return _is_low_info_normalized_text(normalized, corpus_stats=corpus_stats)
+
+
+def _is_low_info_normalized_text(
+    normalized: str,
+    corpus_stats: CoreCorpusStats | None = None,
+) -> bool:
+    if _is_degenerate_normalized_text(normalized):
         return True
     if corpus_stats is not None and corpus_stats.is_stop_candidate(normalized):
         return True
@@ -235,7 +245,9 @@ def is_valid_stage1_tag(
     corpus_stats: CoreCorpusStats | None = None,
 ) -> bool:
     normalized = normalize_core_text(tag)
-    if not normalized or is_low_info_text(normalized, corpus_stats=corpus_stats):
+    if not normalized or _is_low_info_normalized_text(
+        normalized, corpus_stats=corpus_stats
+    ):
         return False
     if _count_mixed_units_normalized(normalized) > 8:
         return False
@@ -304,14 +316,11 @@ def build_candidate_plan(
             candidates.append(candidate)
             candidate_units.append(int(candidate_units_value))
     else:
-        candidates = extract_core_candidates(
+        candidates, candidate_units = _extract_core_candidates_and_units_normalized(
             normalized,
             for_stage1=for_stage1,
             corpus_stats=corpus_stats,
         )
-        candidate_units = [
-            _count_mixed_units_normalized(candidate) for candidate in candidates
-        ]
 
     return {
         "text": normalized,
@@ -411,29 +420,29 @@ def _balanced_cjk_parts(span: str) -> list[str]:
     ]
 
 
-def extract_core_candidates(
-    text: str,
+def _extract_core_candidates_and_units_normalized(
+    normalized: str,
     *,
     for_stage1: bool,
     corpus_stats: CoreCorpusStats | None = None,
-) -> list[str]:
-    normalized = normalize_core_text(text)
+) -> tuple[list[str], list[int]]:
     if not normalized:
-        return []
+        return [], []
 
     candidates = []
+    candidate_units = []
     seen = set()
 
-    def add(value: str):
-        candidate = normalize_core_text(value)
+    def add(candidate: str):
         if (
             not candidate
             or candidate in seen
-            or is_low_info_text(candidate, corpus_stats=corpus_stats)
+            or _is_low_info_normalized_text(candidate, corpus_stats=corpus_stats)
         ):
             return
         seen.add(candidate)
         candidates.append(candidate)
+        candidate_units.append(_count_mixed_units_normalized(candidate))
 
     add(normalized)
 
@@ -452,6 +461,21 @@ def extract_core_candidates(
                 if 2 <= len(part) <= 8:
                     add(part)
 
+    return candidates, candidate_units
+
+
+def extract_core_candidates(
+    text: str,
+    *,
+    for_stage1: bool,
+    corpus_stats: CoreCorpusStats | None = None,
+) -> list[str]:
+    normalized = normalize_core_text(text)
+    candidates, _ = _extract_core_candidates_and_units_normalized(
+        normalized,
+        for_stage1=for_stage1,
+        corpus_stats=corpus_stats,
+    )
     return candidates
 
 
