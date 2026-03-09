@@ -100,6 +100,17 @@ DEFAULT_SCALES = {
         stage1_epochs=2,
         stage2_epochs=2,
     ),
+    "large": ScaleSpec(
+        name="large",
+        max_videos=300000,
+        max_owners=4800,
+        min_owner_videos=8,
+        eval_owner_count=480,
+        candidate_limit=8,
+        query_per_owner=4,
+        stage1_epochs=2,
+        stage2_epochs=2,
+    ),
 }
 
 

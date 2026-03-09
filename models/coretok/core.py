@@ -52,12 +52,20 @@ def _is_degenerate_normalized_text(normalized: str) -> bool:
     return len(unique_chars) <= 1
 
 
+def _is_cjk_char(char: str) -> bool:
+    return "\u4e00" <= char <= "\u9fff"
+
+
+def _is_latin_alnum(char: str) -> bool:
+    return ("a" <= char <= "z") or ("0" <= char <= "9")
+
+
 def _count_cjk_chars_normalized(normalized: str) -> int:
-    return len(CJK_CHAR_RE.findall(normalized))
+    return sum(1 for char in normalized if _is_cjk_char(char))
 
 
 def _count_latin_chars_normalized(normalized: str) -> int:
-    return len(LATIN_CHAR_RE.findall(normalized))
+    return sum(1 for char in normalized if _is_latin_alnum(char))
 
 
 def _count_mixed_units_normalized(normalized: str) -> int:
@@ -245,6 +253,13 @@ def is_valid_stage1_tag(
     corpus_stats: CoreCorpusStats | None = None,
 ) -> bool:
     normalized = normalize_core_text(tag)
+    return _is_valid_stage1_tag_normalized(normalized, corpus_stats=corpus_stats)
+
+
+def _is_valid_stage1_tag_normalized(
+    normalized: str,
+    corpus_stats: CoreCorpusStats | None = None,
+) -> bool:
     if not normalized or _is_low_info_normalized_text(
         normalized, corpus_stats=corpus_stats
     ):
@@ -629,7 +644,10 @@ class CoreTokenLexicon:
         return token_id
 
     def get_token_id(self, token: str) -> int | None:
-        return self.token_to_id.get(normalize_core_text(token))
+        return self.get_token_id_normalized(normalize_core_text(token))
+
+    def get_token_id_normalized(self, normalized: str) -> int | None:
+        return self.token_to_id.get(normalized)
 
     def decode(self, token_ids: list[int]) -> list[str]:
         return [
@@ -640,6 +658,14 @@ class CoreTokenLexicon:
 
     def find_best_match(self, token: str) -> tuple[int | None, float]:
         normalized = normalize_core_text(token)
+        return self.find_best_match_normalized(normalized)
+
+    def find_best_match_normalized(
+        self,
+        normalized: str,
+    ) -> tuple[int | None, float]:
+        if not normalized:
+            return None, 0.0
         exact_id = self.token_to_id.get(normalized)
         if exact_id is not None:
             return exact_id, 1.0
@@ -650,8 +676,10 @@ class CoreTokenLexicon:
 
         best_token_id = None
         best_score = 0.0
+        normalized_compact = _compact_normalized_text(normalized)
+        normalized_grams = _char_ngrams_from_compact(normalized_compact)
         gram_postings = []
-        for gram in _char_ngrams(normalized):
+        for gram in normalized_grams:
             ids = self.gram_to_ids.get(gram)
             if ids:
                 gram_postings.append((len(ids), ids))
@@ -665,9 +693,7 @@ class CoreTokenLexicon:
         if not candidate_ids:
             candidate_ids = set(self.id_to_token.keys())
 
-        normalized_units = count_mixed_units(normalized)
-        normalized_compact = _compact_normalized_text(normalized)
-        normalized_grams = _char_ngrams_from_compact(normalized_compact)
+        normalized_units = _count_mixed_units_normalized(normalized)
         shortlisted_candidate_ids = self._shortlist_candidate_ids(
             normalized,
             candidate_ids,
@@ -701,7 +727,7 @@ class CoreTokenLexicon:
         return best_token_id, best_score
 
     def novelty_probability(self, token: str) -> float:
-        _, best_score = self.find_best_match(token)
+        _, best_score = self.find_best_match_normalized(normalize_core_text(token))
         return round(1.0 - best_score, 4)
 
     def to_dict(self) -> dict:
@@ -895,16 +921,22 @@ class _BaseCoreTokenizer:
         allow_new_tokens: bool,
         source_text: str | None = None,
     ) -> int | None:
-        existing_id = self.lexicon.get_token_id(candidate)
+        normalized_candidate = normalize_core_text(candidate)
+        if not normalized_candidate:
+            return None
+
+        existing_id = self.lexicon.get_token_id_normalized(normalized_candidate)
         if existing_id is not None:
             return self.lexicon.touch_token(existing_id)
 
-        best_token_id, best_score = self.lexicon.find_best_match(candidate)
+        best_token_id, best_score = self.lexicon.find_best_match_normalized(
+            normalized_candidate
+        )
         can_reuse_best = False
         if best_token_id is not None and best_score >= self.reuse_threshold:
             existing_token = self.lexicon.id_to_token.get(best_token_id) or ""
             can_reuse_best = self._allow_approximate_reuse(
-                candidate,
+                normalized_candidate,
                 existing_token,
                 source_text=source_text,
                 best_score=best_score,
@@ -922,7 +954,7 @@ class _BaseCoreTokenizer:
             and novelty_probability < self.novelty_threshold
         ):
             return best_token_id
-        return self.lexicon.add_token(candidate, source=self.source)
+        return self.lexicon.add_token(normalized_candidate, source=self.source)
 
     def decode(self, token_ids: list[int]) -> list[str]:
         return self.lexicon.decode(token_ids)
@@ -950,20 +982,28 @@ class CoreTagTokenizer(_BaseCoreTokenizer):
         allow_new_tokens: bool = False,
         candidate_plan: dict | None = None,
     ) -> list[int]:
-        if not is_valid_stage1_tag(tag, corpus_stats=self.corpus_stats):
+        normalized = normalize_core_text((candidate_plan or {}).get("text") or tag)
+        if not _is_valid_stage1_tag_normalized(
+            normalized, corpus_stats=self.corpus_stats
+        ):
             return []
-        budget = suggest_token_budget(tag)
-        token_ids = []
-        for candidate in self._choose_candidates(
-            tag,
-            budget=budget,
+        plan = self._get_candidate_plan(
+            normalized,
             for_stage1=True,
             prepared_plan=candidate_plan,
+        )
+        budget = int(plan.get("budget") or suggest_token_budget(normalized))
+        token_ids = []
+        for candidate in self._choose_candidates(
+            normalized,
+            budget=budget,
+            for_stage1=True,
+            prepared_plan=plan,
         ):
             token_id = self._materialize_token(
                 candidate,
                 allow_new_tokens=allow_new_tokens,
-                source_text=tag,
+                source_text=normalized,
             )
             if token_id is not None and token_id not in token_ids:
                 token_ids.append(token_id)
@@ -1057,14 +1097,14 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
         normalized = normalize_core_text(text)
         if not normalized:
             return []
-        budget = self._budget_for_text(normalized)
-        if budget <= 0:
-            return []
         plan = self._get_candidate_plan(
             normalized,
             for_stage1=False,
             prepared_plan=candidate_plan,
         )
+        budget = int(plan.get("budget") or self._budget_for_text(normalized))
+        if budget <= 0:
+            return []
         candidate_units = list(plan.get("candidate_units") or [])
         if not candidate_units:
             candidate_units = [
@@ -1088,6 +1128,12 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
 
     def _find_base_match(self, token: str) -> tuple[int | None, float]:
         normalized = normalize_core_text(token)
+        return self._find_base_match_normalized(normalized)
+
+    def _find_base_match_normalized(
+        self,
+        normalized: str,
+    ) -> tuple[int | None, float]:
         if not normalized:
             return None, 0.0
 
@@ -1095,15 +1141,17 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
         if cached is not None:
             return cached
 
-        exact_id = self.lexicon.get_token_id(normalized)
+        exact_id = self.lexicon.get_token_id_normalized(normalized)
         if exact_id is not None and exact_id in self.base_match_token_ids:
             self.base_match_cache[normalized] = (exact_id, 1.0)
             return exact_id, 1.0
 
         best_token_id = None
         best_score = 0.0
+        normalized_compact = _compact_normalized_text(normalized)
+        normalized_grams = _char_ngrams_from_compact(normalized_compact)
         gram_postings = []
-        for gram in _char_ngrams(normalized):
+        for gram in normalized_grams:
             ids = self.base_gram_to_ids.get(gram)
             if ids:
                 gram_postings.append((len(ids), ids))
@@ -1116,9 +1164,7 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
         if not candidate_ids:
             candidate_ids = set(self.base_match_token_ids)
 
-        normalized_units = count_mixed_units(normalized)
-        normalized_compact = _compact_normalized_text(normalized)
-        normalized_grams = _char_ngrams_from_compact(normalized_compact)
+        normalized_units = _count_mixed_units_normalized(normalized)
         candidate_ids = {
             token_id
             for token_id in candidate_ids
@@ -1152,11 +1198,17 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
         candidate_total_freq: int,
         min_new_token_freq: int,
     ) -> tuple[int | None, str]:
-        existing_id = self.lexicon.get_token_id(candidate)
+        normalized_candidate = normalize_core_text(candidate)
+        if not normalized_candidate:
+            return None, "skipped"
+
+        existing_id = self.lexicon.get_token_id_normalized(normalized_candidate)
         if existing_id is not None:
             return self.lexicon.touch_token(existing_id), "exact"
 
-        best_token_id, best_score = self._find_base_match(candidate)
+        best_token_id, best_score = self._find_base_match_normalized(
+            normalized_candidate
+        )
         if best_token_id is not None and best_score >= self.reuse_threshold:
             return self.lexicon.touch_token(best_token_id), "reuse"
 
@@ -1170,7 +1222,7 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
             return None, "skipped"
         if candidate_total_freq < min_new_token_freq:
             return None, "blocked_new"
-        return self.lexicon.add_token(candidate, source=self.source), "new"
+        return self.lexicon.add_token(normalized_candidate, source=self.source), "new"
 
     def encode(
         self,
@@ -1179,18 +1231,23 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
         allow_new_tokens: bool = False,
         candidate_plan: dict | None = None,
     ) -> list[int]:
-        normalized = normalize_core_text(text)
+        normalized = normalize_core_text((candidate_plan or {}).get("text") or text)
         if not normalized:
             return []
-        budget = self._budget_for_text(normalized)
+        plan = self._get_candidate_plan(
+            normalized,
+            for_stage1=False,
+            prepared_plan=candidate_plan,
+        )
+        budget = int(plan.get("budget") or self._budget_for_text(normalized))
         token_ids = []
         for candidate in self._choose_candidates(
             normalized,
             budget=budget,
             for_stage1=False,
-            prepared_plan=candidate_plan,
+            prepared_plan=plan,
         ):
-            if count_mixed_units(candidate) > 8:
+            if _count_mixed_units_normalized(candidate) > 8:
                 continue
             token_id = self._materialize_token(
                 candidate,
