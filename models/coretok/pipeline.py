@@ -114,7 +114,7 @@ class CoreTokTrainingPipeline:
         text_frequency_items: list[tuple[str, int]] | None = None,
         text_candidate_plans: dict[str, dict] | None = None,
         min_new_token_freq: int | None = None,
-        aggressive_materialize: bool = False,
+        aggressive_materialize: bool = True,
         stage2_workers: int | None = None,
     ) -> list[list[int]]:
         self.text_corpus_stats = self.text_corpus_stats or CoreCorpusStats().fit(

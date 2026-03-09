@@ -6,9 +6,11 @@ from models.coretok.core import (
     CoreTexTokenizer,
     CoreTokenLexicon,
     count_mixed_units,
+    extract_salient_text_candidates,
     is_valid_stage1_tag,
     suggest_token_budget,
 )
+from models.coretok.entity_vocab import CoreEntityVocab
 from models.coretok.pipeline import CoreTokTrainingPipeline
 
 
@@ -53,6 +55,47 @@ def test_core_tex_tokenizer_reuses_seed_tokens_before_creating_new_ones():
     assert any("黑神话悟空" in token for token in known_tokens)
     assert novel_tokens
     assert any("纳塔剧情拆包" in token or "纳塔剧情" in token for token in novel_tokens)
+
+
+def test_extract_salient_text_candidates_prefers_prefix_entities_over_generic_phrases():
+    entity_prior = CoreEntityVocab.from_records(
+        zh_records=[
+            ("欧莱雅", 10000, 10000),
+            ("杨思琦", 1000, 1000),
+            ("直播间", 200000, 200000),
+            ("聊天", 100000, 100000),
+        ],
+        en_records=[("swift", 50000, 50000)],
+    )
+    product_entities = extract_salient_text_candidates(
+        "欧莱雅胶原小蜜罐慕斯洁面乳125ml清洁保湿洗面奶护肤品三八节女神礼物",
+        max_entities=4,
+        entity_prior=entity_prior,
+    )
+    gossip_entities = extract_salient_text_candidates(
+        "直播间付费聊天，杨思琦被嘲吃相难看，转战内地后不断掉价",
+        max_entities=4,
+        entity_prior=entity_prior,
+    )
+
+    assert product_entities
+    assert product_entities[0] == "欧莱雅"
+    assert "杨思琦" in gossip_entities[:2]
+
+
+def test_build_candidate_plan_uses_entity_vocab_prior_for_text_entities():
+    entity_prior = CoreEntityVocab.from_records(
+        zh_records=[("黑神话悟空", 500000, 500000), ("流程解析", 10000, 10000)],
+        en_records=[("black myth", 3000, 3000)],
+    )
+
+    plan = build_candidate_plan(
+        "黑神话悟空流程解析",
+        for_stage1=False,
+        entity_prior=entity_prior,
+    )
+
+    assert "黑神话悟空" in plan["candidates"]
 
 
 def test_core_tex_tokenizer_rejects_non_substring_runtime_reuse():

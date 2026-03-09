@@ -103,6 +103,9 @@ def test_train_pipeline_exposes_stage2_substage_stats():
     assert pipeline.text_tokenizer.last_fit_stats["stage2_unique_candidate_count"] > 0
     assert "stage2_materialize_seconds" in pipeline.text_tokenizer.last_fit_stats
     assert "stage2_materialize_cache_hits" in pipeline.text_tokenizer.last_fit_stats
+    assert (
+        pipeline.text_tokenizer.last_fit_stats["stage2_aggressive_materialize"] is True
+    )
 
 
 def test_compute_stability_flags_consistent_scores_as_stable():

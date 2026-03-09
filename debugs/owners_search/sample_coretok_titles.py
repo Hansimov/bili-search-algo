@@ -14,6 +14,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from configs.envs import MONGO_ENVS
+from models.coretok.core import extract_salient_text_candidates
 from models.coretok.pipeline import CoreTokTrainingPipeline
 
 
@@ -48,6 +49,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bundle-path", type=str, default=DEFAULT_BUNDLE_PATH)
     parser.add_argument("--input-path", type=str, default=None)
     parser.add_argument("--output-path", type=str, default=None)
+    parser.add_argument("--entity-labels-path", type=str, default=None)
+    parser.add_argument("--bootstrap-entity-labels-path", type=str, default=None)
     parser.add_argument("--sample-output-path", type=str, default=None)
     parser.add_argument("--sample-size", type=int, default=12)
     parser.add_argument("--max-examples", type=int, default=12)
@@ -97,6 +100,70 @@ def title_length_bucket(title: str) -> str:
 
 def _normalize(value: str) -> str:
     return "".join((value or "").lower().split())
+
+
+def _doc_identity_key(doc: dict) -> tuple:
+    owner = doc.get("owner")
+    if isinstance(owner, dict):
+        owner_name = owner.get("name") or ""
+    else:
+        owner_name = owner or ""
+    return (
+        doc.get("title") or "",
+        doc.get("tid") or 0,
+        owner_name,
+        doc.get("pubdate") or 0,
+    )
+
+
+def _entity_matches_token(entity: str, token: str) -> bool:
+    normalized_entity = _normalize(entity)
+    normalized_token = _normalize(token)
+    if not normalized_entity or not normalized_token:
+        return False
+    return (
+        normalized_entity == normalized_token
+        or normalized_entity in normalized_token
+        or normalized_token in normalized_entity
+    )
+
+
+def build_bootstrap_entity_labels(docs: list[dict]) -> dict:
+    labeled_docs = []
+    for doc in docs:
+        title = (doc.get("title") or "").strip()
+        if not title:
+            continue
+        entities = extract_salient_text_candidates(title, max_entities=4)
+        labeled_docs.append(
+            {
+                "title": title,
+                "tid": doc.get("tid") or 0,
+                "owner": ((doc.get("owner") or {}).get("name") or ""),
+                "pubdate": doc.get("pubdate") or 0,
+                "primary_entity": entities[0] if entities else "",
+                "gold_entities": entities,
+                "label_source": "bootstrap",
+                "review_status": "needs_review",
+            }
+        )
+    return {
+        "label_version": "title-entity-v1",
+        "label_source": "bootstrap",
+        "doc_count": len(labeled_docs),
+        "docs": labeled_docs,
+    }
+
+
+def load_entity_labels(input_path: str | None) -> dict[tuple, dict]:
+    if not input_path:
+        return {}
+    payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
+    docs = payload.get("docs") or payload.get("rows") or payload or []
+    label_map = {}
+    for doc in docs:
+        label_map[_doc_identity_key(doc)] = doc
+    return label_map
 
 
 def find_non_substring_tokens(title: str, tokens: list[str]) -> list[str]:
@@ -347,6 +414,7 @@ def encode_titles(
     *,
     max_examples: int,
     include_rows: bool,
+    entity_labels: dict[tuple, dict] | None = None,
 ) -> dict:
     rows = []
     covered = 0
@@ -362,6 +430,13 @@ def encode_titles(
     failure_examples = []
     suspicious_examples = []
     suspicious_count = 0
+    entity_doc_count = 0
+    primary_entity_hit_count = 0
+    entity_recall_sum = 0.0
+    entity_precision_sum = 0.0
+    entity_f1_sum = 0.0
+    entity_success_examples = []
+    entity_failure_examples = []
 
     for doc in docs:
         title = (doc.get("title") or "").strip()
@@ -394,11 +469,69 @@ def encode_titles(
             "title": title,
             "owner": ((doc.get("owner") or {}).get("name") or ""),
             "tid": current_tid,
+            "pubdate": doc.get("pubdate") or 0,
             "view": current_view,
             "tags": (doc.get("tags") or "")[:120],
             "tag_tokens": tag_tokens,
             "text_tokens": text_tokens,
         }
+
+        label = (entity_labels or {}).get(_doc_identity_key(doc))
+        predicted_tokens = []
+        for token in tag_tokens + text_tokens:
+            if token not in predicted_tokens:
+                predicted_tokens.append(token)
+        if label:
+            gold_entities = [
+                entity for entity in (label.get("gold_entities") or []) if entity
+            ]
+            primary_entity = label.get("primary_entity") or ""
+            matched_entities = [
+                entity
+                for entity in gold_entities
+                if any(
+                    _entity_matches_token(entity, token) for token in predicted_tokens
+                )
+            ]
+            matched_tokens = [
+                token
+                for token in predicted_tokens
+                if any(_entity_matches_token(entity, token) for entity in gold_entities)
+            ]
+            recall = len(matched_entities) / max(len(gold_entities), 1)
+            precision = len(matched_tokens) / max(len(predicted_tokens), 1)
+            f1 = (
+                2 * recall * precision / (recall + precision)
+                if recall > 0 and precision > 0
+                else 0.0
+            )
+            primary_hit = bool(
+                primary_entity
+                and any(
+                    _entity_matches_token(primary_entity, token)
+                    for token in predicted_tokens
+                )
+            )
+            entity_doc_count += 1
+            primary_entity_hit_count += int(primary_hit)
+            entity_recall_sum += recall
+            entity_precision_sum += precision
+            entity_f1_sum += f1
+            row.update(
+                {
+                    "gold_entities": gold_entities,
+                    "primary_entity": primary_entity,
+                    "matched_entities": matched_entities,
+                    "entity_recall": round(recall, 4),
+                    "entity_precision": round(precision, 4),
+                    "entity_f1": round(f1, 4),
+                    "primary_entity_hit": primary_hit,
+                }
+            )
+            if primary_hit and len(entity_success_examples) < max_examples:
+                entity_success_examples.append(row)
+            if not primary_hit and len(entity_failure_examples) < max_examples:
+                entity_failure_examples.append(row)
         rows.append(row)
 
         suspicious_tokens = find_non_substring_tokens(title, tag_tokens + text_tokens)
@@ -453,9 +586,23 @@ def encode_titles(
         "coverage_by_title_length": coverage_by_title_length,
         "coverage_by_view_bucket": coverage_by_view_bucket,
         "coverage_by_tid": coverage_by_tid,
+        "entity_doc_count": entity_doc_count,
+        "primary_entity_hit_count": primary_entity_hit_count,
+        "primary_entity_hit_rate": round(
+            primary_entity_hit_count / max(entity_doc_count, 1),
+            4,
+        ),
+        "entity_macro_recall": round(entity_recall_sum / max(entity_doc_count, 1), 4),
+        "entity_macro_precision": round(
+            entity_precision_sum / max(entity_doc_count, 1),
+            4,
+        ),
+        "entity_macro_f1": round(entity_f1_sum / max(entity_doc_count, 1), 4),
         "success_examples": success_examples,
         "failure_examples": failure_examples,
         "suspicious_examples": suspicious_examples,
+        "entity_success_examples": entity_success_examples,
+        "entity_failure_examples": entity_failure_examples,
         "rows": rows if include_rows else [],
     }
 
@@ -483,17 +630,28 @@ def main():
         args.sample_output_path,
     )
 
+    if args.bootstrap_entity_labels_path:
+        write_json(
+            build_bootstrap_entity_labels(docs),
+            args.bootstrap_entity_labels_path,
+        )
+
+    entity_labels = load_entity_labels(args.entity_labels_path)
+
     result = {
         "bundle_path": args.bundle_path,
         "sampling_mode": args.sampling_mode,
         "window_count": args.window_count,
         "input_path": args.input_path,
         "sample_output_path": args.sample_output_path,
+        "entity_labels_path": args.entity_labels_path,
+        "bootstrap_entity_labels_path": args.bootstrap_entity_labels_path,
         **encode_titles(
             pipeline,
             docs,
             max_examples=args.max_examples,
             include_rows=args.include_rows,
+            entity_labels=entity_labels,
         ),
     }
     write_json(result, args.output_path)

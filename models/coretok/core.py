@@ -8,6 +8,8 @@ from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 
+from models.coretok.entity_vocab import CoreEntityVocab, get_default_core_entity_vocab
+
 try:
     import numpy as np
 except ImportError:
@@ -19,10 +21,51 @@ LATIN_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_\-\.]*")
 CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
 CJK_SPAN_RE = re.compile(r"[\u4e00-\u9fff]+")
 CORETEXT_SPLIT_RE = re.compile(r"[，,。.!！?？、;；:：()（）\[\]【】<>《》\-\|/\\\s]+")
+TEXT_ENTITY_PART_RE = re.compile(r"[a-z0-9]+|[\u4e00-\u9fff]+")
 SIGNATURE_WORD_COUNT = 4
 SIGNATURE_BIT_COUNT = SIGNATURE_WORD_COUNT * 64
 SIGNATURE_SHORTLIST_SIZE = 96
 SIGNATURE_SHORTLIST_MIN_CANDIDATES = 128
+ENTITY_GENERIC_SUBSTRINGS = {
+    "这个",
+    "那个",
+    "一定",
+    "真的",
+    "直播",
+    "聊天",
+    "轻松",
+    "解决",
+    "安排",
+    "省心",
+    "推荐",
+    "礼物",
+    "教程",
+    "来了",
+    "合集",
+    "视频",
+    "实战",
+    "日常",
+}
+ENTITY_SUFFIX_HINTS = {
+    "悟空",
+    "风机",
+    "面乳",
+    "牙膏",
+    "湿巾",
+    "软糖",
+    "礼盒",
+    "手机",
+    "相机",
+    "镜头",
+    "剧情",
+    "攻略",
+    "结局",
+    "角色",
+    "系列",
+}
+ENTITY_BOUNDARY_HINT_CHARS = set(
+    "被将把让和与跟同在于用做买选穿吃喝玩看送怼曝演谈聊称叫是为"
+)
 POPCOUNT_TABLE = (
     np.array([bin(index).count("1") for index in range(256)], dtype=np.uint8)
     if np is not None
@@ -408,6 +451,7 @@ def build_candidate_plan(
     normalized_text: str | None = None,
     base_candidates: list[str] | None = None,
     base_candidate_units: list[int] | None = None,
+    entity_prior: CoreEntityVocab | None = None,
 ) -> dict:
     normalized = (
         normalized_text if normalized_text is not None else normalize_core_text(text)
@@ -424,8 +468,8 @@ def build_candidate_plan(
         budget = suggest_token_budget(normalized)
     else:
         budget = max(
-            1,
-            min(6, math.ceil(_count_mixed_units_normalized(normalized) / 3)),
+            2,
+            min(8, math.ceil(_count_mixed_units_normalized(normalized) / 2.5)),
         )
 
     if base_candidates is not None:
@@ -449,6 +493,7 @@ def build_candidate_plan(
             normalized,
             for_stage1=for_stage1,
             corpus_stats=corpus_stats,
+            entity_prior=entity_prior,
         )
 
     return {
@@ -549,11 +594,355 @@ def _balanced_cjk_parts(span: str) -> list[str]:
     ]
 
 
+def _contains_cjk(text: str) -> bool:
+    return bool(CJK_CHAR_RE.search(text or ""))
+
+
+def _contains_digit(text: str) -> bool:
+    return any(char.isdigit() for char in (text or ""))
+
+
+def _candidate_start_index(source_text: str, candidate: str) -> int:
+    if not source_text or not candidate:
+        return -1
+    return source_text.find(candidate)
+
+
+def _lookup_entity_prior_score(
+    candidate: str,
+    entity_prior: CoreEntityVocab | None = None,
+) -> float:
+    if entity_prior is None:
+        entity_prior = get_default_core_entity_vocab()
+    return float(entity_prior.lookup_score(candidate) or 0.0)
+
+
+def _has_shorter_entity_prefix(
+    candidate: str,
+    entity_prior: CoreEntityVocab | None = None,
+) -> bool:
+    compact = _compact_normalized_text(candidate)
+    if len(compact) <= 3:
+        return False
+    if entity_prior is None:
+        entity_prior = get_default_core_entity_vocab()
+    for prefix_len in range(min(len(compact) - 1, 6), 1, -1):
+        prefix = compact[:prefix_len]
+        if entity_prior.lookup_score(prefix) > 0.0:
+            return True
+    return False
+
+
+def _looks_like_person_name_candidate(
+    candidate: str,
+    source_text: str,
+    candidate_start: int,
+) -> bool:
+    compact = _compact_normalized_text(candidate)
+    if not compact or not _contains_cjk(compact) or LATIN_CHAR_RE.search(compact):
+        return False
+    if len(compact) < 2 or len(compact) > 4:
+        return False
+    if candidate_start < 0:
+        return False
+    next_index = candidate_start + len(candidate)
+    next_char = source_text[next_index : next_index + 1]
+    return next_char in ENTITY_BOUNDARY_HINT_CHARS
+
+
+def _is_pure_number_candidate(candidate: str) -> bool:
+    compact = _compact_normalized_text(candidate)
+    return bool(compact) and compact.isdigit()
+
+
+def _iter_cjk_entity_candidates(span: str, *, for_stage1: bool) -> list[str]:
+    compact = span.strip()
+    if len(compact) < 2:
+        return []
+
+    candidates = []
+    seen = set()
+
+    def add(candidate: str):
+        if not candidate or candidate in seen:
+            return
+        seen.add(candidate)
+        candidates.append(candidate)
+
+    if len(compact) <= 8:
+        add(compact)
+
+    prefix_limit = min(len(compact), 6)
+    for length in range(2, prefix_limit + 1):
+        add(compact[:length])
+
+    if len(compact) > 4:
+        for length in range(2, min(len(compact), 4) + 1):
+            add(compact[-length:])
+
+    for index, char in enumerate(compact):
+        if char not in ENTITY_BOUNDARY_HINT_CHARS:
+            continue
+        prefix = compact[:index]
+        suffix = compact[index + 1 :]
+        if 2 <= len(prefix) <= 8:
+            add(prefix)
+        if 2 <= len(suffix) <= 8:
+            add(suffix)
+
+    if not for_stage1:
+        max_window = min(len(compact), 5)
+        max_start = min(max(len(compact) - 1, 1), 2)
+        for start in range(max_start):
+            for length in range(2, max_window + 1):
+                end = start + length
+                if end > len(compact):
+                    break
+                add(compact[start:end])
+
+    return candidates
+
+
+def _extract_entity_like_candidates_from_chunk(
+    chunk: str,
+    *,
+    for_stage1: bool,
+    add_candidate,
+):
+    parts = TEXT_ENTITY_PART_RE.findall(chunk)
+    if not parts:
+        return
+
+    for part in parts:
+        if LATIN_TOKEN_RE.fullmatch(part):
+            if len(part) >= 2:
+                add_candidate(part)
+            continue
+        if CJK_SPAN_RE.fullmatch(part):
+            for candidate in _iter_cjk_entity_candidates(part, for_stage1=for_stage1):
+                add_candidate(candidate)
+
+    max_parts = 2 if for_stage1 else 3
+    for start in range(len(parts)):
+        assembled = ""
+        for width in range(max_parts):
+            index = start + width
+            if index >= len(parts):
+                break
+            assembled += parts[index]
+            candidate_units = _count_mixed_units_normalized(assembled)
+            if candidate_units > 8:
+                break
+            if candidate_units >= 2:
+                add_candidate(assembled)
+
+
+def _score_text_entity_candidate(
+    candidate: str,
+    *,
+    source_text: str,
+    candidate_units: int,
+    corpus_stats: CoreCorpusStats | None = None,
+    entity_prior: CoreEntityVocab | None = None,
+) -> float:
+    normalized_candidate = normalize_core_text(candidate)
+    normalized_source = normalize_core_text(source_text)
+    if not normalized_candidate or not normalized_source:
+        return -999.0
+
+    compact = _compact_normalized_text(normalized_candidate)
+    candidate_start = _candidate_start_index(normalized_source, normalized_candidate)
+
+    score = 0.0
+    if corpus_stats is not None:
+        coverage = float(corpus_stats.coverage(normalized_candidate))
+        score += min(max(-math.log10(max(coverage, 1e-6)) - 1.0, 0.0), 6.0)
+    entity_prior_score = _lookup_entity_prior_score(
+        candidate, entity_prior=entity_prior
+    )
+    score += min(entity_prior_score * 0.35, 4.5)
+
+    if candidate_units == 2:
+        score += 1.8
+    elif 3 <= candidate_units <= 4:
+        score += 3.1
+    elif candidate_units == 5:
+        score += 2.2
+    elif candidate_units <= 6:
+        score += 1.5
+    elif candidate_units <= 8:
+        score += 0.6
+    else:
+        score -= 4.0
+
+    if candidate_start == 0:
+        score += 2.5
+    elif 0 < candidate_start <= 2:
+        score += 1.4
+    elif candidate_start > 2:
+        score += max(0.0, 0.8 - candidate_start * 0.08)
+
+    if candidate_start > 0:
+        previous_char = normalized_source[candidate_start - 1 : candidate_start]
+        if previous_char in {
+            "，",
+            ",",
+            "。",
+            ".",
+            "!",
+            "！",
+            "?",
+            "？",
+            "、",
+            ";",
+            "；",
+            ":",
+            "：",
+            "#",
+        }:
+            score += 1.8
+
+    if normalized_candidate == normalized_source and candidate_units > 6:
+        score -= 5.0
+
+    if (
+        entity_prior_score <= 0.0
+        and candidate_start == 0
+        and _contains_cjk(normalized_candidate)
+        and _has_shorter_entity_prefix(normalized_candidate, entity_prior=entity_prior)
+    ):
+        score -= 3.0
+
+    if _is_pure_number_candidate(normalized_candidate):
+        score -= 4.0
+    elif _contains_digit(compact):
+        score += 0.6 if LATIN_CHAR_RE.search(compact) else -0.4
+
+    if _contains_cjk(normalized_candidate) and LATIN_CHAR_RE.search(
+        normalized_candidate
+    ):
+        score += 1.6
+
+    cjk_len = _count_cjk_chars_normalized(normalized_candidate)
+    if candidate_start == 0 and 2 <= cjk_len <= 4:
+        score += 2.3
+    elif candidate_start == 0 and cjk_len == 5:
+        score += 1.2
+
+    if candidate_start == 0:
+        next_char = normalized_source[
+            len(normalized_candidate) : len(normalized_candidate) + 1
+        ]
+        if (
+            cjk_len == 2
+            and next_char
+            and _contains_cjk(next_char)
+            and not _contains_digit(normalized_candidate)
+            and not LATIN_CHAR_RE.search(normalized_candidate)
+        ):
+            score -= 2.4
+        if (
+            cjk_len >= 4
+            and next_char
+            and _contains_cjk(next_char)
+            and not any(
+                normalized_candidate.endswith(suffix) for suffix in ENTITY_SUFFIX_HINTS
+            )
+            and not _contains_digit(normalized_candidate)
+            and not LATIN_CHAR_RE.search(normalized_candidate)
+        ):
+            score -= 1.2 + max(cjk_len - 4, 0) * 0.6
+
+    if _looks_like_person_name_candidate(
+        normalized_candidate,
+        normalized_source,
+        candidate_start,
+    ):
+        score += 3.0
+
+    if any(normalized_candidate.endswith(suffix) for suffix in ENTITY_SUFFIX_HINTS):
+        score += 0.8
+
+    if any(term in normalized_candidate for term in ENTITY_GENERIC_SUBSTRINGS):
+        score -= 2.5
+
+    if normalized_candidate[:1] in {"这", "那", "该", "此"}:
+        score -= 1.5
+    if "的" in normalized_candidate and len(compact) <= 6:
+        score -= 1.2
+    if len(set(compact)) <= 1:
+        score -= 4.0
+
+    return round(score, 4)
+
+
+def extract_salient_text_candidates(
+    text: str,
+    *,
+    corpus_stats: CoreCorpusStats | None = None,
+    max_entities: int | None = None,
+    entity_prior: CoreEntityVocab | None = None,
+) -> list[str]:
+    normalized = normalize_core_text(text)
+    if not normalized:
+        return []
+    entity_prior = entity_prior or get_default_core_entity_vocab()
+    candidates, candidate_units = _extract_core_candidates_and_units_normalized(
+        normalized,
+        for_stage1=False,
+        corpus_stats=corpus_stats,
+        entity_prior=entity_prior,
+    )
+    ranked = sorted(
+        [
+            (
+                _score_text_entity_candidate(
+                    candidate,
+                    source_text=normalized,
+                    candidate_units=int(units),
+                    corpus_stats=corpus_stats,
+                    entity_prior=entity_prior,
+                ),
+                candidate,
+                int(units),
+            )
+            for candidate, units in zip(candidates, candidate_units)
+        ],
+        key=lambda item: (item[0], len(item[1]), item[1]),
+        reverse=True,
+    )
+    selected = []
+    for score, candidate, candidate_units_value in ranked:
+        if candidate_units_value > 8:
+            continue
+        if score < 4.0:
+            continue
+        compact_candidate = _compact_normalized_text(candidate)
+        if any(
+            compact_candidate != _compact_normalized_text(existing)
+            and compact_candidate in _compact_normalized_text(existing)
+            for existing in selected
+        ):
+            continue
+        selected = [
+            existing
+            for existing in selected
+            if _compact_normalized_text(existing) not in compact_candidate
+            or _compact_normalized_text(existing) == compact_candidate
+        ]
+        if candidate not in selected:
+            selected.append(candidate)
+        if max_entities is not None and len(selected) >= max_entities:
+            break
+    return selected
+
+
 def _extract_core_candidates_and_units_normalized(
     normalized: str,
     *,
     for_stage1: bool,
     corpus_stats: CoreCorpusStats | None = None,
+    entity_prior: CoreEntityVocab | None = None,
 ) -> tuple[list[str], list[int]]:
     if not normalized:
         return [], []
@@ -573,22 +962,36 @@ def _extract_core_candidates_and_units_normalized(
         candidates.append(candidate)
         candidate_units.append(_count_mixed_units_normalized(candidate))
 
-    add(normalized)
+    if for_stage1 or _count_mixed_units_normalized(normalized) <= 8:
+        add(normalized)
+
+    if not for_stage1:
+        entity_prior = entity_prior or get_default_core_entity_vocab()
+        for candidate in entity_prior.extract_candidates(normalized, max_candidates=12):
+            add(candidate)
 
     for token in LATIN_TOKEN_RE.findall(normalized):
         if len(token) >= 2:
             add(token)
 
+    fallback_budget = 6 if for_stage1 else 3
+    fallback_count = 0
     cjk_source = [normalized] if for_stage1 else CORETEXT_SPLIT_RE.split(normalized)
     for chunk in cjk_source:
-        for span in CJK_SPAN_RE.findall(chunk):
-            if len(span) < 2:
-                continue
-            if len(span) <= 8:
-                add(span)
-            for part in _balanced_cjk_parts(span):
-                if 2 <= len(part) <= 8:
-                    add(part)
+        if not chunk:
+            continue
+        before_count = len(candidates)
+        _extract_entity_like_candidates_from_chunk(
+            chunk,
+            for_stage1=for_stage1,
+            add_candidate=add,
+        )
+        if not for_stage1 and len(candidates) - before_count > fallback_budget:
+            del candidates[before_count + fallback_budget :]
+            del candidate_units[before_count + fallback_budget :]
+        fallback_count += max(len(candidates) - before_count, 0)
+        if not for_stage1 and fallback_count >= fallback_budget:
+            break
 
     return candidates, candidate_units
 
@@ -935,7 +1338,21 @@ class _BaseCoreTokenizer:
         budget: int,
         *,
         candidate_units: int,
+        source_text: str | None = None,
+        for_stage1: bool = False,
     ) -> tuple[float, int, str]:
+        if not for_stage1 and source_text:
+            existing_id = self.lexicon.token_to_id.get(candidate)
+            freq_bonus = min(float(self.lexicon.token_freqs.get(existing_id, 0)), 8.0)
+            score = _score_text_entity_candidate(
+                candidate,
+                source_text=source_text,
+                candidate_units=candidate_units,
+                corpus_stats=self.corpus_stats,
+                entity_prior=get_default_core_entity_vocab(),
+            )
+            return (score + freq_bonus * 0.15, candidate_units, candidate)
+
         whole_bonus = 4.0 if candidate_units <= 8 else 0.0
         freq_bonus = 0.0
         existing_id = self.lexicon.token_to_id.get(candidate)
@@ -969,6 +1386,7 @@ class _BaseCoreTokenizer:
                 normalized,
                 for_stage1=for_stage1,
                 corpus_stats=self.corpus_stats,
+                entity_prior=(None if for_stage1 else get_default_core_entity_vocab()),
             )
             self._candidate_plan_cache[cache_key] = plan
         return plan
@@ -1000,6 +1418,8 @@ class _BaseCoreTokenizer:
                 item[0],
                 budget,
                 candidate_units=int(item[1]),
+                source_text=normalize_core_text(text),
+                for_stage1=for_stage1,
             ),
             reverse=True,
         )
@@ -1243,7 +1663,7 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
         units = _count_mixed_units_normalized(normalize_core_text(text))
         if units <= 0:
             return 0
-        return max(1, min(6, math.ceil(units / 3)))
+        return max(2, min(8, math.ceil(units / 2.5)))
 
     def _resolve_min_new_token_freq(
         self,
@@ -1612,7 +2032,7 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
         frequency_items: list[tuple[str, int]] | None = None,
         candidate_plans: dict[str, dict] | None = None,
         min_new_token_freq: int | None = None,
-        aggressive_materialize: bool = False,
+        aggressive_materialize: bool = True,
         stage2_workers: int | None = None,
     ) -> list[list[int]]:
         encoded = []

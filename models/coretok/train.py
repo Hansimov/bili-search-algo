@@ -770,7 +770,7 @@ def train_pipeline(
     texts: list[str],
     config: TuningConfig,
     prepared_corpus: dict | None = None,
-    aggressive_stage2_materialize: bool = False,
+    aggressive_stage2_materialize: bool = True,
     stage2_workers: int | None = None,
 ) -> CoreTokTrainingPipeline:
     pipeline, _ = train_pipeline_with_stats(
@@ -789,7 +789,7 @@ def train_pipeline_with_stats(
     texts: list[str],
     config: TuningConfig,
     prepared_corpus: dict | None = None,
-    aggressive_stage2_materialize: bool = False,
+    aggressive_stage2_materialize: bool = True,
     stage2_workers: int | None = None,
 ) -> tuple[CoreTokTrainingPipeline, dict]:
     pipeline = CoreTokTrainingPipeline(
@@ -1222,7 +1222,7 @@ def run_tuning_iteration(
     eval_profiles: list[dict],
     eval_queries: list[dict],
     candidate_bundle_path: str,
-    aggressive_stage2_materialize: bool = False,
+    aggressive_stage2_materialize: bool = True,
     stage2_workers: int | None = None,
 ) -> dict:
     started = time.perf_counter()
@@ -1707,7 +1707,17 @@ class CoreTokTrainArgParser(argparse.ArgumentParser):
         self.add_argument("--max-workers", type=int, default=None)
         self.add_argument("--corpus-workers", type=int, default=None)
         self.add_argument("--stage2-workers", type=int, default=None)
-        self.add_argument("--aggressive-stage2-materialize", action="store_true")
+        self.add_argument(
+            "--aggressive-stage2-materialize",
+            dest="aggressive_stage2_materialize",
+            action="store_true",
+        )
+        self.add_argument(
+            "--no-aggressive-stage2-materialize",
+            dest="aggressive_stage2_materialize",
+            action="store_false",
+        )
+        self.set_defaults(aggressive_stage2_materialize=True)
         self.add_argument("--progress-interval", type=int, default=5000)
         self.add_argument("--progress-log-seconds", type=int, default=15)
 
