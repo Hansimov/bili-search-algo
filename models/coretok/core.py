@@ -32,8 +32,12 @@ def normalize_core_text(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 
+def _compact_normalized_text(text: str) -> str:
+    return (text or "").replace(" ", "")
+
+
 def _compact_core_text(text: str) -> str:
-    return re.sub(r"\s+", "", normalize_core_text(text))
+    return _compact_normalized_text(normalize_core_text(text))
 
 
 def _is_degenerate_text(text: str) -> bool:
@@ -266,13 +270,62 @@ def build_candidate_plan(
     }
 
 
-def _char_ngrams(text: str) -> set[str]:
-    compact = _compact_core_text(text)
+def _char_ngrams_from_compact(compact: str) -> set[str]:
     if len(compact) <= 2:
         return {compact} if compact else set()
     grams = {compact[index : index + 2] for index in range(len(compact) - 1)}
     grams.add(compact)
     return grams
+
+
+def _char_ngrams(text: str) -> set[str]:
+    return _char_ngrams_from_compact(_compact_core_text(text))
+
+
+def _surface_overlap_score_with_features(
+    left: str,
+    right: str,
+    *,
+    compact_left: str | None = None,
+    compact_right: str | None = None,
+    left_grams: set[str] | frozenset[str] | None = None,
+    right_grams: set[str] | frozenset[str] | None = None,
+) -> float:
+    if left == right:
+        return 1.0
+
+    compact_left = (
+        compact_left if compact_left is not None else _compact_core_text(left)
+    )
+    compact_right = (
+        compact_right if compact_right is not None else _compact_core_text(right)
+    )
+    if compact_left and compact_right:
+        shorter = min(len(compact_left), len(compact_right))
+        longer = max(len(compact_left), len(compact_right))
+        containment = 0.0
+        if compact_left in compact_right or compact_right in compact_left:
+            containment = shorter / max(longer, 1)
+    else:
+        containment = 0.0
+
+    left_grams = (
+        left_grams
+        if left_grams is not None
+        else _char_ngrams_from_compact(compact_left)
+    )
+    right_grams = (
+        right_grams
+        if right_grams is not None
+        else _char_ngrams_from_compact(compact_right)
+    )
+    if not left_grams or not right_grams:
+        return containment
+
+    inter = len(left_grams & right_grams)
+    union = len(left_grams | right_grams)
+    jaccard = inter / union if union else 0.0
+    return max(jaccard, containment)
 
 
 def _signature_words(text: str) -> tuple[int, ...]:
@@ -288,26 +341,7 @@ def _signature_words(text: str) -> tuple[int, ...]:
 
 
 def _surface_overlap_score(left: str, right: str) -> float:
-    if left == right:
-        return 1.0
-    compact_left = _compact_core_text(left)
-    compact_right = _compact_core_text(right)
-    if compact_left and compact_right:
-        shorter = min(len(compact_left), len(compact_right))
-        longer = max(len(compact_left), len(compact_right))
-        containment = 0.0
-        if compact_left in compact_right or compact_right in compact_left:
-            containment = shorter / max(longer, 1)
-    else:
-        containment = 0.0
-    left_grams = _char_ngrams(left)
-    right_grams = _char_ngrams(right)
-    if not left_grams or not right_grams:
-        return containment
-    inter = len(left_grams & right_grams)
-    union = len(left_grams | right_grams)
-    jaccard = inter / union if union else 0.0
-    return max(jaccard, containment)
+    return _surface_overlap_score_with_features(left, right)
 
 
 def _balanced_cjk_parts(span: str) -> list[str]:
@@ -382,9 +416,13 @@ class CoreTokenLexicon:
     first_char_to_ids: dict[str, set[int]] = field(default_factory=dict)
     match_cache: dict[str, tuple[int | None, float]] = field(default_factory=dict)
     token_signature_words: dict[int, tuple[int, ...]] = field(default_factory=dict)
+    token_compact_texts: dict[int, str] = field(default_factory=dict)
+    token_char_grams: dict[int, frozenset[str]] = field(default_factory=dict)
 
     def _index_token(self, token_id: int, token: str):
-        for gram in _char_ngrams(token):
+        token_compact = _compact_normalized_text(token)
+        token_grams = frozenset(_char_ngrams_from_compact(token_compact))
+        for gram in token_grams:
             if not gram:
                 continue
             self.gram_to_ids.setdefault(gram, set()).add(token_id)
@@ -393,6 +431,8 @@ class CoreTokenLexicon:
             self.first_char_to_ids.setdefault(first_char, set()).add(token_id)
         self.token_units[token_id] = count_mixed_units(token)
         self.token_signature_words[token_id] = _signature_words(token)
+        self.token_compact_texts[token_id] = token_compact
+        self.token_char_grams[token_id] = token_grams
 
     def _shortlist_candidate_ids(
         self,
@@ -503,6 +543,8 @@ class CoreTokenLexicon:
             candidate_ids = set(self.id_to_token.keys())
 
         normalized_units = count_mixed_units(normalized)
+        normalized_compact = _compact_normalized_text(normalized)
+        normalized_grams = _char_ngrams_from_compact(normalized_compact)
         shortlisted_candidate_ids = self._shortlist_candidate_ids(
             normalized,
             candidate_ids,
@@ -521,7 +563,14 @@ class CoreTokenLexicon:
             existing = self.id_to_token.get(token_id)
             if not existing:
                 continue
-            score = _surface_overlap_score(normalized, existing)
+            score = _surface_overlap_score_with_features(
+                normalized,
+                existing,
+                compact_left=normalized_compact,
+                compact_right=self.token_compact_texts.get(token_id),
+                left_grams=normalized_grams,
+                right_grams=self.token_char_grams.get(token_id),
+            )
             if score > best_score:
                 best_token_id = token_id
                 best_score = score
@@ -905,6 +954,8 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
             candidate_ids = set(self.base_match_token_ids)
 
         normalized_units = count_mixed_units(normalized)
+        normalized_compact = _compact_normalized_text(normalized)
+        normalized_grams = _char_ngrams_from_compact(normalized_compact)
         candidate_ids = {
             token_id
             for token_id in candidate_ids
@@ -915,7 +966,14 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
             existing = self.lexicon.id_to_token.get(token_id)
             if not existing:
                 continue
-            score = _surface_overlap_score(normalized, existing)
+            score = _surface_overlap_score_with_features(
+                normalized,
+                existing,
+                compact_left=normalized_compact,
+                compact_right=self.lexicon.token_compact_texts.get(token_id),
+                left_grams=normalized_grams,
+                right_grams=self.lexicon.token_char_grams.get(token_id),
+            )
             if score > best_score:
                 best_token_id = token_id
                 best_score = score
@@ -1014,7 +1072,7 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
 
         if resolved_min_new_token_freq <= 1:
             stage_started = time.perf_counter()
-            candidate_counter = Counter()
+            unique_candidates = set()
             ranked_text_plans = []
             for text, freq in frequency_items:
                 normalized_text = normalize_core_text(text)
@@ -1028,10 +1086,9 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
                 ranked_text_plans.append(
                     (normalized_text, int(freq), ranked_candidates)
                 )
-                for candidate in ranked_candidates:
-                    candidate_counter[candidate] += int(freq)
+                unique_candidates.update(ranked_candidates)
             rank_seconds += time.perf_counter() - stage_started
-            unique_candidate_count = len(candidate_counter)
+            unique_candidate_count = len(unique_candidates)
 
             for _ in range(max(epochs, 1)):
                 materialize_cache: dict[str, int | None] = {}
