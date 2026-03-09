@@ -48,22 +48,33 @@ def _is_degenerate_text(text: str) -> bool:
     return len(unique_chars) <= 1
 
 
-def count_mixed_units(text: str) -> int:
-    normalized = normalize_core_text(text)
+def _count_cjk_chars_normalized(normalized: str) -> int:
+    return len(CJK_CHAR_RE.findall(normalized))
+
+
+def _count_latin_chars_normalized(normalized: str) -> int:
+    return len(LATIN_CHAR_RE.findall(normalized))
+
+
+def _count_mixed_units_normalized(normalized: str) -> int:
     if not normalized:
         return 0
-
-    cjk_chars = len(CJK_CHAR_RE.findall(normalized))
-    latin_chars = len(LATIN_CHAR_RE.findall(normalized))
+    cjk_chars = _count_cjk_chars_normalized(normalized)
+    latin_chars = _count_latin_chars_normalized(normalized)
     return cjk_chars + (math.ceil(latin_chars / 3) if latin_chars else 0)
 
 
+def count_mixed_units(text: str) -> int:
+    normalized = normalize_core_text(text)
+    return _count_mixed_units_normalized(normalized)
+
+
 def count_cjk_chars(text: str) -> int:
-    return len(CJK_CHAR_RE.findall(normalize_core_text(text)))
+    return _count_cjk_chars_normalized(normalize_core_text(text))
 
 
 def count_latin_chars(text: str) -> int:
-    return len(LATIN_CHAR_RE.findall(normalize_core_text(text)))
+    return _count_latin_chars_normalized(normalize_core_text(text))
 
 
 @dataclass
@@ -83,6 +94,7 @@ class CoreCorpusStats:
         *,
         for_stage1: bool,
         text_counter: Counter | None = None,
+        candidate_plans: dict[str, dict] | None = None,
     ) -> "CoreCorpusStats":
         self.total_docs = 0
         self.candidate_doc_freqs = Counter()
@@ -98,13 +110,16 @@ class CoreCorpusStats:
             normalized = normalize_core_text(text)
             if _is_degenerate_text(normalized):
                 continue
-            candidates = set(
-                extract_core_candidates(
-                    normalized,
-                    for_stage1=for_stage1,
-                    corpus_stats=None,
+            prepared_plan = (candidate_plans or {}).get(normalized)
+            candidates = set((prepared_plan or {}).get("candidates") or [])
+            if not candidates:
+                candidates = set(
+                    extract_core_candidates(
+                        normalized,
+                        for_stage1=for_stage1,
+                        corpus_stats=None,
+                    )
                 )
-            )
             if not candidates:
                 continue
             self.total_docs += int(freq)
@@ -119,7 +134,7 @@ class CoreCorpusStats:
                     int(freq),
                 )
                 for candidate, freq in self.candidate_doc_freqs.items()
-                if 2 <= count_mixed_units(candidate) <= 4
+                if 2 <= _count_mixed_units_normalized(candidate) <= 4
             ],
             key=lambda item: (item[1], item[2], len(item[0])),
             reverse=True,
@@ -152,7 +167,7 @@ class CoreCorpusStats:
                 continue
             coverage = self.coverage(candidate)
             if (
-                2 <= count_mixed_units(candidate) <= 4
+                2 <= _count_mixed_units_normalized(candidate) <= 4
                 and freq >= self.min_docs_for_stop
                 and coverage >= self.stop_coverage_threshold
             ):
@@ -222,11 +237,11 @@ def is_valid_stage1_tag(
     normalized = normalize_core_text(tag)
     if not normalized or is_low_info_text(normalized, corpus_stats=corpus_stats):
         return False
-    if count_mixed_units(normalized) > 8:
+    if _count_mixed_units_normalized(normalized) > 8:
         return False
-    if count_cjk_chars(normalized) > 8:
+    if _count_cjk_chars_normalized(normalized) > 8:
         return False
-    if count_latin_chars(normalized) > 24:
+    if _count_latin_chars_normalized(normalized) > 24:
         return False
     return bool(CJK_CHAR_RE.search(normalized) or LATIN_CHAR_RE.search(normalized))
 
@@ -249,24 +264,60 @@ def build_candidate_plan(
     *,
     for_stage1: bool,
     corpus_stats: CoreCorpusStats | None = None,
+    normalized_text: str | None = None,
+    base_candidates: list[str] | None = None,
+    base_candidate_units: list[int] | None = None,
 ) -> dict:
-    normalized = normalize_core_text(text)
+    normalized = (
+        normalized_text if normalized_text is not None else normalize_core_text(text)
+    )
     if not normalized:
-        return {"text": "", "budget": 0, "candidates": []}
+        return {
+            "text": "",
+            "budget": 0,
+            "candidates": [],
+            "candidate_units": [],
+        }
 
     if for_stage1:
         budget = suggest_token_budget(normalized)
     else:
-        budget = max(1, min(6, math.ceil(count_mixed_units(normalized) / 3)))
+        budget = max(
+            1,
+            min(6, math.ceil(_count_mixed_units_normalized(normalized) / 3)),
+        )
+
+    if base_candidates is not None:
+        raw_candidates = list(base_candidates)
+        raw_candidate_units = list(base_candidate_units or [])
+        if not raw_candidate_units:
+            raw_candidate_units = [
+                _count_mixed_units_normalized(candidate) for candidate in raw_candidates
+            ]
+        candidates = []
+        candidate_units = []
+        for candidate, candidate_units_value in zip(
+            raw_candidates, raw_candidate_units
+        ):
+            if is_low_info_text(candidate, corpus_stats=corpus_stats):
+                continue
+            candidates.append(candidate)
+            candidate_units.append(int(candidate_units_value))
+    else:
+        candidates = extract_core_candidates(
+            normalized,
+            for_stage1=for_stage1,
+            corpus_stats=corpus_stats,
+        )
+        candidate_units = [
+            _count_mixed_units_normalized(candidate) for candidate in candidates
+        ]
 
     return {
         "text": normalized,
         "budget": budget,
-        "candidates": extract_core_candidates(
-            normalized,
-            for_stage1=for_stage1,
-            corpus_stats=corpus_stats,
-        ),
+        "candidates": candidates,
+        "candidate_units": candidate_units,
     }
 
 
@@ -708,12 +759,25 @@ class _BaseCoreTokenizer:
         self.last_fit_stats: dict = {}
 
     def _score_candidate(self, candidate: str, budget: int) -> tuple[float, int, str]:
-        whole_bonus = 4.0 if count_mixed_units(candidate) <= 8 else 0.0
+        return self._score_candidate_with_units(
+            candidate,
+            budget,
+            candidate_units=_count_mixed_units_normalized(candidate),
+        )
+
+    def _score_candidate_with_units(
+        self,
+        candidate: str,
+        budget: int,
+        *,
+        candidate_units: int,
+    ) -> tuple[float, int, str]:
+        whole_bonus = 4.0 if candidate_units <= 8 else 0.0
         freq_bonus = 0.0
-        existing_id = self.lexicon.get_token_id(candidate)
+        existing_id = self.lexicon.token_to_id.get(candidate)
         if existing_id is not None:
             freq_bonus = min(float(self.lexicon.token_freqs.get(existing_id, 0)), 8.0)
-        length_bonus = min(count_mixed_units(candidate), budget * 2)
+        length_bonus = min(candidate_units, budget * 2)
         return (whole_bonus + freq_bonus + length_bonus, len(candidate), candidate)
 
     def _get_candidate_plan(
@@ -730,6 +794,7 @@ class _BaseCoreTokenizer:
                 "text": normalize_core_text(prepared_plan.get("text") or normalized),
                 "budget": int(prepared_plan.get("budget") or 0),
                 "candidates": list(prepared_plan.get("candidates") or []),
+                "candidate_units": list(prepared_plan.get("candidate_units") or []),
             }
             self._candidate_plan_cache[cache_key] = plan
             return plan
@@ -758,12 +823,23 @@ class _BaseCoreTokenizer:
             prepared_plan=prepared_plan,
         )
         candidates = plan["candidates"]
-        ranked = sorted(
-            candidates,
-            key=lambda candidate: self._score_candidate(candidate, budget),
+        candidate_units = list(plan.get("candidate_units") or [])
+        if not candidates:
+            return []
+        if not candidate_units:
+            candidate_units = [
+                _count_mixed_units_normalized(candidate) for candidate in candidates
+            ]
+        ranked_candidates = sorted(
+            zip(candidates, candidate_units),
+            key=lambda item: self._score_candidate_with_units(
+                item[0],
+                budget,
+                candidate_units=int(item[1]),
+            ),
             reverse=True,
         )
-        return ranked[:budget]
+        return [candidate for candidate, _ in ranked_candidates[:budget]]
 
     def _allow_approximate_reuse(
         self,
@@ -934,7 +1010,7 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
                 self.base_first_char_to_ids.setdefault(first_char, set()).add(token_id)
 
     def _budget_for_text(self, text: str) -> int:
-        units = count_mixed_units(text)
+        units = _count_mixed_units_normalized(normalize_core_text(text))
         if units <= 0:
             return 0
         return max(1, min(6, math.ceil(units / 3)))
@@ -960,15 +1036,30 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
         budget = self._budget_for_text(normalized)
         if budget <= 0:
             return []
+        plan = self._get_candidate_plan(
+            normalized,
+            for_stage1=False,
+            prepared_plan=candidate_plan,
+        )
+        candidate_units = list(plan.get("candidate_units") or [])
+        if not candidate_units:
+            candidate_units = [
+                _count_mixed_units_normalized(candidate)
+                for candidate in (plan.get("candidates") or [])
+            ]
+        ranked_candidates = self._choose_candidates(
+            normalized,
+            budget=budget,
+            for_stage1=False,
+            prepared_plan=plan,
+        )
+        candidate_units_by_value = dict(
+            zip(plan.get("candidates") or [], candidate_units)
+        )
         return [
             candidate
-            for candidate in self._choose_candidates(
-                normalized,
-                budget=budget,
-                for_stage1=False,
-                prepared_plan=candidate_plan,
-            )
-            if count_mixed_units(candidate) <= 8
+            for candidate in ranked_candidates
+            if int(candidate_units_by_value.get(candidate, 0)) <= 8
         ]
 
     def _find_base_match(self, token: str) -> tuple[int | None, float]:

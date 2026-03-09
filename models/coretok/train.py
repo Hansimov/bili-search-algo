@@ -539,19 +539,42 @@ def build_prepared_training_corpus(tags: list[str], texts: list[str]) -> dict:
     text_frequency_items = build_frequency_items(texts)
     tag_counter = Counter(dict(tag_frequency_items))
     text_counter = Counter(dict(text_frequency_items))
+    raw_tag_candidate_plans = {
+        tag: build_candidate_plan(
+            tag,
+            for_stage1=True,
+            corpus_stats=None,
+        )
+        for tag, _ in tag_frequency_items
+    }
+    raw_text_candidate_plans = {
+        text: build_candidate_plan(
+            text,
+            for_stage1=False,
+            corpus_stats=None,
+        )
+        for text, _ in text_frequency_items
+    }
     tag_corpus_stats = CoreCorpusStats().fit(
         for_stage1=True,
         text_counter=tag_counter,
+        candidate_plans=raw_tag_candidate_plans,
     )
     text_corpus_stats = CoreCorpusStats().fit(
         for_stage1=False,
         text_counter=text_counter,
+        candidate_plans=raw_text_candidate_plans,
     )
     tag_candidate_plans = {
         tag: build_candidate_plan(
             tag,
             for_stage1=True,
             corpus_stats=tag_corpus_stats,
+            normalized_text=(raw_tag_candidate_plans.get(tag) or {}).get("text"),
+            base_candidates=(raw_tag_candidate_plans.get(tag) or {}).get("candidates"),
+            base_candidate_units=(raw_tag_candidate_plans.get(tag) or {}).get(
+                "candidate_units"
+            ),
         )
         for tag, _ in tag_frequency_items
     }
@@ -560,6 +583,13 @@ def build_prepared_training_corpus(tags: list[str], texts: list[str]) -> dict:
             text,
             for_stage1=False,
             corpus_stats=text_corpus_stats,
+            normalized_text=(raw_text_candidate_plans.get(text) or {}).get("text"),
+            base_candidates=(raw_text_candidate_plans.get(text) or {}).get(
+                "candidates"
+            ),
+            base_candidate_units=(raw_text_candidate_plans.get(text) or {}).get(
+                "candidate_units"
+            ),
         )
         for text, _ in text_frequency_items
     }
