@@ -770,12 +770,16 @@ def train_pipeline(
     texts: list[str],
     config: TuningConfig,
     prepared_corpus: dict | None = None,
+    aggressive_stage2_materialize: bool = False,
+    stage2_workers: int | None = None,
 ) -> CoreTokTrainingPipeline:
     pipeline, _ = train_pipeline_with_stats(
         tags,
         texts,
         config,
         prepared_corpus=prepared_corpus,
+        aggressive_stage2_materialize=aggressive_stage2_materialize,
+        stage2_workers=stage2_workers,
     )
     return pipeline
 
@@ -785,6 +789,8 @@ def train_pipeline_with_stats(
     texts: list[str],
     config: TuningConfig,
     prepared_corpus: dict | None = None,
+    aggressive_stage2_materialize: bool = False,
+    stage2_workers: int | None = None,
 ) -> tuple[CoreTokTrainingPipeline, dict]:
     pipeline = CoreTokTrainingPipeline(
         tag_tokenizer=CoreTagTokenizer(),
@@ -838,6 +844,8 @@ def train_pipeline_with_stats(
         text_counter=text_counter,
         text_frequency_items=text_frequency_items,
         text_candidate_plans=text_candidate_plans,
+        aggressive_materialize=aggressive_stage2_materialize,
+        stage2_workers=stage2_workers,
     )
     stage2_seconds = time.perf_counter() - stage_started
     stage2_fit_stats = getattr(pipeline.text_tokenizer, "last_fit_stats", {})
@@ -1214,6 +1222,8 @@ def run_tuning_iteration(
     eval_profiles: list[dict],
     eval_queries: list[dict],
     candidate_bundle_path: str,
+    aggressive_stage2_materialize: bool = False,
+    stage2_workers: int | None = None,
 ) -> dict:
     started = time.perf_counter()
     config = TuningConfig(**config_payload)
@@ -1222,6 +1232,8 @@ def run_tuning_iteration(
         [],
         config,
         prepared_corpus=prepared_corpus,
+        aggressive_stage2_materialize=aggressive_stage2_materialize,
+        stage2_workers=stage2_workers,
     )
     metrics = evaluate_owner_retrieval(pipeline, eval_profiles, eval_queries)
     model_stats = summarize_pipeline(pipeline)
@@ -1296,6 +1308,8 @@ def run_scale(
     run_dir: Path,
     max_workers: int | None,
     corpus_workers: int | None,
+    aggressive_stage2_materialize: bool,
+    stage2_workers: int | None,
     progress_interval: int,
     progress_log_seconds: int,
 ) -> list[dict]:
@@ -1379,6 +1393,8 @@ def run_scale(
                     "eval_profiles": dataset["eval_profiles"],
                     "eval_queries": dataset["eval_queries"],
                     "candidate_bundle_path": str(candidate_bundle_path),
+                    "aggressive_stage2_materialize": aggressive_stage2_materialize,
+                    "stage2_workers": stage2_workers,
                 }
             )
 
@@ -1643,6 +1659,8 @@ def main(args: argparse.Namespace):
             run_dir=run_dir,
             max_workers=args.max_workers,
             corpus_workers=args.corpus_workers,
+            aggressive_stage2_materialize=args.aggressive_stage2_materialize,
+            stage2_workers=args.stage2_workers,
             progress_interval=args.progress_interval,
             progress_log_seconds=args.progress_log_seconds,
         )
@@ -1688,6 +1706,8 @@ class CoreTokTrainArgParser(argparse.ArgumentParser):
         self.add_argument("--candidate-limit-override", type=int, default=None)
         self.add_argument("--max-workers", type=int, default=None)
         self.add_argument("--corpus-workers", type=int, default=None)
+        self.add_argument("--stage2-workers", type=int, default=None)
+        self.add_argument("--aggressive-stage2-materialize", action="store_true")
         self.add_argument("--progress-interval", type=int, default=5000)
         self.add_argument("--progress-log-seconds", type=int, default=15)
 

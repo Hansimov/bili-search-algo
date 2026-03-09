@@ -1,9 +1,11 @@
 import math
+import multiprocessing
 import re
 import time
 import zlib
 
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 
 try:
@@ -26,6 +28,118 @@ POPCOUNT_TABLE = (
     if np is not None
     else None
 )
+_AGGRESSIVE_STAGE2_MATCHER_STATE = None
+
+
+def _set_aggressive_stage2_matcher_state(state: dict | None):
+    global _AGGRESSIVE_STAGE2_MATCHER_STATE
+    _AGGRESSIVE_STAGE2_MATCHER_STATE = state
+
+
+def _find_aggressive_base_match_normalized(
+    normalized: str,
+) -> tuple[int | None, float]:
+    state = _AGGRESSIVE_STAGE2_MATCHER_STATE or {}
+    if not normalized:
+        return None, 0.0
+
+    match_cache = state.setdefault("match_cache", {})
+    cached = match_cache.get(normalized)
+    if cached is not None:
+        return cached
+
+    token_to_id = state.get("token_to_id") or {}
+    base_match_token_ids = state.get("base_match_token_ids") or set()
+    exact_id = token_to_id.get(normalized)
+    if exact_id is not None and exact_id in base_match_token_ids:
+        match_cache[normalized] = (exact_id, 1.0)
+        return exact_id, 1.0
+
+    best_token_id = None
+    best_score = 0.0
+    normalized_compact = _compact_normalized_text(normalized)
+    normalized_grams = _char_ngrams_from_compact(normalized_compact)
+    base_gram_to_ids = state.get("base_gram_to_ids") or {}
+    base_first_char_to_ids = state.get("base_first_char_to_ids") or {}
+    token_units = state.get("token_units") or {}
+    token_compact_texts = state.get("token_compact_texts") or {}
+    token_char_grams = state.get("token_char_grams") or {}
+    id_to_token = state.get("id_to_token") or {}
+
+    gram_postings = []
+    for gram in normalized_grams:
+        ids = base_gram_to_ids.get(gram)
+        if ids:
+            gram_postings.append((len(ids), ids))
+
+    candidate_ids = set()
+    for _, ids in sorted(gram_postings, key=lambda item: item[0])[:3]:
+        candidate_ids.update(ids)
+    if not candidate_ids:
+        candidate_ids = set(base_first_char_to_ids.get(normalized[:1]) or ())
+    if not candidate_ids:
+        candidate_ids = set(base_match_token_ids)
+
+    normalized_units = _count_mixed_units_normalized(normalized)
+    candidate_ids = {
+        token_id
+        for token_id in candidate_ids
+        if abs(token_units.get(token_id, 0) - normalized_units) <= 4
+    } or candidate_ids
+
+    for token_id in candidate_ids:
+        existing = id_to_token.get(token_id)
+        if not existing:
+            continue
+        score = _surface_overlap_score_with_features(
+            normalized,
+            existing,
+            compact_left=normalized_compact,
+            compact_right=token_compact_texts.get(token_id),
+            left_grams=normalized_grams,
+            right_grams=token_char_grams.get(token_id),
+        )
+        if score > best_score:
+            best_token_id = token_id
+            best_score = score
+
+    match_cache[normalized] = (best_token_id, best_score)
+    return best_token_id, best_score
+
+
+def _resolve_aggressive_stage2_candidates_batch(
+    candidates: list[str],
+    *,
+    reuse_threshold: float,
+    novelty_threshold: float,
+) -> dict[str, tuple[str, int | None]]:
+    resolved = {}
+    state = _AGGRESSIVE_STAGE2_MATCHER_STATE or {}
+    token_to_id = state.get("token_to_id") or {}
+    base_match_token_ids = state.get("base_match_token_ids") or set()
+
+    for candidate in candidates:
+        normalized_candidate = normalize_core_text(candidate)
+        if not normalized_candidate:
+            resolved[candidate] = ("skipped", None)
+            continue
+
+        existing_id = token_to_id.get(normalized_candidate)
+        if existing_id is not None and existing_id in base_match_token_ids:
+            resolved[candidate] = ("exact", existing_id)
+            continue
+
+        best_token_id, best_score = _find_aggressive_base_match_normalized(
+            normalized_candidate
+        )
+        if best_token_id is not None and best_score >= reuse_threshold:
+            resolved[candidate] = ("reuse", best_token_id)
+            continue
+        if best_token_id is not None and round(1.0 - best_score, 4) < novelty_threshold:
+            resolved[candidate] = ("fallback_reuse", best_token_id)
+            continue
+        resolved[candidate] = ("new", None)
+    return resolved
 
 
 def normalize_core_text(text: str) -> str:
@@ -1140,6 +1254,184 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
             return max(int(min_new_token_freq), 1)
         return 1
 
+    def _resolve_stage2_worker_count(
+        self,
+        stage2_workers: int | None,
+        unique_candidate_count: int,
+    ) -> int:
+        if unique_candidate_count < 5000:
+            return 1
+        available = multiprocessing.cpu_count() or 1
+        if stage2_workers is not None:
+            return max(1, min(int(stage2_workers), available))
+        return max(1, min(available // 2, 64))
+
+    def _resolve_unique_candidates_aggressively(
+        self,
+        unique_candidates: list[str],
+        *,
+        stage2_workers: int | None,
+    ) -> tuple[dict[str, tuple[str, int | None]], dict]:
+        worker_count = self._resolve_stage2_worker_count(
+            stage2_workers,
+            len(unique_candidates),
+        )
+        started = time.perf_counter()
+        if worker_count <= 1:
+            resolved = _resolve_aggressive_stage2_candidates_batch(
+                unique_candidates,
+                reuse_threshold=self.reuse_threshold,
+                novelty_threshold=self.novelty_threshold,
+            )
+            return resolved, {
+                "stage2_aggressive_materialize": True,
+                "stage2_worker_count": 1,
+                "stage2_parallel_candidate_resolve_seconds": round(
+                    time.perf_counter() - started,
+                    4,
+                ),
+            }
+
+        chunk_size = max(2048, math.ceil(len(unique_candidates) / (worker_count * 4)))
+        candidate_chunks = [
+            unique_candidates[index : index + chunk_size]
+            for index in range(0, len(unique_candidates), chunk_size)
+        ]
+        state = {
+            "token_to_id": self.lexicon.token_to_id,
+            "id_to_token": self.lexicon.id_to_token,
+            "token_units": self.lexicon.token_units,
+            "token_compact_texts": self.lexicon.token_compact_texts,
+            "token_char_grams": self.lexicon.token_char_grams,
+            "base_match_token_ids": self.base_match_token_ids,
+            "base_gram_to_ids": self.base_gram_to_ids,
+            "base_first_char_to_ids": self.base_first_char_to_ids,
+            "match_cache": {},
+        }
+        _set_aggressive_stage2_matcher_state(state)
+        resolved = {}
+        try:
+            with ProcessPoolExecutor(
+                max_workers=worker_count,
+                mp_context=multiprocessing.get_context("fork"),
+            ) as executor:
+                futures = [
+                    executor.submit(
+                        _resolve_aggressive_stage2_candidates_batch,
+                        chunk,
+                        reuse_threshold=self.reuse_threshold,
+                        novelty_threshold=self.novelty_threshold,
+                    )
+                    for chunk in candidate_chunks
+                ]
+                for future in futures:
+                    resolved.update(future.result())
+        finally:
+            _set_aggressive_stage2_matcher_state(None)
+
+        return resolved, {
+            "stage2_aggressive_materialize": True,
+            "stage2_worker_count": worker_count,
+            "stage2_parallel_candidate_resolve_seconds": round(
+                time.perf_counter() - started,
+                4,
+            ),
+        }
+
+    def _fit_aggressive_materialize(
+        self,
+        ranked_text_plans: list[tuple[str, int, list[str]]],
+        *,
+        epochs: int,
+        stage2_workers: int | None,
+    ) -> tuple[list[list[int]], dict]:
+        encoded = []
+        rankless_materialize_started = time.perf_counter()
+        unique_candidates = []
+        seen_candidates = set()
+        total_candidate_occurrences = 0
+        active_text_count = len(ranked_text_plans)
+
+        for _, _, ranked_candidates in ranked_text_plans:
+            total_candidate_occurrences += len(ranked_candidates)
+            for candidate in ranked_candidates:
+                if candidate in seen_candidates:
+                    continue
+                seen_candidates.add(candidate)
+                unique_candidates.append(candidate)
+
+        resolved_candidates, resolve_stats = (
+            self._resolve_unique_candidates_aggressively(
+                unique_candidates,
+                stage2_workers=stage2_workers,
+            )
+        )
+
+        candidate_to_token_id: dict[str, int | None] = {}
+        new_token_ids: set[int] = set()
+        decision_counts = Counter()
+        for candidate in unique_candidates:
+            decision, token_id = resolved_candidates.get(candidate, ("new", None))
+            decision_counts[decision] += 1
+            if decision == "new":
+                token_id = self.lexicon.add_token(candidate, source=self.source)
+                new_token_ids.add(token_id)
+            candidate_to_token_id[candidate] = token_id
+
+        pending_touch_deltas: dict[int, int] = {}
+        for _ in range(max(epochs, 1)):
+            for _, freq, ranked_candidates in ranked_text_plans:
+                token_ids = []
+                for candidate in ranked_candidates:
+                    token_id = candidate_to_token_id.get(candidate)
+                    if token_id is None:
+                        continue
+                    pending_touch_deltas[token_id] = (
+                        pending_touch_deltas.get(token_id, 0) + 1
+                    )
+                    if token_id not in token_ids:
+                        token_ids.append(token_id)
+                if token_ids:
+                    encoded.extend([token_ids] * int(freq))
+                    extra_repeats = max(int(freq) - 1, 0)
+                    if extra_repeats:
+                        for token_id in token_ids:
+                            pending_touch_deltas[token_id] = (
+                                pending_touch_deltas.get(token_id, 0) + extra_repeats
+                            )
+
+        for token_id in new_token_ids:
+            if token_id in pending_touch_deltas:
+                pending_touch_deltas[token_id] -= 1
+                if pending_touch_deltas[token_id] <= 0:
+                    pending_touch_deltas.pop(token_id, None)
+
+        for token_id, delta in pending_touch_deltas.items():
+            self.lexicon.touch_token(token_id, delta=delta)
+
+        total_occurrences = total_candidate_occurrences * max(epochs, 1)
+        materialize_cache_misses = len(unique_candidates)
+        materialize_cache_hits = max(total_occurrences - materialize_cache_misses, 0)
+        return encoded, {
+            **resolve_stats,
+            "stage2_materialize_seconds": round(
+                time.perf_counter() - rankless_materialize_started,
+                4,
+            ),
+            "stage2_emit_seconds": 0.0,
+            "stage2_unique_candidate_count": len(unique_candidates),
+            "stage2_active_text_count": active_text_count,
+            "stage2_materialize_cache_hits": materialize_cache_hits,
+            "stage2_materialize_cache_misses": materialize_cache_misses,
+            "stage2_exact_candidate_count": int(decision_counts.get("exact", 0)),
+            "stage2_reuse_candidate_count": int(decision_counts.get("reuse", 0)),
+            "stage2_fallback_reuse_count": int(
+                decision_counts.get("fallback_reuse", 0)
+            ),
+            "stage2_new_candidate_count": int(decision_counts.get("new", 0)),
+            "stage2_skipped_candidate_count": int(decision_counts.get("skipped", 0)),
+        }
+
     def _rank_text_candidates(
         self,
         text: str,
@@ -1320,6 +1612,8 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
         frequency_items: list[tuple[str, int]] | None = None,
         candidate_plans: dict[str, dict] | None = None,
         min_new_token_freq: int | None = None,
+        aggressive_materialize: bool = False,
+        stage2_workers: int | None = None,
     ) -> list[list[int]]:
         encoded = []
         fit_started = time.perf_counter()
@@ -1361,6 +1655,92 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
                 unique_candidates.update(ranked_candidates)
             rank_seconds += time.perf_counter() - stage_started
             unique_candidate_count = len(unique_candidates)
+
+            if aggressive_materialize:
+                encoded, aggressive_stats = self._fit_aggressive_materialize(
+                    ranked_text_plans,
+                    epochs=epochs,
+                    stage2_workers=stage2_workers,
+                )
+                materialize_seconds = float(
+                    aggressive_stats.get("stage2_materialize_seconds") or 0.0
+                )
+                emit_seconds = float(aggressive_stats.get("stage2_emit_seconds") or 0.0)
+                active_text_count = int(
+                    aggressive_stats.get("stage2_active_text_count")
+                    or active_text_count
+                )
+                unique_candidate_count = int(
+                    aggressive_stats.get("stage2_unique_candidate_count")
+                    or unique_candidate_count
+                )
+                materialize_cache_hits = int(
+                    aggressive_stats.get("stage2_materialize_cache_hits") or 0
+                )
+                materialize_cache_misses = int(
+                    aggressive_stats.get("stage2_materialize_cache_misses") or 0
+                )
+                for decision_key in [
+                    "stage2_exact_candidate_count",
+                    "stage2_reuse_candidate_count",
+                    "stage2_fallback_reuse_count",
+                    "stage2_new_candidate_count",
+                    "stage2_skipped_candidate_count",
+                ]:
+                    decision_counts[decision_key] += int(
+                        aggressive_stats.get(decision_key) or 0
+                    )
+                self.last_fit_stats = {
+                    "stage2_rank_seconds": round(rank_seconds, 4),
+                    "stage2_materialize_seconds": round(materialize_seconds, 4),
+                    "stage2_emit_seconds": round(emit_seconds, 4),
+                    "stage2_unique_text_count": len(frequency_items),
+                    "stage2_active_text_count": active_text_count,
+                    "stage2_unique_candidate_count": unique_candidate_count,
+                    "stage2_min_new_token_freq": resolved_min_new_token_freq,
+                    "stage2_exact_candidate_count": int(
+                        aggressive_stats.get("stage2_exact_candidate_count") or 0
+                    ),
+                    "stage2_reuse_candidate_count": int(
+                        aggressive_stats.get("stage2_reuse_candidate_count") or 0
+                    ),
+                    "stage2_fallback_reuse_count": int(
+                        aggressive_stats.get("stage2_fallback_reuse_count") or 0
+                    ),
+                    "stage2_new_candidate_count": int(
+                        aggressive_stats.get("stage2_new_candidate_count") or 0
+                    ),
+                    "stage2_blocked_new_candidate_count": 0,
+                    "stage2_skipped_candidate_count": int(
+                        aggressive_stats.get("stage2_skipped_candidate_count") or 0
+                    ),
+                    "stage2_materialize_cache_hits": materialize_cache_hits,
+                    "stage2_materialize_cache_misses": materialize_cache_misses,
+                    "stage2_fit_seconds": round(
+                        time.perf_counter() - fit_started,
+                        4,
+                    ),
+                    **{
+                        key: value
+                        for key, value in aggressive_stats.items()
+                        if key.startswith("stage2_")
+                        and key
+                        not in {
+                            "stage2_materialize_seconds",
+                            "stage2_emit_seconds",
+                            "stage2_active_text_count",
+                            "stage2_unique_candidate_count",
+                            "stage2_exact_candidate_count",
+                            "stage2_reuse_candidate_count",
+                            "stage2_fallback_reuse_count",
+                            "stage2_new_candidate_count",
+                            "stage2_skipped_candidate_count",
+                            "stage2_materialize_cache_hits",
+                            "stage2_materialize_cache_misses",
+                        }
+                    },
+                }
+                return encoded
 
             persistent_exact_materialize_cache: dict[str, int | None] = {}
             lexicon_touch_token = self.lexicon.touch_token

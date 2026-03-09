@@ -25,6 +25,8 @@ def main() -> None:
     parser.add_argument("--stage1-epochs", type=int, default=2)
     parser.add_argument("--stage2-epochs", type=int, default=1)
     parser.add_argument("--corpus-workers", type=int, default=None)
+    parser.add_argument("--stage2-workers", type=int, default=None)
+    parser.add_argument("--aggressive-stage2-materialize", action="store_true")
     args = parser.parse_args()
 
     owner_rows = json.loads(Path(args.owner_rows_path).read_text(encoding="utf-8"))
@@ -54,6 +56,8 @@ def main() -> None:
         [],
         config,
         prepared_corpus=dataset["prepared_corpus"],
+        aggressive_stage2_materialize=args.aggressive_stage2_materialize,
+        stage2_workers=args.stage2_workers,
     )
 
     output = {
