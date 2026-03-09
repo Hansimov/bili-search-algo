@@ -1310,8 +1310,11 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
             rank_seconds += time.perf_counter() - stage_started
             unique_candidate_count = len(unique_candidates)
 
+            persistent_exact_materialize_cache: dict[str, int | None] = {}
             for _ in range(max(epochs, 1)):
-                materialize_cache: dict[str, int | None] = {}
+                materialize_cache: dict[str, int | None] = dict(
+                    persistent_exact_materialize_cache
+                )
                 for text, freq, ranked_candidates in ranked_text_plans:
                     materialize_started = time.perf_counter()
                     token_ids = []
@@ -1329,6 +1332,11 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
                                 source_text=text,
                             )
                             materialize_cache[candidate] = token_id
+                            if (
+                                token_id is not None
+                                and self.lexicon.id_to_token.get(token_id) == candidate
+                            ):
+                                persistent_exact_materialize_cache[candidate] = token_id
                         if token_id is not None and token_id not in token_ids:
                             token_ids.append(token_id)
                     materialize_seconds += time.perf_counter() - materialize_started

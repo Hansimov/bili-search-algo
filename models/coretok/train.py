@@ -111,6 +111,17 @@ DEFAULT_SCALES = {
         stage1_epochs=2,
         stage2_epochs=2,
     ),
+    "xlarge": ScaleSpec(
+        name="xlarge",
+        max_videos=500000,
+        max_owners=7200,
+        min_owner_videos=8,
+        eval_owner_count=640,
+        candidate_limit=8,
+        query_per_owner=4,
+        stage1_epochs=2,
+        stage2_epochs=2,
+    ),
 }
 
 
@@ -161,7 +172,7 @@ def _make_support_profile(videos: list[dict]) -> dict:
     }
 
 
-def _build_queries(videos: list[dict], query_per_owner: int) -> list[str]:
+def _build_query_items(videos: list[dict], query_per_owner: int) -> list[dict]:
     queries = []
     seen = set()
     for video in videos:
@@ -170,19 +181,29 @@ def _build_queries(videos: list[dict], query_per_owner: int) -> list[str]:
         desc = (video.get("desc") or "").strip()
         tags = _split_tags(video.get("tags") or "")
         if title:
-            candidates.append(title)
-        candidates.extend(tags[:2])
+            candidates.append({"query": title, "source": "title"})
+        candidates.extend({"query": tag, "source": "tag"} for tag in tags[:2])
         if desc:
-            candidates.append(desc[:80])
-        for candidate in candidates:
+            candidates.append({"query": desc[:80], "source": "desc"})
+        for candidate_item in candidates:
+            candidate = candidate_item["query"]
             normalized = candidate.strip()
             if not normalized or normalized in seen:
                 continue
             seen.add(normalized)
-            queries.append(normalized)
+            queries.append(
+                {
+                    "query": normalized,
+                    "source": candidate_item["source"],
+                }
+            )
             if len(queries) >= query_per_owner:
                 return queries
     return queries
+
+
+def _build_queries(videos: list[dict], query_per_owner: int) -> list[str]:
+    return [item["query"] for item in _build_query_items(videos, query_per_owner)]
 
 
 def split_owner_rows(
@@ -218,12 +239,18 @@ def build_eval_dataset(
             "name": row.get("name") or "",
             **_make_support_profile(support),
         }
-        owner_queries = _build_queries(holdout, query_per_owner=query_per_owner)
+        owner_queries = _build_query_items(holdout, query_per_owner=query_per_owner)
         if not owner_queries:
             continue
         profiles.append(profile)
-        for query in owner_queries:
-            queries.append({"mid": row["mid"], "query": query})
+        for query_item in owner_queries:
+            queries.append(
+                {
+                    "mid": row["mid"],
+                    "query": query_item["query"],
+                    "source": query_item["source"],
+                }
+            )
     return profiles, queries
 
 
@@ -324,9 +351,20 @@ def evaluate_owner_retrieval(
     query_cache_hits = 0
     encode_queries_seconds = 0.0
     score_seconds = 0.0
+    source_counts = Counter()
+    source_covered_counts = Counter()
+    source_empty_counts = Counter()
+    source_recall_hits = {
+        1: Counter(),
+        5: Counter(),
+        10: Counter(),
+    }
+    source_reciprocal_ranks = Counter()
 
     for item in queries:
         query_text = item["query"]
+        query_source = str(item.get("source") or "unknown")
+        source_counts[query_source] += 1
         query_encoding = query_cache.get(query_text)
         if query_encoding is None:
             stage_started = time.perf_counter()
@@ -338,10 +376,12 @@ def evaluate_owner_retrieval(
 
         if not query_encoding["tag_weights"] and not query_encoding["text_weights"]:
             empty_queries += 1
+            source_empty_counts[query_source] += 1
             reciprocal_ranks.append(0.0)
             continue
 
         query_coverage += 1
+        source_covered_counts[query_source] += 1
         target_mid = item["mid"]
         stage_started = time.perf_counter()
         scored = []
@@ -368,12 +408,41 @@ def evaluate_owner_retrieval(
             rank = better_count + 1
 
         reciprocal_ranks.append(1.0 / rank if rank else 0.0)
+        source_reciprocal_ranks[query_source] += 1.0 / rank if rank else 0.0
         for cutoff in recall_hits.keys():
             if rank and rank <= cutoff:
                 recall_hits[cutoff] += 1
+                source_recall_hits[cutoff][query_source] += 1
 
     total_queries = max(len(queries), 1)
     total_seconds = time.perf_counter() - started
+    query_source_breakdown = {}
+    for source, count in source_counts.items():
+        source_total = max(int(count), 1)
+        query_source_breakdown[source] = {
+            "query_count": int(count),
+            "query_coverage": round(
+                source_covered_counts.get(source, 0) / source_total,
+                4,
+            ),
+            "empty_query_ratio": round(
+                source_empty_counts.get(source, 0) / source_total,
+                4,
+            ),
+            "mrr": round(source_reciprocal_ranks.get(source, 0.0) / source_total, 4),
+            "recall_at_1": round(
+                source_recall_hits[1].get(source, 0) / source_total,
+                4,
+            ),
+            "recall_at_5": round(
+                source_recall_hits[5].get(source, 0) / source_total,
+                4,
+            ),
+            "recall_at_10": round(
+                source_recall_hits[10].get(source, 0) / source_total,
+                4,
+            ),
+        }
     return {
         "query_count": len(queries),
         "profile_count": len(profiles),
@@ -383,6 +452,7 @@ def evaluate_owner_retrieval(
         "recall_at_1": round(recall_hits[1] / total_queries, 4),
         "recall_at_5": round(recall_hits[5] / total_queries, 4),
         "recall_at_10": round(recall_hits[10] / total_queries, 4),
+        "query_source_breakdown": query_source_breakdown,
         "perf": {
             "encode_profiles_seconds": round(encode_profiles_seconds, 4),
             "encode_queries_seconds": round(encode_queries_seconds, 4),
