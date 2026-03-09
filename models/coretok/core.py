@@ -703,21 +703,27 @@ class _BaseCoreTokenizer:
             return self.lexicon.touch_token(existing_id)
 
         best_token_id, best_score = self.lexicon.find_best_match(candidate)
+        can_reuse_best = False
         if best_token_id is not None and best_score >= self.reuse_threshold:
             existing_token = self.lexicon.id_to_token.get(best_token_id) or ""
-            if not self._allow_approximate_reuse(
+            can_reuse_best = self._allow_approximate_reuse(
                 candidate,
                 existing_token,
                 source_text=source_text,
                 best_score=best_score,
-            ):
-                return None
-            return self.lexicon.touch_token(best_token_id)
+            )
+            if can_reuse_best:
+                return self.lexicon.touch_token(best_token_id)
 
         if not allow_new_tokens:
             return None
 
-        if self.lexicon.novelty_probability(candidate) < self.novelty_threshold:
+        novelty_probability = round(1.0 - best_score, 4)
+        if (
+            best_token_id is not None
+            and can_reuse_best
+            and novelty_probability < self.novelty_threshold
+        ):
             return best_token_id
         return self.lexicon.add_token(candidate, source=self.source)
 
@@ -1003,36 +1009,52 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
         unique_candidate_count = 0
         active_text_count = 0
         decision_counts = Counter()
+        materialize_cache_hits = 0
+        materialize_cache_misses = 0
 
         if resolved_min_new_token_freq <= 1:
             stage_started = time.perf_counter()
             candidate_counter = Counter()
+            ranked_text_plans = []
             for text, freq in frequency_items:
+                normalized_text = normalize_core_text(text)
                 ranked_candidates = self._rank_text_candidates(
-                    text,
-                    candidate_plan=(candidate_plans or {}).get(
-                        normalize_core_text(text)
-                    ),
+                    normalized_text,
+                    candidate_plan=(candidate_plans or {}).get(normalized_text),
                 )
                 if not ranked_candidates:
                     continue
                 active_text_count += 1
+                ranked_text_plans.append(
+                    (normalized_text, int(freq), ranked_candidates)
+                )
                 for candidate in ranked_candidates:
                     candidate_counter[candidate] += int(freq)
             rank_seconds += time.perf_counter() - stage_started
             unique_candidate_count = len(candidate_counter)
 
             for _ in range(max(epochs, 1)):
-                for text, freq in frequency_items:
-                    encode_started = time.perf_counter()
-                    token_ids = self.encode(
-                        text,
-                        allow_new_tokens=True,
-                        candidate_plan=(candidate_plans or {}).get(
-                            normalize_core_text(text)
-                        ),
-                    )
-                    materialize_seconds += time.perf_counter() - encode_started
+                materialize_cache: dict[str, int | None] = {}
+                for text, freq, ranked_candidates in ranked_text_plans:
+                    materialize_started = time.perf_counter()
+                    token_ids = []
+                    for candidate in ranked_candidates:
+                        if candidate in materialize_cache:
+                            materialize_cache_hits += 1
+                            token_id = materialize_cache[candidate]
+                            if token_id is not None:
+                                self.lexicon.touch_token(token_id)
+                        else:
+                            materialize_cache_misses += 1
+                            token_id = self._materialize_token(
+                                candidate,
+                                allow_new_tokens=True,
+                                source_text=text,
+                            )
+                            materialize_cache[candidate] = token_id
+                        if token_id is not None and token_id not in token_ids:
+                            token_ids.append(token_id)
+                    materialize_seconds += time.perf_counter() - materialize_started
                     emit_started = time.perf_counter()
                     if token_ids:
                         encoded.extend([token_ids] * int(freq))
@@ -1107,6 +1129,8 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
                 decision_counts.get("blocked_new", 0)
             ),
             "stage2_skipped_candidate_count": int(decision_counts.get("skipped", 0)),
+            "stage2_materialize_cache_hits": int(materialize_cache_hits),
+            "stage2_materialize_cache_misses": int(materialize_cache_misses),
             "stage2_fit_seconds": round(time.perf_counter() - fit_started, 4),
         }
         return encoded

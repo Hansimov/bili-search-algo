@@ -65,6 +65,18 @@ def test_core_tex_tokenizer_rejects_non_substring_runtime_reuse():
     assert token_ids == []
 
 
+def test_core_tex_tokenizer_can_add_new_token_when_similar_reuse_is_rejected():
+    lexicon = CoreTokenLexicon()
+    lexicon.add_token("leatherface", source="text")
+
+    text_tokenizer = CoreTexTokenizer(lexicon=lexicon)
+    token_ids = text_tokenizer.encode("Leather Bench", allow_new_tokens=True)
+    tokens = text_tokenizer.decode(token_ids)
+
+    assert token_ids
+    assert "leatherface" not in tokens
+
+
 def test_candidate_plan_can_be_reused_for_text_encoding():
     tag_tokenizer = CoreTagTokenizer()
     tag_tokenizer.fit(["黑神话悟空", "相机测评"], epochs=1)
