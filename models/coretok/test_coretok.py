@@ -55,6 +55,16 @@ def test_core_tex_tokenizer_reuses_seed_tokens_before_creating_new_ones():
     assert any("纳塔剧情拆包" in token or "纳塔剧情" in token for token in novel_tokens)
 
 
+def test_core_tex_tokenizer_rejects_non_substring_runtime_reuse():
+    lexicon = CoreTokenLexicon()
+    lexicon.add_token("leatherface", source="text")
+
+    text_tokenizer = CoreTexTokenizer(lexicon=lexicon)
+    token_ids = text_tokenizer.encode("Leather Bench", allow_new_tokens=False)
+
+    assert token_ids == []
+
+
 def test_candidate_plan_can_be_reused_for_text_encoding():
     tag_tokenizer = CoreTagTokenizer()
     tag_tokenizer.fit(["黑神话悟空", "相机测评"], epochs=1)

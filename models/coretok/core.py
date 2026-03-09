@@ -668,8 +668,35 @@ class _BaseCoreTokenizer:
         )
         return ranked[:budget]
 
+    def _allow_approximate_reuse(
+        self,
+        candidate: str,
+        existing_token: str,
+        *,
+        source_text: str | None,
+        best_score: float,
+    ) -> bool:
+        if best_score >= 0.98:
+            return True
+        if not source_text:
+            return False
+        compact_source = _compact_core_text(source_text)
+        compact_existing = _compact_core_text(existing_token)
+        compact_candidate = _compact_core_text(candidate)
+        if not compact_source or not compact_existing:
+            return False
+        if compact_existing in compact_source:
+            return True
+        if compact_candidate and compact_candidate in compact_existing:
+            return False
+        return False
+
     def _materialize_token(
-        self, candidate: str, *, allow_new_tokens: bool
+        self,
+        candidate: str,
+        *,
+        allow_new_tokens: bool,
+        source_text: str | None = None,
     ) -> int | None:
         existing_id = self.lexicon.get_token_id(candidate)
         if existing_id is not None:
@@ -677,6 +704,14 @@ class _BaseCoreTokenizer:
 
         best_token_id, best_score = self.lexicon.find_best_match(candidate)
         if best_token_id is not None and best_score >= self.reuse_threshold:
+            existing_token = self.lexicon.id_to_token.get(best_token_id) or ""
+            if not self._allow_approximate_reuse(
+                candidate,
+                existing_token,
+                source_text=source_text,
+                best_score=best_score,
+            ):
+                return None
             return self.lexicon.touch_token(best_token_id)
 
         if not allow_new_tokens:
@@ -723,7 +758,9 @@ class CoreTagTokenizer(_BaseCoreTokenizer):
             prepared_plan=candidate_plan,
         ):
             token_id = self._materialize_token(
-                candidate, allow_new_tokens=allow_new_tokens
+                candidate,
+                allow_new_tokens=allow_new_tokens,
+                source_text=tag,
             )
             if token_id is not None and token_id not in token_ids:
                 token_ids.append(token_id)
@@ -929,7 +966,9 @@ class CoreTexTokenizer(_BaseCoreTokenizer):
             if count_mixed_units(candidate) > 8:
                 continue
             token_id = self._materialize_token(
-                candidate, allow_new_tokens=allow_new_tokens
+                candidate,
+                allow_new_tokens=allow_new_tokens,
+                source_text=normalized,
             )
             if token_id is not None and token_id not in token_ids:
                 token_ids.append(token_id)
