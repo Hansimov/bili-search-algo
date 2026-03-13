@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,19 +25,38 @@ DEFAULT_WIKI_VOCAB_SIZE = 400000
 DEFAULT_DOC_COUNT = 908000000
 TRAIN_STATUS_DIR = SENTENCEPIECE_CKPT_ROOT / "status"
 TRAIN_LOG_DIR = SENTENCEPIECE_CKPT_ROOT / "logs"
+WORDS_LOG_DIR = TRAIN_LOG_DIR / "words"
 
+VIDEO_REGIONS = [
+    "cine_movie",
+    "douga_anime",
+    "tech_sports",
+    "music_dance",
+    "fashion_ent",
+    "know_info",
+    "daily_life",
+    "other_life",
+    "mobile_game",
+    "other_game",
+    "recent",
+]
 REGION_GROUPS = {
+    **{region: [region] for region in VIDEO_REGIONS},
+    "zhwiki": ["zhwiki"],
+    "test": ["test"],
+}
+TARGET_ALIASES = {
+    "all": VIDEO_REGIONS,
+    "videos": VIDEO_REGIONS,
+    "wiki": ["zhwiki"],
+    "w": ["zhwiki"],
+    "x": ["test"],
     "1": ["cine_movie", "douga_anime", "tech_sports"],
     "2": ["music_dance", "fashion_ent", "know_info"],
     "3": ["daily_life", "other_life"],
     "4": ["mobile_game", "other_game"],
     "r": ["recent"],
-    "w": ["zhwiki"],
-    "x": ["test"],
 }
-VIDEO_REGIONS = [
-    region for group in ["1", "2", "3", "4", "r"] for region in REGION_GROUPS[group]
-]
 
 
 @dataclass
@@ -50,20 +70,81 @@ class TrainJob:
     log_handle: object = None
 
 
+@dataclass
+class CommandJob:
+    name: str
+    command: list[str]
+    log_path: Path
+    process: subprocess.Popen | None = None
+    log_handle: object = None
+
+
 def build_input_prefix(prefix_base: str) -> str:
     return prefix_base if prefix_base.endswith("_") else f"{prefix_base}_"
+
+
+def run_command_jobs(
+    jobs: list[CommandJob],
+    parallel: int,
+    description: str,
+    cwd: Path = REPO_ROOT,
+) -> int:
+    pending = list(jobs)
+    active: list[CommandJob] = []
+    parallel = max(1, parallel)
+
+    while pending or active:
+        while pending and len(active) < parallel:
+            job = pending.pop(0)
+            job.log_path.parent.mkdir(parents=True, exist_ok=True)
+            job.log_handle = open(job.log_path, "w", encoding="utf-8")
+            job.process = subprocess.Popen(
+                job.command,
+                cwd=cwd,
+                stdout=job.log_handle,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            logger.note(
+                f"> Started {description}: {logstr.mesg(job.name)} -> {logstr.file(job.log_path.name)}"
+            )
+            active.append(job)
+
+        next_active = []
+        for job in active:
+            if job.process.poll() is None:
+                next_active.append(job)
+                continue
+            if job.log_handle:
+                job.log_handle.close()
+            if job.process.returncode != 0:
+                logger.warn(f"× {description} failed: {job.name}")
+                if job.log_path.exists():
+                    tail = job.log_path.read_text(
+                        encoding="utf-8", errors="ignore"
+                    ).splitlines()[-20:]
+                    if tail:
+                        logger.file("\n".join(tail), indent=2)
+                for active_job in next_active:
+                    if active_job.process and active_job.process.poll() is None:
+                        active_job.process.terminate()
+                return job.process.returncode
+        active = next_active
+
+        if pending or active:
+            time.sleep(1)
+
+    return 0
 
 
 def expand_targets(targets: list[str], include_wiki: bool = False) -> list[str]:
     expanded = []
     targets = targets or ["all"]
     for target in targets:
-        if target in ["all", "videos"]:
-            expanded.extend(VIDEO_REGIONS)
-        elif target in REGION_GROUPS:
+        if target in REGION_GROUPS:
             expanded.extend(REGION_GROUPS[target])
-        elif target == "wiki":
-            expanded.append("zhwiki")
+        elif target in TARGET_ALIASES:
+            expanded.extend(TARGET_ALIASES[target])
         else:
             expanded.append(target)
     if include_wiki:
@@ -144,6 +225,49 @@ def build_train_command(args: argparse.Namespace, region: str) -> tuple[str, lis
         command.append("-su")
 
     return model_prefix, command
+
+
+def build_word_commands(args: argparse.Namespace) -> list[CommandJob]:
+    jobs = []
+    if not args.skip_english:
+        command = [
+            sys.executable,
+            "-m",
+            "models.word.eng",
+            "-ec",
+            "-en",
+            "-mf",
+            str(args.word_min_freq),
+        ]
+        if args.word_max_count is not None:
+            command.extend(["-mn", str(args.word_max_count)])
+        jobs.append(
+            CommandJob(
+                name="english",
+                command=command,
+                log_path=args.word_log_dir / "word_eng.log",
+            )
+        )
+    if not args.skip_chinese:
+        command = [
+            sys.executable,
+            "-m",
+            "models.word.eng",
+            "-ec",
+            "-zh",
+            "-mf",
+            str(args.word_min_freq),
+        ]
+        if args.word_max_count is not None:
+            command.extend(["-mn", str(args.word_max_count)])
+        jobs.append(
+            CommandJob(
+                name="chinese",
+                command=command,
+                log_path=args.word_log_dir / "word_zh.log",
+            )
+        )
+    return jobs
 
 
 class SentencePieceTrainOrchestrator:
@@ -255,38 +379,19 @@ class SentencePieceTrainOrchestrator:
 
 
 def run_words(args: argparse.Namespace) -> int:
-    commands = []
-    if not args.skip_english:
-        commands.append(
-            [
-                sys.executable,
-                "-m",
-                "models.word.eng",
-                "-ec",
-                "-en",
-                "-mf",
-                str(args.word_min_freq),
-            ]
-        )
-    if not args.skip_chinese:
-        commands.append(
-            [
-                sys.executable,
-                "-m",
-                "models.word.eng",
-                "-ec",
-                "-zh",
-                "-mf",
-                str(args.word_min_freq),
-            ]
-        )
-
-    for command in commands:
-        logger.note(f"> Run words step: {logstr.file(' '.join(command))}")
-        result = subprocess.run(command, cwd=REPO_ROOT)
-        if result.returncode != 0:
-            return result.returncode
-    return 0
+    jobs = build_word_commands(args)
+    if not jobs:
+        logger.warn("× No word extraction jobs requested")
+        return 0
+    if args.dry_run:
+        for job in jobs:
+            logger.line(f"  * {' '.join(job.command)}")
+        return 0
+    return run_command_jobs(
+        jobs=jobs,
+        parallel=args.word_parallel,
+        description="word job",
+    )
 
 
 def run_train(args: argparse.Namespace) -> int:
@@ -389,7 +494,30 @@ def run_all(args: argparse.Namespace) -> int:
         "merge": run_merge,
         "convert": run_convert,
     }
-    for step in steps:
+
+    pending_steps = list(steps)
+    run_words_and_train_together = (
+        not args.serial_steps and "words" in pending_steps and "train" in pending_steps
+    )
+
+    if run_words_and_train_together:
+        logger.note(
+            "> Workflow step: run words and train in parallel to avoid idle CPU before merge"
+        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {
+                "words": executor.submit(run_words, args),
+                "train": executor.submit(run_train, args),
+            }
+            for step_name in ["words", "train"]:
+                exit_code = futures[step_name].result()
+                if exit_code != 0:
+                    return exit_code
+        pending_steps = [
+            step for step in pending_steps if step not in {"words", "train"}
+        ]
+
+    for step in pending_steps:
         logger.note(f"> Workflow step: {logstr.success(step)}")
         exit_code = handlers[step](args)
         if exit_code != 0:
@@ -401,11 +529,17 @@ def add_words_args(parser: argparse.ArgumentParser):
     parser.add_argument("--word-min-freq", type=int, default=6)
     parser.add_argument("--skip-english", action="store_true")
     parser.add_argument("--skip-chinese", action="store_true")
+    parser.add_argument("--word-max-count", type=int, default=None)
+    parser.add_argument("--word-parallel", type=int, default=2)
+    parser.add_argument("--word-log-dir", type=Path, default=WORDS_LOG_DIR)
 
 
 def add_train_args(parser: argparse.ArgumentParser):
     parser.add_argument(
-        "targets", nargs="*", default=["all"], help="regions/groups/all/wiki"
+        "targets",
+        nargs="*",
+        default=["all"],
+        help="regions or aliases: all, videos, wiki, zhwiki, test; legacy 1/2/3/4/r/w/x still work",
     )
     parser.add_argument("-p", "--prefix-base", type=str, default=DEFAULT_SP_PREFIX)
     parser.add_argument("-wp", "--wiki-prefix", type=str, default=DEFAULT_WIKI_PREFIX)
@@ -501,6 +635,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default="words,train,merge,convert",
         help="comma-separated subset of: words,train,merge,convert",
+    )
+    all_parser.add_argument(
+        "--serial-steps",
+        action="store_true",
+        help="disable words/train overlap and run steps strictly in sequence",
     )
     add_words_args(all_parser)
     add_train_args(all_parser)

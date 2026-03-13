@@ -10,6 +10,6 @@ python -m models.sentencepiece.workflow train "$@"
 
 # Examples:
 # chmod +x models/sentencepiece/train.sh
-# ./models/sentencepiece/train.sh 1 -p sp_908m -av -fd -e
-# ./models/sentencepiece/train.sh all -j 5 -p sp_908m -av -fd -e
-# ./models/sentencepiece/train.sh all -j 6 -iw -p sp_908m -av -fd -e
+# ./models/sentencepiece/train.sh cine_movie -p sp_908m -av -fd -e
+# ./models/sentencepiece/train.sh all -j 11 -p sp_908m -av -fd -e
+# ./models/sentencepiece/train.sh all -j 12 -iw -nt 4 -p sp_908m -av -fd -e

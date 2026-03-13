@@ -3,6 +3,12 @@ Algorithms and models for Bilibili Search Engine (blbl.top).
 
 ## models.word.eng
 
+词表工作流（`models.word.eng`、`models.sentencepiece.workflow`、merge、convert）的完整中文说明见：
+
+- [docs/vocabs/USAGE.md](/home/asimov/repos/bili-search-algo/docs/vocabs/USAGE.md)
+
+下面只保留最基础的模块入口示例。
+
 Extract English words from video texts (titles, tags and desc):
 
 ```sh
@@ -16,58 +22,6 @@ python -m models.word.eng -ec -zh -mf 6
 ```
 
 See more example usages in comments of [eng.py](models/word/eng.py).
-
-## models.sentencepiece.train
-
-Train sentencepiece model from video texts.
-
-```bash
-python -m models.sentencepiece.train -m sp_507m_400k_0.9995_0.9 -ec -vs 400000 -cc 0.9995 -sf 0.9 -e
-```
-
-or use `train.sh` with pre-grouped regions and pre-defined input-output paths:
-
-```bash
-./models/sentencepiece/train.sh 1
-./models/sentencepiece/train.sh 2
-./models/sentencepiece/train.sh 3
-./models/sentencepiece/train.sh 4
-./models/sentencepiece/train.sh r
-```
-
-Test:
-
-```bash
-python -m models.sentencepiece.train -m sp_507m_400k_0.9995_0.9 -t
-```
-
-See more example usages in comments of [train.py](models/sentencepiece/train.py).
-
-## models.sentencepiece.merge
-
-Merge sentencepiece models which are trained on different data_utils.
-
-```bash
-python -m models.sentencepiece.merge
-```
-
-or with more params:
-
-```bash
-python -m models.sentencepiece.merge -vs 1000000 -i sp_518m_ -o sp_merged
-```
-
-See more example usages in comments of [merge.py](models/sentencepiece/merge.py).
-
-## models.sentencepiece.convert
-
-Convert sentencepiece vocab to txt:
-
-```bash
-python -m models.sentencepiece.convert ...
-```
-
-See more example usages in comments of [convert.py](models/sentencepiece/convert.py).
 
 ## data_utils.videos.cache
 

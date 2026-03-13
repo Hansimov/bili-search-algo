@@ -132,39 +132,10 @@ python setup.py build && pip install -e .
 Dump to `rebuid.sh` for quick run.
 See: [sentencepiece/python/rebuild.sh](https://github.com/Hansimov/sentencepiece/blob/master/python/rebuild.sh)
 
-## Unified workflow CLI
+## Workflow docs
 
-Use the new workflow entrypoint to manage a single step or the full pipeline:
+SentencePiece 的完整训练、merge、convert 和常用命令已经统一整理到：
 
-```sh
-cd ~/repos/bili-search-algo
-python -m models.sentencepiece.workflow -h
-python -m models.sentencepiece.workflow train -h
-python -m models.sentencepiece.workflow all -h
-```
+- [docs/vocabs/USAGE.md](/home/asimov/repos/bili-search-algo/docs/vocabs/USAGE.md)
 
-Common examples:
-
-```sh
-# Dry-run all 11 video regions plus zhwiki with the latest 908m prefix
-python -m models.sentencepiece.workflow train all -j 5 -iw -dr -p sp_908m -av -fd -e
-
-# Train one group or one region family
-python -m models.sentencepiece.workflow train 1 -p sp_908m -av -fd -e
-python -m models.sentencepiece.workflow train r -p sp_908m -av -fd -e
-
-# Merge existing regional models with the redesigned rank/coverage-based merger
-python -m models.sentencepiece.workflow merge -i sp_908m -o sp_merged -mvs 1000000 -es
-
-# Convert merged SentencePiece vocabs and merge with extracted word vocabs
-python -m models.sentencepiece.workflow convert -o sp_merged -cs -cr -cm -dc 908000000
-
-# Run a custom end-to-end subset of steps
-python -m models.sentencepiece.workflow all --steps train,merge,convert all -j 5 -p sp_908m -av -fd -e -cs -cr -cm -dc 908000000
-```
-
-Compatibility wrapper:
-
-```sh
-./models/sentencepiece/train.sh all -j 5 -iw -p sp_908m -av -fd -e
-```
+这里保留的内容以 C++ / Python bindings 的开发和 rebuild 为主；实际使用工作流请优先参考上面的文档。
