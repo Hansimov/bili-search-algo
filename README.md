@@ -1,7 +1,7 @@
 # bili-search-algo
 Algorithms and models for Bilibili Search Engine (blbl.top).
 
-## models.eng
+## models.word.eng
 
 Extract English words from video texts (titles, tags and desc):
 

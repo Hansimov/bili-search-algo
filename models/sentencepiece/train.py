@@ -4,6 +4,7 @@ import os
 import sentencepiece as spm
 import shutil
 import sys
+import time
 
 from tclogger import logger, logstr, Runtimer, dict_to_str
 from typing import Literal
@@ -21,6 +22,83 @@ from models.hanlp.tokenize import HanlpTokenizer
 def calc_vocab_size_by_samples_count(count: int):
     """500m samples ~ 1250k vocabs, then 1m samples ~ 2.5k vocabs"""
     return int(count * 2500 // 1000000)
+
+
+class TrainingStatusReporter:
+    def __init__(
+        self,
+        model_prefix: str,
+        status_path: str = None,
+        report_interval: int = 1000,
+    ):
+        self.model_prefix = model_prefix
+        self.status_path = status_path
+        self.report_interval = max(1, report_interval)
+        self.started_at = time.time()
+
+    def is_enabled(self) -> bool:
+        return bool(self.status_path)
+
+    def write(self, **payload):
+        if not self.is_enabled():
+            return
+        status_path = self.status_path
+        os.makedirs(os.path.dirname(status_path), exist_ok=True)
+        payload = {
+            "model_prefix": self.model_prefix,
+            "pid": os.getpid(),
+            "updated_at": time.time(),
+            "elapsed_seconds": round(time.time() - self.started_at, 2),
+            **payload,
+        }
+        tmp_path = f"{status_path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as wf:
+            json.dump(payload, wf, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, status_path)
+
+
+class ReportingSentenceIterator:
+    def __init__(self, iterator, total: int, reporter: TrainingStatusReporter):
+        self.iterator = iter(iterator)
+        self.total = total
+        self.reporter = reporter
+        self.count = 0
+        if self.reporter.is_enabled():
+            self.reporter.write(
+                stage="streaming",
+                samples_processed=0,
+                total_samples=self.total,
+                progress=0.0,
+            )
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            sentence = next(self.iterator)
+        except StopIteration:
+            if self.reporter.is_enabled():
+                self.reporter.write(
+                    stage="training",
+                    samples_processed=self.count,
+                    total_samples=self.total,
+                    progress=1.0 if self.total else None,
+                )
+            raise
+
+        self.count += 1
+        if self.reporter.is_enabled() and (
+            self.count == 1 or self.count % self.reporter.report_interval == 0
+        ):
+            progress = self.count / self.total if self.total else None
+            self.reporter.write(
+                stage="streaming",
+                samples_processed=self.count,
+                total_samples=self.total,
+                progress=progress,
+            )
+        return sentence
 
 
 class SentencePieceModelTrainer:
@@ -48,6 +126,8 @@ class SentencePieceModelTrainer:
         vocab_size: int = 32000,
         overwrite: bool = True,
         force_delete: bool = False,
+        status_path: str = None,
+        status_interval: int = 1000,
     ):
         self.train_params = {
             "model_prefix": model_prefix,
@@ -69,6 +149,11 @@ class SentencePieceModelTrainer:
         self.model_prefix = model_prefix
         self.overwrite = overwrite
         self.force_delete = force_delete
+        self.status_reporter = TrainingStatusReporter(
+            model_prefix=model_prefix,
+            status_path=status_path,
+            report_interval=status_interval,
+        )
         self.init_paths()
 
     def init_paths(self):
@@ -128,15 +213,39 @@ class SentencePieceModelTrainer:
         logger.note("> Training ...")
         logger.mesg(dict_to_str(self.train_params), indent=2)
         self.dump_train_info()
+        sentence_iterator = None
 
         if self.overwrite:
             self.delete_existed_model()
 
-        spm.SentencePieceTrainer.Train(
-            sentence_iterator=iter(self.data_loader),
-            **self.train_params,
-        )
-        self.move_model_files()
+        try:
+            sentence_iterator = ReportingSentenceIterator(
+                self.data_loader,
+                total=getattr(self.data_loader, "samples_count", None),
+                reporter=self.status_reporter,
+            )
+            spm.SentencePieceTrainer.Train(
+                sentence_iterator=sentence_iterator,
+                **self.train_params,
+            )
+            self.move_model_files()
+            self.status_reporter.write(
+                stage="done",
+                samples_processed=sentence_iterator.count,
+                total_samples=getattr(self.data_loader, "samples_count", None),
+                progress=1.0,
+                model_path=str(self.model_path),
+                vocab_path=str(self.vocab_path),
+            )
+        except Exception as exc:
+            processed = sentence_iterator.count if sentence_iterator else 0
+            self.status_reporter.write(
+                stage="failed",
+                samples_processed=processed,
+                total_samples=getattr(self.data_loader, "samples_count", None),
+                error=str(exc),
+            )
+            raise
 
     def test(self, test_sentences: list[str], compare_baseline: bool = False):
         logger.note("> Testing ...")
@@ -160,15 +269,21 @@ class ModelTrainerArgParser(argparse.ArgumentParser):
         self.add_argument("-cc", "--character-coverage", type=float, default=0.9995)
         self.add_argument("-is", "--input-sentence-size", type=int, default=500000)
         self.add_argument("-ml", "--max-sentencepiece-length", type=int, default=16)
+        self.add_argument("-nt", "--num-threads", type=int, default=16)
         self.add_argument("-mt", "--model-type", type=str, default="unigram")
         self.add_argument("-sf", "--shrinking-factor", type=float, default=0.75)
         self.add_argument("-vs", "--vocab-size", type=int, default=32000)
+        self.add_argument("-sa", "--split-alphanum", action="store_true")
+        self.add_argument("-sn", "--split-by-number", action="store_true")
+        self.add_argument("-su", "--split-by-unicode-script", action="store_true")
         self.add_argument("-av", "--auto-vocab-size", action="store_true")
         self.add_argument("-k", "--keep-exist-model", action="store_true")
         self.add_argument("-fd", "--force-delete", action="store_true")
         self.add_argument("-t", "--test-only", action="store_true")
         self.add_argument("-cb", "--compare-baseline", action="store_true")
         self.add_argument("-e", "--edit-model", action="store_true")
+        self.add_argument("-sp", "--status-path", type=str, default=None)
+        self.add_argument("-si", "--status-interval", type=int, default=1000)
 
     def parse_args(self):
         self.args, self.unknown_args = self.parse_known_args(sys.argv[1:])
@@ -213,11 +328,17 @@ if __name__ == "__main__":
         "character_coverage": args.character_coverage,
         "input_sentence_size": args.input_sentence_size,
         "max_sentencepiece_length": args.max_sentencepiece_length,
+        "num_threads": args.num_threads,
         "model_type": args.model_type,
+        "split_alphanum": args.split_alphanum,
+        "split_by_number": args.split_by_number,
+        "split_by_unicode_script": args.split_by_unicode_script,
         "shrinking_factor": args.shrinking_factor,
         "vocab_size": vocab_size,
         "overwrite": not args.keep_exist_model,
         "force_delete": args.force_delete,
+        "status_path": args.status_path,
+        "status_interval": args.status_interval,
     }
     trainer = SentencePieceModelTrainer(**train_params)
 
