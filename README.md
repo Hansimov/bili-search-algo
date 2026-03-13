@@ -1,16 +1,6 @@
 # bili-search-algo
 Algorithms and models for Bilibili Search Engine (blbl.top).
 
-## models.coretok
-
-Train the owner-domain core token model with iterative holdout retrieval evaluation:
-
-```bash
-python -m models.coretok.train --scales tiny --stop-on-unstable
-```
-
-The run artifacts are written to `data/coretok/runs/<run>/` and include per-iteration events, per-scale summaries, and the best serialized bundle for each stable scale.
-
 ## models.eng
 
 Extract English words from video texts (titles, tags and desc):
@@ -178,70 +168,3 @@ Test remote client:
 python -m models.fasttext.run -tc
 python -m models.fasttext.run -tc -ms doc
 ```
-
-## models.owners.domain
-
-Build pseudo-labeled owner-domain samples from Mongo videos and run lightweight owner-domain baselines. This is intended for owner search / owner ranking feature experiments, especially validating whether `top_tags` and region dominance are stable enough to use as creator-domain signals.
-
-Build samples only:
-
-```sh
-python -m models.owners.domain --build-only --min-videos 8 --dominant-ratio 0.6 -m 5000
-```
-
-Build samples and evaluate centroid baseline:
-
-```sh
-python -m models.owners.domain --min-videos 8 --dominant-ratio 0.6 --sample-per-owner 12 -m 5000
-```
-
-Build samples and compare centroid vs naive Bayes vs linear baseline on the same split:
-
-```sh
-python -m models.owners.domain --model compare -m 300 --max-scanned-videos 200000 -s "2026-02-01 00:00:00" -e "2026-03-07 00:00:00"
-```
-
-The compare mode now also includes `naive_bayes_weighted`, which cheaply upweights `owner_name`, `top_tags`, `sample_titles`, and `desc_samples` inside each owner profile.
-
-On a larger real-window experiment aligned to the recent DEV video sampling window, a bounded 5,000-owner run built samples from about 186,789 videos and reached:
-- `centroid=0.5793`
-- `naive_bayes=0.6034`
-- `naive_bayes_weighted=0.6185`
-- `linear=0.5301`
-
-That larger-window result still favors `naive_bayes_weighted`, but by a smaller margin than the earlier 300-owner experiment, so weight tuning should be re-run on the larger sample instead of assuming the smaller-window optimum still holds.
-
-Tune the weighted naive Bayes search space on the same bounded split:
-
-```sh
-python -m models.owners.domain --model tune_naive_bayes_weighted -m 300 --max-scanned-videos 200000 -s "2026-02-01 00:00:00" -e "2026-03-07 00:00:00"
-```
-
-The current larger-window bounded DEV experiment kept the same best field weights and settled on:
-- `alpha=1.0`
-- `owner_name=3.0`
-- `top_tags=3.0`
-- `sample_titles=1.0`
-- `desc_samples=0.5`
-
-These values are now also the default `naive_bayes_weighted` settings used by `--model naive_bayes_weighted` and `--model compare`.
-
-Evaluate from an existing sample file:
-
-```sh
-python -m models.owners.domain --eval-only --model naive_bayes --samples-path data/owners/owner_domain_samples.jsonl
-```
-
-Evaluate the weighted naive Bayes variant only:
-
-```sh
-python -m models.owners.domain --eval-only --model naive_bayes_weighted --samples-path data/owners/owner_domain_samples.jsonl
-```
-
-Run the cheap linear baseline only:
-
-```sh
-python -m models.owners.domain --model linear -m 300 --max-scanned-videos 200000 -s "2026-02-01 00:00:00" -e "2026-03-07 00:00:00"
-```
-
-Metrics output in `data/owners/owner_domain_metrics.json` now includes an `error_summary` block for quick inspection of the top confusions and a few misclassified owners per ground-truth label.
