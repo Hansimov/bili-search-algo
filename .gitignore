@@ -9,6 +9,9 @@ weights/
 cmteb_results/
 passages/
 benchmarks/
+debugs/*.*
+!debugs/*.py
+shards/
 secrets.json
 *.npy
 *.model

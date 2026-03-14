@@ -1,6 +1,9 @@
 import argparse
+import codecs
 import json
+import os
 import re
+import selectors
 import subprocess
 import sys
 import threading
@@ -163,23 +166,34 @@ def start_logged_process(command: list[str], cwd: Path, log_path: Path):
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
+        bufsize=0,
     )
 
     def forward_output():
         stdout = process.stdout
+        selector = selectors.DefaultSelector()
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
         try:
             if stdout is None:
                 return
+            selector.register(stdout, selectors.EVENT_READ)
             while True:
-                chunk = stdout.read(4096)
+                events = selector.select(timeout=1.0)
+                if not events:
+                    if process.poll() is not None:
+                        break
+                    continue
+                chunk = os.read(stdout.fileno(), 4096)
                 if not chunk:
                     break
-                log_writer.write(chunk)
+                text = decoder.decode(chunk)
+                if text:
+                    log_writer.write(text)
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                log_writer.write(tail)
         finally:
+            selector.close()
             if stdout is not None:
                 stdout.close()
             log_writer.close()
@@ -285,6 +299,7 @@ def build_train_command(args: argparse.Namespace, region: str) -> tuple[str, lis
         model_prefix = args.wiki_prefix
         command = [
             sys.executable,
+            "-u",
             "-m",
             "models.sentencepiece.train",
             "-m",
@@ -302,6 +317,7 @@ def build_train_command(args: argparse.Namespace, region: str) -> tuple[str, lis
         model_prefix = f"{args.prefix_base}_{region}"
         command = [
             sys.executable,
+            "-u",
             "-m",
             "models.sentencepiece.train",
             "-m",
@@ -350,15 +366,19 @@ def build_train_command(args: argparse.Namespace, region: str) -> tuple[str, lis
 
 def build_word_commands(args: argparse.Namespace) -> list[CommandJob]:
     jobs = []
+    word_workers = getattr(args, "word_workers", 10)
     if not args.skip_english:
         command = [
             sys.executable,
+            "-u",
             "-m",
             "models.word.eng",
             "-ec",
             "-en",
             "-mf",
             str(args.word_min_freq),
+            "-j",
+            str(word_workers),
         ]
         if args.word_max_count is not None:
             command.extend(["-mn", str(args.word_max_count)])
@@ -372,12 +392,15 @@ def build_word_commands(args: argparse.Namespace) -> list[CommandJob]:
     if not args.skip_chinese:
         command = [
             sys.executable,
+            "-u",
             "-m",
             "models.word.eng",
             "-ec",
             "-zh",
             "-mf",
             str(args.word_min_freq),
+            "-j",
+            str(word_workers),
         ]
         if args.word_max_count is not None:
             command.extend(["-mn", str(args.word_max_count)])
@@ -500,7 +523,7 @@ def run_words(args: argparse.Namespace) -> int:
     if not jobs:
         logger.warn("× No word extraction jobs requested")
         return 0
-    if args.dry_run:
+    if getattr(args, "dry_run", False):
         for job in jobs:
             logger.line(f"  * {' '.join(job.command)}")
         return 0
@@ -648,6 +671,7 @@ def add_words_args(parser: argparse.ArgumentParser):
     parser.add_argument("--skip-chinese", action="store_true")
     parser.add_argument("--word-max-count", type=int, default=None)
     parser.add_argument("--word-parallel", type=int, default=2)
+    parser.add_argument("--word-workers", type=int, default=10)
     parser.add_argument("--word-log-dir", type=Path, default=WORDS_LOG_DIR)
 
 
