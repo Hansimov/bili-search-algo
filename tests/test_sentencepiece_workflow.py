@@ -65,6 +65,34 @@ class SentencePieceWorkflowTests(unittest.TestCase):
                 log_path.read_text(encoding="utf-8"), "start\n* Doc: 30%\n"
             )
 
+    def test_sanitized_log_writer_flushes_snapshot_periodically(self):
+        with TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "word.log"
+            clock = iter([0.0, 5.0, 25.0, 25.0, 25.0])
+            writer = SanitizedLogWriter(
+                log_path,
+                snapshot_interval=20.0,
+                now_func=lambda: next(clock),
+            )
+            writer.write("\033[96m* Doc:\033[0m 10%")
+            self.assertEqual(log_path.read_text(encoding="utf-8"), "")
+
+            writer.write("\r\033[96m* Doc:\033[0m 20%")
+            self.assertEqual(log_path.read_text(encoding="utf-8"), "* Doc: 20%\n")
+
+            writer.close()
+
+    def test_sanitized_log_writer_resets_line_on_ansi_cursor_controls(self):
+        with TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "word.log"
+            writer = SanitizedLogWriter(log_path)
+            writer.write("\033[1G\033[2K\033[96m* Doc:\033[0m 10%")
+            writer.write("\033[1")
+            writer.write("G\033[2K\033[96m* Doc:\033[0m 20%\n")
+            writer.close()
+
+            self.assertEqual(log_path.read_text(encoding="utf-8"), "* Doc: 20%\n")
+
 
 if __name__ == "__main__":
     unittest.main()

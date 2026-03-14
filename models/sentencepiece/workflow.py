@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -27,6 +28,8 @@ DEFAULT_DOC_COUNT = 908000000
 TRAIN_STATUS_DIR = SENTENCEPIECE_CKPT_ROOT / "status"
 TRAIN_LOG_DIR = SENTENCEPIECE_CKPT_ROOT / "logs"
 WORDS_LOG_DIR = TRAIN_LOG_DIR / "words"
+LOG_SNAPSHOT_INTERVAL = 20.0
+ANSI_LINE_RESET_RE = re.compile(r"(?:\x1b\[[0-9;?]*[EFGK]|\x1b\[[0-9;?]*2K)+")
 
 VIDEO_REGIONS = [
     "cine_movie",
@@ -83,18 +86,54 @@ class CommandJob:
 
 
 class SanitizedLogWriter:
-    def __init__(self, log_path: Path):
+    def __init__(
+        self,
+        log_path: Path,
+        snapshot_interval: float = LOG_SNAPSHOT_INTERVAL,
+        now_func=time.monotonic,
+    ):
         self.log_path = log_path
         self.handle = open(log_path, "w", encoding="utf-8")
         self.current_line = ""
+        self.snapshot_interval = snapshot_interval
+        self.now_func = now_func
+        self.last_snapshot_at = self.now_func()
+        self.pending_escape = ""
+
+    def _extract_incomplete_escape(self, text: str) -> tuple[str, str]:
+        last_escape_idx = text.rfind("\x1b")
+        if last_escape_idx < 0:
+            return text, ""
+        suffix = text[last_escape_idx:]
+        if re.fullmatch(r"\x1b(?:\[[0-9;?]*[ -/]*)?", suffix):
+            return text[:last_escape_idx], suffix
+        return text, ""
 
     def _flush_line(self):
         self.handle.write(self.current_line.rstrip() + "\n")
+        self.handle.flush()
+        self.last_snapshot_at = self.now_func()
         self.current_line = ""
+
+    def _flush_snapshot_if_due(self):
+        if not self.current_line:
+            return
+        if self.snapshot_interval is None:
+            return
+        if self.now_func() - self.last_snapshot_at < self.snapshot_interval:
+            return
+        self.handle.write(self.current_line.rstrip() + "\n")
+        self.handle.flush()
+        self.last_snapshot_at = self.now_func()
 
     def write(self, text: str):
         if not text:
             return
+        if self.pending_escape:
+            text = self.pending_escape + text
+            self.pending_escape = ""
+        text, self.pending_escape = self._extract_incomplete_escape(text)
+        text = ANSI_LINE_RESET_RE.sub("\r", text)
         text = decolored(text)
         if not text:
             return
@@ -105,8 +144,12 @@ class SanitizedLogWriter:
                 self._flush_line()
             else:
                 self.current_line += char
+        self._flush_snapshot_if_due()
 
     def close(self):
+        if self.pending_escape:
+            self.current_line += decolored(self.pending_escape)
+            self.pending_escape = ""
         if self.current_line:
             self._flush_line()
         self.handle.close()
