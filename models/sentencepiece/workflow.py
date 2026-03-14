@@ -2,13 +2,14 @@ import argparse
 import json
 import subprocess
 import sys
+import threading
 import time
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from tclogger import logger, logstr, brk
+from tclogger import brk, decolored, logger, logstr
 
 from configs.envs import REPO_ROOT, SENTENCEPIECE_CKPT_ROOT
 from models.sentencepiece.convert import (
@@ -67,7 +68,8 @@ class TrainJob:
     status_path: Path
     log_path: Path
     process: subprocess.Popen | None = None
-    log_handle: object = None
+    log_writer: object = None
+    log_thread: threading.Thread | None = None
 
 
 @dataclass
@@ -76,11 +78,90 @@ class CommandJob:
     command: list[str]
     log_path: Path
     process: subprocess.Popen | None = None
-    log_handle: object = None
+    log_writer: object = None
+    log_thread: threading.Thread | None = None
+
+
+class SanitizedLogWriter:
+    def __init__(self, log_path: Path):
+        self.log_path = log_path
+        self.handle = open(log_path, "w", encoding="utf-8")
+        self.current_line = ""
+
+    def _flush_line(self):
+        self.handle.write(self.current_line.rstrip() + "\n")
+        self.current_line = ""
+
+    def write(self, text: str):
+        if not text:
+            return
+        text = decolored(text)
+        if not text:
+            return
+        for char in text:
+            if char == "\r":
+                self.current_line = ""
+            elif char == "\n":
+                self._flush_line()
+            else:
+                self.current_line += char
+
+    def close(self):
+        if self.current_line:
+            self._flush_line()
+        self.handle.close()
+
+
+def start_logged_process(command: list[str], cwd: Path, log_path: Path):
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_writer = SanitizedLogWriter(log_path)
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+
+    def forward_output():
+        stdout = process.stdout
+        try:
+            if stdout is None:
+                return
+            while True:
+                chunk = stdout.read(4096)
+                if not chunk:
+                    break
+                log_writer.write(chunk)
+        finally:
+            if stdout is not None:
+                stdout.close()
+            log_writer.close()
+
+    log_thread = threading.Thread(target=forward_output, daemon=True)
+    log_thread.start()
+    return process, log_writer, log_thread
+
+
+def finalize_logged_process(job: TrainJob | CommandJob):
+    if job.log_thread:
+        job.log_thread.join(timeout=5)
+    if job.log_writer:
+        job.log_writer = None
+    job.log_thread = None
 
 
 def build_input_prefix(prefix_base: str) -> str:
     return prefix_base if prefix_base.endswith("_") else f"{prefix_base}_"
+
+
+def describe_exit_code(returncode: int) -> str:
+    if returncode < 0:
+        return f"signal {-returncode}"
+    return f"exit code {returncode}"
 
 
 def run_command_jobs(
@@ -96,14 +177,10 @@ def run_command_jobs(
     while pending or active:
         while pending and len(active) < parallel:
             job = pending.pop(0)
-            job.log_path.parent.mkdir(parents=True, exist_ok=True)
-            job.log_handle = open(job.log_path, "w", encoding="utf-8")
-            job.process = subprocess.Popen(
-                job.command,
+            job.process, job.log_writer, job.log_thread = start_logged_process(
+                command=job.command,
                 cwd=cwd,
-                stdout=job.log_handle,
-                stderr=subprocess.STDOUT,
-                text=True,
+                log_path=job.log_path,
             )
             logger.note(
                 f"> Started {description}: {logstr.mesg(job.name)} -> {logstr.file(job.log_path.name)}"
@@ -115,10 +192,11 @@ def run_command_jobs(
             if job.process.poll() is None:
                 next_active.append(job)
                 continue
-            if job.log_handle:
-                job.log_handle.close()
+            finalize_logged_process(job)
             if job.process.returncode != 0:
-                logger.warn(f"× {description} failed: {job.name}")
+                logger.warn(
+                    f"× {description} failed: {job.name} ({describe_exit_code(job.process.returncode)})"
+                )
                 if job.log_path.exists():
                     tail = job.log_path.read_text(
                         encoding="utf-8", errors="ignore"
@@ -286,16 +364,12 @@ class SentencePieceTrainOrchestrator:
 
     def start_job(self, job: TrainJob):
         job.status_path.parent.mkdir(parents=True, exist_ok=True)
-        job.log_path.parent.mkdir(parents=True, exist_ok=True)
         if job.status_path.exists():
             job.status_path.unlink()
-        job.log_handle = open(job.log_path, "w", encoding="utf-8")
-        job.process = subprocess.Popen(
-            job.command,
+        job.process, job.log_writer, job.log_thread = start_logged_process(
+            command=job.command,
             cwd=REPO_ROOT,
-            stdout=job.log_handle,
-            stderr=subprocess.STDOUT,
-            text=True,
+            log_path=job.log_path,
         )
         logger.note(
             f"> Started: {logstr.mesg(job.name)} -> {logstr.file(job.model_prefix)}"
@@ -335,8 +409,7 @@ class SentencePieceTrainOrchestrator:
         for job in self.jobs:
             if job.process and job.process.poll() is None:
                 job.process.kill()
-            if job.log_handle:
-                job.log_handle.close()
+            finalize_logged_process(job)
 
     def run(self) -> int:
         pending = list(self.jobs)
@@ -357,10 +430,11 @@ class SentencePieceTrainOrchestrator:
                     if job.process.poll() is None:
                         next_active.append(job)
                         continue
-                    if job.log_handle:
-                        job.log_handle.close()
+                    finalize_logged_process(job)
                     if job.process.returncode != 0:
-                        logger.warn(f"× Train job failed: {job.name}")
+                        logger.warn(
+                            f"× Train job failed: {job.name} ({describe_exit_code(job.process.returncode)})"
+                        )
                         tail = self.tail_log(job)
                         if tail:
                             logger.file(tail, indent=2)

@@ -1,8 +1,11 @@
 import unittest
 
 from argparse import Namespace
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from models.sentencepiece.workflow import (
+    SanitizedLogWriter,
     build_input_prefix,
     build_word_commands,
     expand_targets,
@@ -45,6 +48,22 @@ class SentencePieceWorkflowTests(unittest.TestCase):
         self.assertEqual(len(jobs), 2)
         self.assertIn("-mn", jobs[0].command)
         self.assertIn("50000", jobs[0].command)
+
+    def test_sanitized_log_writer_collapses_progress_updates(self):
+        with TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "word.log"
+            writer = SanitizedLogWriter(log_path)
+            writer.write(
+                "\033[95mstart\033[0m\n"
+                "\033[1G\033[2K\033[96m* Doc:\033[0m 10%\r"
+                "\033[1G\033[2K\033[96m* Doc:\033[0m 20%\r"
+                "\033[1G\033[2K\033[96m* Doc:\033[0m 30%"
+            )
+            writer.close()
+
+            self.assertEqual(
+                log_path.read_text(encoding="utf-8"), "start\n* Doc: 30%\n"
+            )
 
 
 if __name__ == "__main__":
