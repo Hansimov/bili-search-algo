@@ -230,6 +230,12 @@ CTA_NOISE_EXACT = {
 CTA_NOISE_PREFIXES = ("up主激励计划", "关注我")
 CTA_ACTION_WORDS = ("点赞", "投币", "收藏", "转发", "关注", "三连", "私信")
 CTA_PHRASE_ACTION_WORDS = ("点赞", "投币", "转发", "关注", "三连", "私信")
+KEYBOARD_ROWS = (
+    "1234567890",
+    "qwertyuiop",
+    "asdfghjkl",
+    "zxcvbnm",
+)
 
 
 def normalize_spaces(text: str) -> str:
@@ -301,12 +307,53 @@ def count_common_trigrams(token: str) -> int:
     )
 
 
+def max_repeated_char_run(token: str) -> int:
+    if not token:
+        return 0
+    max_run = 1
+    run = 1
+    for idx in range(1, len(token)):
+        if token[idx] == token[idx - 1]:
+            run += 1
+            if run > max_run:
+                max_run = run
+        else:
+            run = 1
+    return max_run
+
+
+def looks_like_keyboard_mash(token: str) -> bool:
+    token = token.lower()
+    if len(token) < 4 or not token.isalpha():
+        return False
+    for row in KEYBOARD_ROWS:
+        if token in row or token[::-1] in row:
+            return True
+    return False
+
+
+def looks_like_stretched_ascii_noise(token: str) -> bool:
+    token = token.lower()
+    if len(token) < 5 or not RE_ALNUM.fullmatch(token):
+        return False
+    run = max_repeated_char_run(token)
+    if run >= 4:
+        return True
+    if token.isalpha() and run >= 3 and len(set(token)) <= 3:
+        return True
+    return False
+
+
 def looks_like_random_ascii(token: str) -> bool:
     token = token.lower()
     if not RE_ALPHA.fullmatch(token):
         return False
     if len(token) <= 4:
         return False
+    if looks_like_keyboard_mash(token):
+        return True
+    if looks_like_stretched_ascii_noise(token):
+        return True
     vowel_count = sum(char in "aeiou" for char in token)
     consonant_run = max_consecutive_non_vowels(token)
     uncommon_ratio = uncommon_bigram_ratio(token)
@@ -330,6 +377,10 @@ def looks_like_random_mixed_ascii(token: str) -> bool:
         return False
     if not RE_ALNUM.fullmatch(token):
         return False
+    if looks_like_keyboard_mash(token):
+        return True
+    if looks_like_stretched_ascii_noise(token):
+        return True
     letters = sum(char.isalpha() for char in token)
     digits = sum(char.isdigit() for char in token)
     if not letters or not digits:
@@ -406,6 +457,11 @@ def is_title_template_noise(token: str) -> bool:
 
 
 def is_curated_noise_token(token: str) -> bool:
+    normalized = normalize_common_token(token)
+    if looks_like_keyboard_mash(normalized):
+        return True
+    if looks_like_stretched_ascii_noise(normalized):
+        return True
     if is_video_id_token(token):
         return True
     if token in WIKI_NOISE_EXACT or token in CTA_NOISE_EXACT:

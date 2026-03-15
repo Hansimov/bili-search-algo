@@ -16,7 +16,7 @@ def test_english_extractor_filters_noise_and_keeps_meaningful_tokens():
     extractor = EnglishWordsExtractor()
 
     tokens = extractor.extract(
-        "GTA5 | counting stars | bowlroll.net | 0a | use code | ps5 | zxcvbnm | watch | wte4kt | video"
+        "GTA5 | counting stars | bowlroll.net | 0a | use code | ps5 | zxcvbnm | asdf | qwerty | huaaaaa | watch | wte4kt | video"
     )
 
     assert "gta5" in tokens
@@ -26,6 +26,9 @@ def test_english_extractor_filters_noise_and_keeps_meaningful_tokens():
     assert "0a" not in tokens
     assert "use code" not in tokens
     assert "zxcvbnm" not in tokens
+    assert "asdf" not in tokens
+    assert "qwerty" not in tokens
+    assert "huaaaaa" not in tokens
     assert "watch" not in tokens
     assert "wte4kt" not in tokens
     assert "video" not in tokens

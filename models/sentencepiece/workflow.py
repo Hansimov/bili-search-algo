@@ -568,7 +568,8 @@ def run_train(args: argparse.Namespace) -> int:
 
 
 def resolve_merge_model_paths(args: argparse.Namespace) -> list[Path]:
-    input_model_prefixes = [args.wiki_prefix]
+    wiki_prefix = getattr(args, "wiki_prefix", DEFAULT_WIKI_PREFIX)
+    input_model_prefixes = [wiki_prefix]
     input_model_prefixes.extend(
         [f"{build_input_prefix(args.input_prefix)}{region}" for region in VIDEO_REGIONS]
     )
