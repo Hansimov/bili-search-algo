@@ -6,6 +6,7 @@ from pathlib import Path
 from tclogger import PathType, PathsType, logger, logstr, brk, chars_len
 
 from configs.envs import SP_MERGED_MODEL_PATH
+from models.sentencepiece.vocab_filters import is_malformed_token
 from models.word.eng import get_dump_path
 
 CH_MASK = "▂"
@@ -54,6 +55,8 @@ class SentencePieceConverter:
             if ignore_eng_word and PT_ENG_WORD.match(vocab):
                 continue
             if ignore_one_char and len(vocab) <= 1:
+                continue
+            if is_malformed_token(vocab):
                 continue
             if de_mask and len(vocab) > 1:
                 vocab = vocab.replace(CH_MASK, " ")
@@ -110,6 +113,8 @@ class WordRecordsConverter:
         filtered_words = []
         for word in words:
             if ignore_one_char and len(word) <= 1:
+                continue
+            if is_malformed_token(word):
                 continue
             # word contain any special characters
             if ignore_specials and PT_SPECIALS.search(word):

@@ -3,6 +3,11 @@ import re
 from dataclasses import dataclass
 
 from data_utils.videos.convert import CH_CJK
+from models.vocab_cleanup import (
+    is_curated_noise_token,
+    is_video_id_token,
+    should_keep_cjk_comma_phrase,
+)
 
 CH_MASK = "▂"
 RE_CH_CJK = rf"[{CH_CJK}]"
@@ -21,7 +26,8 @@ PT_ASCII_ALPHA = re.compile(RE_ASCII_ALPHA)
 PT_ASCII_ALNUM = re.compile(RE_ASCII_ALNUM)
 PT_CONNECTOR_RUN = re.compile(RE_CONNECTOR_RUN)
 PT_REPEATED_ASCII = re.compile(RE_REPEATED_ASCII)
-PT_BV_ID = re.compile(RE_BV_ID, re.IGNORECASE)
+PT_CJK_SEPARATOR = re.compile(r"[，,、：:]")
+PT_CJK_SEPARATOR_SPLIT = re.compile(r"[，,、：:]+")
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,24 @@ def is_ascii_alnum(token: str) -> bool:
 
 
 def is_malformed_token(token: str) -> bool:
+    if is_curated_noise_token(token):
+        return True
+    if PT_CJK_SEPARATOR.search(token):
+        segments = [
+            segment.strip()
+            for segment in PT_CJK_SEPARATOR_SPLIT.split(token)
+            if segment.strip()
+        ]
+        if len(segments) >= 2:
+            if any(char in token for char in "，,、"):
+                return not should_keep_cjk_comma_phrase(token)
+            if any(char in token for char in "：:"):
+                if any(PT_ASCII_TOKEN.fullmatch(segment) for segment in segments):
+                    return True
+                if any(PT_PURE_DIGITS.fullmatch(segment) for segment in segments):
+                    return True
+                if all(calc_cjk_char_len(segment) <= 1 for segment in segments):
+                    return True
     if len(token) >= 2 and "%" in token:
         return True
     if len(token) >= 2 and PT_CONNECTOR_RUN.search(token):
@@ -65,7 +89,7 @@ def is_malformed_token(token: str) -> bool:
         or token[-1] == CH_MASK
     ):
         return True
-    if PT_BV_ID.match(token):
+    if is_video_id_token(token):
         return True
     if is_ascii_token(token):
         connector_count = sum(1 for char in token if char in ".-_=")

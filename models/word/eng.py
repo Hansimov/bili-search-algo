@@ -5,7 +5,6 @@ import polars as pl
 import re
 import signal
 import time
-import unicodedata
 
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from itertools import islice
@@ -16,6 +15,21 @@ from typing import Callable, Literal, TypedDict, Union
 
 from configs.envs import MONGO_ENVS
 from data_utils.videos.filter import REGION_MONGO_FILTERS
+from models.vocab_cleanup import (
+    calc_token_units,
+    contains_cjk,
+    count_ascii_mixed_chars,
+    count_ascii_token_chars,
+    count_cjk,
+    count_digits,
+    count_latin,
+    is_curated_noise_token,
+    looks_like_random_ascii,
+    looks_like_random_mixed_ascii,
+    normalize_common_token,
+    normalize_spaces,
+    should_keep_cjk_comma_phrase,
+)
 
 """匹配完整的英文单词，包含字母、数字、连字符、空格、点号
 要求：
@@ -48,17 +62,11 @@ RE_ENG = r"""
 REP_ENG = re.compile(RE_ENG, re.VERBOSE)
 REP_DASHES = re.compile(r"\-{2,}")
 REP_DASH_WS = re.compile(r"(\ \-\ |\ \-|\-\ )")
-REP_MULTISPACE = re.compile(r"\s+")
 REP_DOMAIN = re.compile(r"(?:[a-z0-9-]+\.)+[a-z]{2,}$")
 REP_VERSION = re.compile(r"^[a-z]{1,10}\d+(?:\.\d+)+$")
 REP_ENG_ALLOWED = re.compile(r"^[a-z0-9\-\.\ ]+$")
 REP_ALPHA = re.compile(r"^[a-z]+$")
 REP_ALNUM = re.compile(r"^[a-z0-9]+$")
-REP_ASCII_TOKEN_CHARS = re.compile(r"[a-z0-9\-.]")
-REP_CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
-REP_DIGITS = re.compile(r"\d")
-REP_LATIN = re.compile(r"[a-zA-Z]")
-REP_ASCII_MIXED = re.compile(r"[0-9a-zA-Z\-.]")
 REP_CJK_ALLOWED = re.compile(
     r"^[0-9a-zA-Z\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff：:，,、·・\-\+&\s]+$"
 )
@@ -167,177 +175,6 @@ ENGLISH_SINGLETON_STOPWORDS = {
     "videos",
     "watch",
 }
-COMMON_ASCII_BIGRAMS = {
-    "al",
-    "an",
-    "ar",
-    "at",
-    "ch",
-    "cl",
-    "co",
-    "de",
-    "ea",
-    "ed",
-    "el",
-    "en",
-    "er",
-    "es",
-    "ge",
-    "ha",
-    "he",
-    "hi",
-    "ia",
-    "ic",
-    "ie",
-    "in",
-    "io",
-    "is",
-    "it",
-    "ke",
-    "la",
-    "le",
-    "li",
-    "ll",
-    "lo",
-    "ma",
-    "me",
-    "mi",
-    "na",
-    "nd",
-    "ne",
-    "ng",
-    "ni",
-    "nt",
-    "on",
-    "oo",
-    "or",
-    "ou",
-    "ov",
-    "pa",
-    "ph",
-    "pl",
-    "pr",
-    "ra",
-    "re",
-    "ri",
-    "ro",
-    "rs",
-    "rt",
-    "sa",
-    "se",
-    "sh",
-    "si",
-    "so",
-    "sp",
-    "st",
-    "ta",
-    "te",
-    "th",
-    "ti",
-    "to",
-    "tr",
-    "tu",
-    "ua",
-    "ud",
-    "un",
-    "ur",
-    "ve",
-    "vi",
-    "wh",
-    "wi",
-    "wo",
-    "ya",
-    "yo",
-}
-COMMON_ASCII_TRIGRAMS = {
-    "ack",
-    "age",
-    "air",
-    "all",
-    "ame",
-    "and",
-    "ani",
-    "ard",
-    "art",
-    "ate",
-    "ati",
-    "ava",
-    "awa",
-    "ayo",
-    "bel",
-    "ble",
-    "boo",
-    "cha",
-    "che",
-    "chi",
-    "com",
-    "cro",
-    "der",
-    "ear",
-    "edi",
-    "end",
-    "ent",
-    "era",
-    "ers",
-    "est",
-    "eve",
-    "for",
-    "fun",
-    "ger",
-    "ght",
-    "har",
-    "igh",
-    "ill",
-    "ing",
-    "ion",
-    "ita",
-    "ive",
-    "jav",
-    "ker",
-    "lan",
-    "lay",
-    "leg",
-    "lic",
-    "man",
-    "men",
-    "min",
-    "mod",
-    "nal",
-    "nic",
-    "nia",
-    "ome",
-    "one",
-    "oni",
-    "ord",
-    "ork",
-    "oud",
-    "our",
-    "out",
-    "ove",
-    "pac",
-    "pho",
-    "pla",
-    "pro",
-    "ran",
-    "rea",
-    "ring",
-    "rod",
-    "san",
-    "sek",
-    "shi",
-    "son",
-    "sou",
-    "sta",
-    "str",
-    "tal",
-    "ter",
-    "the",
-    "tra",
-    "und",
-    "ver",
-    "with",
-    "you",
-}
 FULL_DATA_WORKERS = 10
 SHARD_PROGRESS_EVERY_DOCS = 50000
 SHARD_PROGRESS_LOG_INTERVAL = 20.0
@@ -353,134 +190,6 @@ REGION_SHARDS = [
     ["mobile_game"],
     ["other_game"],
 ]
-
-
-def normalize_spaces(text: str) -> str:
-    return REP_MULTISPACE.sub(" ", text).strip()
-
-
-def contains_cjk(text: str) -> bool:
-    return bool(REP_CJK.search(text))
-
-
-def count_cjk(text: str) -> int:
-    return sum(1 for char in text if REP_CJK.match(char))
-
-
-def count_digits(text: str) -> int:
-    return len(REP_DIGITS.findall(text))
-
-
-def count_latin(text: str) -> int:
-    return len(REP_LATIN.findall(text))
-
-
-def count_ascii_token_chars(text: str) -> int:
-    return len(REP_ASCII_TOKEN_CHARS.findall(text))
-
-
-def count_ascii_mixed_chars(text: str) -> int:
-    return len(REP_ASCII_MIXED.findall(text))
-
-
-def calc_token_units(text: str) -> int:
-    return count_cjk(text) * 3 + count_ascii_mixed_chars(text)
-
-
-def max_consecutive_non_vowels(text: str) -> int:
-    max_run = 0
-    current_run = 0
-    for char in text.lower():
-        if not char.isalpha():
-            current_run = 0
-            continue
-        if char in "aeiou":
-            current_run = 0
-            continue
-        current_run += 1
-        if current_run > max_run:
-            max_run = current_run
-    return max_run
-
-
-def uncommon_bigram_ratio(token: str) -> float:
-    if len(token) < 2:
-        return 0.0
-    bigrams = [token[idx : idx + 2] for idx in range(len(token) - 1)]
-    uncommon_count = sum(bigram not in COMMON_ASCII_BIGRAMS for bigram in bigrams)
-    return uncommon_count / len(bigrams)
-
-
-def count_common_trigrams(token: str) -> int:
-    if len(token) < 3:
-        return 0
-    return sum(
-        token[idx : idx + 3] in COMMON_ASCII_TRIGRAMS for idx in range(len(token) - 2)
-    )
-
-
-def looks_like_random_ascii(token: str) -> bool:
-    token = token.lower()
-    if not REP_ALPHA.fullmatch(token):
-        return False
-    if len(token) <= 4:
-        return False
-    vowel_count = sum(char in "aeiou" for char in token)
-    consonant_run = max_consecutive_non_vowels(token)
-    uncommon_ratio = uncommon_bigram_ratio(token)
-    trigram_hits = count_common_trigrams(token)
-    if len(token) >= 7 and vowel_count == 0 and "y" not in token:
-        return True
-    if len(token) >= 8 and vowel_count == 0:
-        return True
-    if len(token) >= 12 and consonant_run >= 5:
-        return True
-    if len(token) >= 12 and consonant_run >= 4 and uncommon_ratio >= 0.55:
-        return True
-    if len(token) >= 14 and vowel_count <= 2 and trigram_hits == 0:
-        return True
-    return False
-
-
-def looks_like_random_mixed_ascii(token: str) -> bool:
-    token = token.lower()
-    if len(token) < 6:
-        return False
-    if not REP_ALNUM.fullmatch(token):
-        return False
-    letters = sum(char.isalpha() for char in token)
-    digits = sum(char.isdigit() for char in token)
-    if not letters or not digits:
-        return False
-    vowel_count = sum(char in "aeiou" for char in token.lower())
-    consonant_run = max_consecutive_non_vowels(token)
-    letter_only = "".join(char for char in token if char.isalpha())
-    letter_consonant_run = max_consecutive_non_vowels(letter_only) if letter_only else 0
-    uncommon_ratio = uncommon_bigram_ratio(letter_only) if letter_only else 0.0
-    trigram_hits = count_common_trigrams(letter_only)
-    if letters >= 4 and digits <= 3 and vowel_count <= 1:
-        return True
-    if letters >= 6 and len(token) >= 10 and consonant_run >= 5:
-        return True
-    if letters >= 6 and len(token) >= 9 and letter_consonant_run >= 5:
-        return True
-    if (
-        letters >= 6
-        and len(token) >= 10
-        and letter_consonant_run >= 4
-        and uncommon_ratio >= 0.6
-        and trigram_hits == 0
-    ):
-        return True
-    return False
-
-
-def normalize_common_token(text: str, lowercase: bool = True) -> str:
-    text = unicodedata.normalize("NFKC", text)
-    text = normalize_spaces(text)
-    if lowercase:
-        text = text.lower()
-    return text
 
 
 class EnglishWordsExtractor:
@@ -560,6 +269,8 @@ class EnglishWordsExtractor:
     def is_meaningful_token(self, token: str) -> bool:
         if not token or len(token) < 2 or len(token) > 48:
             return False
+        if is_curated_noise_token(token):
+            return False
         if token in ENGLISH_SINGLETON_STOPWORDS:
             return False
         if token in ENGLISH_TEMPLATE_PARTS:
@@ -635,7 +346,9 @@ class ChineseWordsExtractor:
         return token
 
     def should_split_by_commas(self, token: str) -> bool:
-        return sum(token.count(char) for char in [",", "，", "、"]) >= 2
+        if not any(char in token for char in [",", "，", "、"]):
+            return False
+        return not should_keep_cjk_comma_phrase(token)
 
     def is_meaningful_token(self, token: str) -> bool:
         if not token:
@@ -650,6 +363,10 @@ class ChineseWordsExtractor:
             return False
         if REP_CJK_NOISE.search(token):
             return False
+        if is_curated_noise_token(token):
+            return False
+        if any(char in token for char in [",", "，", "、"]):
+            return should_keep_cjk_comma_phrase(token)
 
         token = normalize_spaces(token)
         cjk_len = count_cjk(token)

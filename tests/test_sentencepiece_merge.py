@@ -53,6 +53,23 @@ class SentencePieceMergeTests(unittest.TestCase):
         aggregate.add(self.video_source_b, rank_score=0.98, normalized_score=0.92)
         self.assertFalse(self.merger.should_drop_aggregate(aggregate))
 
+    def test_drop_cjk_comma_joined_piece(self):
+        aggregate = PieceAggregate("生活，记录")
+        aggregate.add(self.video_source_a, rank_score=0.99, normalized_score=0.95)
+        aggregate.add(self.video_source_b, rank_score=0.98, normalized_score=0.92)
+        self.assertTrue(self.merger.should_drop_aggregate(aggregate))
+
+    def test_drop_curated_noise_piece(self):
+        aggregate = PieceAggregate("外部链接")
+        aggregate.add(self.wiki_source, rank_score=0.99, normalized_score=0.95)
+        self.assertTrue(self.merger.should_drop_aggregate(aggregate))
+
+    def test_keep_whitelisted_comma_phrase(self):
+        aggregate = PieceAggregate("原神，启动")
+        aggregate.add(self.video_source_a, rank_score=0.99, normalized_score=0.95)
+        aggregate.add(self.video_source_b, rank_score=0.98, normalized_score=0.92)
+        self.assertFalse(self.merger.should_drop_aggregate(aggregate))
+
     def test_cjk_piece_scores_higher_than_ascii_for_same_support(self):
         cjk_aggregate = PieceAggregate("王者荣耀")
         cjk_aggregate.add(self.video_source_a, rank_score=0.9, normalized_score=0.8)

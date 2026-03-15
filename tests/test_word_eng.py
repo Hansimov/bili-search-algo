@@ -107,6 +107,19 @@ def test_chinese_extractor_keeps_titles_and_drops_noise():
     assert "值不值得买" not in noise_tokens
     assert "黑神话：悟空" in noise_tokens
 
+    comma_tokens = extractor.extract(
+        "生活记录，记录#打卡挑战，必剪创作#王者荣耀，moba#原神，启动"
+    )
+    assert "生活记录，记录" not in comma_tokens
+    assert "打卡挑战，必剪创作" not in comma_tokens
+    assert "王者荣耀，moba" not in comma_tokens
+    assert "生活记录" in comma_tokens
+    assert "记录" in comma_tokens
+    assert "打卡挑战" in comma_tokens
+    assert "必剪创作" in comma_tokens
+    assert "王者荣耀" in comma_tokens
+    assert "原神，启动" in comma_tokens
+
 
 def test_build_skip_shard_plans_respects_base_skip_and_last_open_end():
     shards = build_skip_shard_plans(total_count=100, workers=4, base_skip_count=10)
