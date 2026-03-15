@@ -65,7 +65,7 @@ REP_CJK_ALLOWED = re.compile(
 REP_CJK_SPLITTER = re.compile(r"[#@|｜/／]+")
 REP_CJK_CONNECTORS = re.compile(r"[：:，,、·・\-\+&\s]+")
 REP_CJK_NOISE = re.compile(r"[!！?？~～`$%^*_+=\\\[\]{}<>《》【】\"']")
-REP_CJK_TRAILING_PUNCT = re.compile(r"[!！?？~～。．…]+$")
+REP_CJK_TRAILING_PUNCT = re.compile(r"[!！?？~～。．…，,、：:·・\-\+&]+$")
 REP_CJK_LEADING_PUNCT = re.compile(r"^[!！?？~～#＃@＠,，、:：·・\-\+&\s]+")
 REP_CJK_QUESTION = re.compile(
     r"(什么|怎么|为什么|怎么办|怎么看|怎么回事|值不值|值不值得|好不好|吗$|呢$|么$|哪家|是否)"
@@ -167,6 +167,177 @@ ENGLISH_SINGLETON_STOPWORDS = {
     "videos",
     "watch",
 }
+COMMON_ASCII_BIGRAMS = {
+    "al",
+    "an",
+    "ar",
+    "at",
+    "ch",
+    "cl",
+    "co",
+    "de",
+    "ea",
+    "ed",
+    "el",
+    "en",
+    "er",
+    "es",
+    "ge",
+    "ha",
+    "he",
+    "hi",
+    "ia",
+    "ic",
+    "ie",
+    "in",
+    "io",
+    "is",
+    "it",
+    "ke",
+    "la",
+    "le",
+    "li",
+    "ll",
+    "lo",
+    "ma",
+    "me",
+    "mi",
+    "na",
+    "nd",
+    "ne",
+    "ng",
+    "ni",
+    "nt",
+    "on",
+    "oo",
+    "or",
+    "ou",
+    "ov",
+    "pa",
+    "ph",
+    "pl",
+    "pr",
+    "ra",
+    "re",
+    "ri",
+    "ro",
+    "rs",
+    "rt",
+    "sa",
+    "se",
+    "sh",
+    "si",
+    "so",
+    "sp",
+    "st",
+    "ta",
+    "te",
+    "th",
+    "ti",
+    "to",
+    "tr",
+    "tu",
+    "ua",
+    "ud",
+    "un",
+    "ur",
+    "ve",
+    "vi",
+    "wh",
+    "wi",
+    "wo",
+    "ya",
+    "yo",
+}
+COMMON_ASCII_TRIGRAMS = {
+    "ack",
+    "age",
+    "air",
+    "all",
+    "ame",
+    "and",
+    "ani",
+    "ard",
+    "art",
+    "ate",
+    "ati",
+    "ava",
+    "awa",
+    "ayo",
+    "bel",
+    "ble",
+    "boo",
+    "cha",
+    "che",
+    "chi",
+    "com",
+    "cro",
+    "der",
+    "ear",
+    "edi",
+    "end",
+    "ent",
+    "era",
+    "ers",
+    "est",
+    "eve",
+    "for",
+    "fun",
+    "ger",
+    "ght",
+    "har",
+    "igh",
+    "ill",
+    "ing",
+    "ion",
+    "ita",
+    "ive",
+    "jav",
+    "ker",
+    "lan",
+    "lay",
+    "leg",
+    "lic",
+    "man",
+    "men",
+    "min",
+    "mod",
+    "nal",
+    "nic",
+    "nia",
+    "ome",
+    "one",
+    "oni",
+    "ord",
+    "ork",
+    "oud",
+    "our",
+    "out",
+    "ove",
+    "pac",
+    "pho",
+    "pla",
+    "pro",
+    "ran",
+    "rea",
+    "ring",
+    "rod",
+    "san",
+    "sek",
+    "shi",
+    "son",
+    "sou",
+    "sta",
+    "str",
+    "tal",
+    "ter",
+    "the",
+    "tra",
+    "und",
+    "ver",
+    "with",
+    "you",
+}
 FULL_DATA_WORKERS = 10
 SHARD_PROGRESS_EVERY_DOCS = 50000
 SHARD_PROGRESS_LOG_INTERVAL = 20.0
@@ -216,16 +387,63 @@ def calc_token_units(text: str) -> int:
     return count_cjk(text) * 3 + count_ascii_mixed_chars(text)
 
 
+def max_consecutive_non_vowels(text: str) -> int:
+    max_run = 0
+    current_run = 0
+    for char in text.lower():
+        if not char.isalpha():
+            current_run = 0
+            continue
+        if char in "aeiou":
+            current_run = 0
+            continue
+        current_run += 1
+        if current_run > max_run:
+            max_run = current_run
+    return max_run
+
+
+def uncommon_bigram_ratio(token: str) -> float:
+    if len(token) < 2:
+        return 0.0
+    bigrams = [token[idx : idx + 2] for idx in range(len(token) - 1)]
+    uncommon_count = sum(bigram not in COMMON_ASCII_BIGRAMS for bigram in bigrams)
+    return uncommon_count / len(bigrams)
+
+
+def count_common_trigrams(token: str) -> int:
+    if len(token) < 3:
+        return 0
+    return sum(
+        token[idx : idx + 3] in COMMON_ASCII_TRIGRAMS for idx in range(len(token) - 2)
+    )
+
+
 def looks_like_random_ascii(token: str) -> bool:
+    token = token.lower()
     if not REP_ALPHA.fullmatch(token):
         return False
     if len(token) <= 4:
         return False
     vowel_count = sum(char in "aeiou" for char in token)
-    return vowel_count == 0
+    consonant_run = max_consecutive_non_vowels(token)
+    uncommon_ratio = uncommon_bigram_ratio(token)
+    trigram_hits = count_common_trigrams(token)
+    if len(token) >= 7 and vowel_count == 0 and "y" not in token:
+        return True
+    if len(token) >= 8 and vowel_count == 0:
+        return True
+    if len(token) >= 12 and consonant_run >= 5:
+        return True
+    if len(token) >= 12 and consonant_run >= 4 and uncommon_ratio >= 0.55:
+        return True
+    if len(token) >= 14 and vowel_count <= 2 and trigram_hits == 0:
+        return True
+    return False
 
 
 def looks_like_random_mixed_ascii(token: str) -> bool:
+    token = token.lower()
     if len(token) < 6:
         return False
     if not REP_ALNUM.fullmatch(token):
@@ -235,7 +453,26 @@ def looks_like_random_mixed_ascii(token: str) -> bool:
     if not letters or not digits:
         return False
     vowel_count = sum(char in "aeiou" for char in token.lower())
-    return letters >= 4 and digits <= 3 and vowel_count <= 1
+    consonant_run = max_consecutive_non_vowels(token)
+    letter_only = "".join(char for char in token if char.isalpha())
+    letter_consonant_run = max_consecutive_non_vowels(letter_only) if letter_only else 0
+    uncommon_ratio = uncommon_bigram_ratio(letter_only) if letter_only else 0.0
+    trigram_hits = count_common_trigrams(letter_only)
+    if letters >= 4 and digits <= 3 and vowel_count <= 1:
+        return True
+    if letters >= 6 and len(token) >= 10 and consonant_run >= 5:
+        return True
+    if letters >= 6 and len(token) >= 9 and letter_consonant_run >= 5:
+        return True
+    if (
+        letters >= 6
+        and len(token) >= 10
+        and letter_consonant_run >= 4
+        and uncommon_ratio >= 0.6
+        and trigram_hits == 0
+    ):
+        return True
+    return False
 
 
 def normalize_common_token(text: str, lowercase: bool = True) -> str:

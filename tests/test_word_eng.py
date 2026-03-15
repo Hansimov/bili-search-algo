@@ -51,6 +51,28 @@ def test_english_extractor_filters_noise_and_keeps_meaningful_tokens():
     assert "meta http-equiv" not in length_tokens
     assert "super ultra amazing soundtrack" not in length_tokens
 
+    random_tokens = extractor.extract(
+        "uhzhnlzyhnzjkl | caisbggeeaeyaw | mzrlodbinwflza | yzhewzhnjzklz | ylwk23nuoya | ius9jkzjr | sojy1k4x4as"
+    )
+    assert "uhzhnlzyhnzjkl" not in random_tokens
+    assert "caisbggeeaeyaw" not in random_tokens
+    assert "mzrlodbinwflza" not in random_tokens
+    assert "yzhewzhnjzklz" not in random_tokens
+    assert "ylwk23nuoya" not in random_tokens
+    assert "ius9jkzjr" not in random_tokens
+    assert "sojy1k4x4as" not in random_tokens
+
+    legit_long_tokens = extractor.extract(
+        "minecraft | spacex | springboot | soundcloud | nintendoswitch | p1harmony | inst360"
+    )
+    assert "minecraft" in legit_long_tokens
+    assert "spacex" in legit_long_tokens
+    assert "springboot" in legit_long_tokens
+    assert "soundcloud" in legit_long_tokens
+    assert "nintendoswitch" in legit_long_tokens
+    assert "p1harmony" in legit_long_tokens
+    assert "inst360" not in legit_long_tokens
+
 
 def test_chinese_extractor_keeps_titles_and_drops_noise():
     extractor = ChineseWordsExtractor()
@@ -68,6 +90,7 @@ def test_chinese_extractor_keeps_titles_and_drops_noise():
     assert "梦幻手游造梦计划，梦幻西游手游" not in extractor.extract(
         "梦幻手游造梦计划, 梦幻西游手游"
     )
+    assert "梦幻手游造梦计划，" not in extractor.extract("梦幻手游造梦计划，")
 
     more_tokens = extractor.extract(
         "分享#计划#创作灵感#物华弥新创作者激励计划 第三期#黑神话：悟空"
