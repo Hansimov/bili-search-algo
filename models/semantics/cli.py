@@ -222,7 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     merge_parser.add_argument("--max-df-ratio", type=float, default=0.08)
     merge_parser.add_argument("--max-terms-per-doc", type=int, default=12)
     merge_parser.add_argument("--max-pairs-per-doc", type=int, default=48)
-    merge_parser.add_argument("--negative-samples-per-doc", type=int, default=4)
+    merge_parser.add_argument("--negative-samples-per-doc", type=int, default=0)
     merge_parser.add_argument("--min-score", type=float, default=0.28)
     merge_parser.add_argument(
         "--keep-merge-db",

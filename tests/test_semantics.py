@@ -60,6 +60,7 @@ class SemanticsPipelineTests(unittest.TestCase):
                 top_k=8,
                 max_df_ratio=1.0,
                 min_score=0.0,
+                negative_samples_per_doc=4,
             )
             merged_dir = Path(merge_stats["output_dir"])
             self.assertTrue((merged_dir / "rewrite.tsv").exists())

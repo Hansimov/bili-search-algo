@@ -22,7 +22,7 @@ merged/rewrite.tsv
 merged/synonym.tsv
 merged/near_synonym.tsv
 merged/doc_cooccurrence.tsv
-merged/negative_samples.tsv
+merged/negative_samples.tsv   # 默认为空；显式开启训练负样本时写入
 merged/meta.json
 ```
 
@@ -45,17 +45,17 @@ source<TAB>target<TAB>weight<TAB>target<TAB>weight...
 从 JSONL 调试：
 
 ```bash
-python -m models.semantics --version v1 --num-groups 10 build \
+python -m models.semantics --version v1 --num-groups 10 --vocab-limit 800000 build \
   --input-jsonl debugs/live_case_reports/semantic_docs_merged_real.jsonl \
-  --workers 10 --group-chunk-size 20000 --vocab-limit 800000
+  --workers 10 --group-chunk-size 20000
 ```
 
 从 MongoDB 增量构建：
 
 ```bash
 SEMANTICS_MONGO_URI="mongodb://USER:PASSWORD@HOST:PORT" \
-python -m models.semantics --version v1 --num-groups 10 build \
-  --filter '{}' --limit 12000000 --workers 10 --log-every 500000 --vocab-limit 800000
+python -m models.semantics --version v1 --num-groups 10 --vocab-limit 800000 build \
+  --filter '{}' --limit 12000000 --workers 10 --log-every 500000
 ```
 
 合并产物：
@@ -63,6 +63,12 @@ python -m models.semantics --version v1 --num-groups 10 build \
 ```bash
 python -m models.semantics --version v1 --num-groups 10 merge \
   --min-df 8 --min-cooc 5 --top-k 24 --max-df-ratio 0.06 --min-score 0.3
+```
+
+查询期 bundle 默认不生成训练负样本，以减少 merge 时间和产物体积；如果需要为后续训练任务导出负样本，可显式追加：
+
+```bash
+--negative-samples-per-doc 4
 ```
 
 检查状态：
@@ -91,29 +97,35 @@ segment 文件是追加写入的；如果同一个 `doc_key` 的内容发生变�
 - 预扫描 `docs.seg.*.tsv`，记录每个 `doc_key` 的最新 `content_hash`，保证增量更新不会重复计入旧版本文档。
 - 第一遍统计扫描用 SQLite 汇总 term DF 和字段角色 DF。
 - `min_df` 过滤过稀有词，`max_df_ratio` 过滤过泛词。
-- 第二遍只在 allowed terms 内生成 doc co-occurrence pair，并受 `max_terms_per_doc`、`max_pairs_per_doc` 和 `top_k` 限制。
-- `rewrite / synonym / near_synonym` 来自小型确定性规则，`doc_cooccurrence` 来自真实文档合并结果。
+- 第二遍只在 allowed terms 内生成 doc co-occurrence pair，并受 `max_terms_per_doc`、`max_pairs_per_doc` 和 `top_k` 限制；pair 聚合使用内存中的 int-key 结构，避免 SQLite 高频 upsert。
+- `rewrite / synonym` 包含一小组确定性高置信规则，`near_synonym` 会在这些兜底规则之外，从高支持度、高 lift 的真实共现边中动态提炼候选；`doc_cooccurrence` 则保留更宽的真实文档共现关系。
 - 合并输出会清理旧 `edges.tsv`，避免 Java 侧或人工排查时误读旧格式。
 
 ## 性能策略
 
 - 文档按稳定哈希分为 10 个 group。
 - 每个 group 分批提交到 worker，segment 直接落盘。
-- merge 阶段使用 SQLite 做磁盘聚合，避免大规模边集合常驻内存。
+- merge 阶段只用 SQLite 保存 `current_docs` 和 `term_stats`；共现边和可选负样本使用整数 pair key 在内存中聚合，再直接写 compact TSV。
 - 抽取阶段只保留有限数量的 title/tag/owner 词，控制单文档候选词数量。
 - 默认只加载 `vocabs.txt` 前 80 万个词；需要完整词表时可传 `--vocab-limit 0`。
-- 每个批次生成轻量 in-batch negative samples，供后续训练型模型使用，不进入 es-tok 查询扩展。
+- merge 默认关闭 negative samples。它们只供训练型模型使用，不进入 es-tok 查询扩展；关闭后可以避免无用的大文件复制和排序开销。
 
 ## Live 验证结果
 
-真实 Mongo 语料使用 10 个 group、10 个 worker、默认 80 万词表，均已完成 build + merge：
+真实 Mongo 语料使用 10 个 group、10 个 worker、默认 80 万词表，已完成 build + merge。2026-04-25 的 1M merge 参数为：
 
 ```text
-10k docs:   processing 0.974s, 10266.94 docs/s active, 7959 doc_cooccurrence rows
-200k docs:  processing 10.52s, 19011.41 docs/s active, 42568 doc_cooccurrence rows
-1M docs:    processing 46.4s, 21551.72 docs/s active, 76632 doc_cooccurrence rows
+--min-df 12 --min-cooc 20 --top-k 24 --max-df-ratio 0.05
+--max-terms-per-doc 8 --max-pairs-per-doc 20 --min-score 0.36
 ```
 
-1M live run 的端到端吞吐为 18352.53 docs/s，包含约 8.06s 冷启动词表和 Aho-Corasick matcher 加载时间；active processing 吞吐为 21551.72 docs/s。1M merge 读入 999993 个文档、9955339 个 term rows，432867 个 total terms 中保留 92453 个 allowed terms，没有出现 OOM 或 exit 137。
+```text
+200k merge: 199999 docs, 2034940 term rows, 2055333 unique edge pairs,
+            24484 doc_cooccurrence rows, 18.92s elapsed, 578MB max RSS
+1M merge:   999993 docs, 9955276 term rows, 8604590 unique edge pairs,
+            21633 doc_cooccurrence rows, 93.36s elapsed, 2041MB max RSS
+```
+
+此前 1M merge 的 SQLite edge upsert 路径在 4 分钟后仍未完成；当前实现可以稳定完成 1M 真实样本合并。
 
 插件集成也已做 live reload：`es_tok 1.0.0` 在 dev ES 9.2.4 上加载成功，cluster health 为 green。`semantic_docs_merged_real.jsonl` probe 在收口 composable 关系后结果为 `28 docs -> 67 terms -> 57 non-empty`；`康夫 ui` live 请求返回 `comfyui`，验证了 TSV 空格掩码和 Java 解码链路。
