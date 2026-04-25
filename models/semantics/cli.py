@@ -131,6 +131,7 @@ def merge_command(args) -> None:
     version_root = args.output_root / args.version
     stats = merge_groups(
         version_root,
+        output_dir=args.output_dir,
         min_df=args.min_df,
         min_cooc=args.min_cooc,
         top_k=args.top_k,
@@ -140,6 +141,21 @@ def merge_command(args) -> None:
         negative_samples_per_doc=args.negative_samples_per_doc,
         min_score=args.min_score,
         keep_merge_db=args.keep_merge_db,
+        embedding_filter_enabled=args.embedding_filter,
+        embedding_endpoints=args.embedding_endpoints,
+        embedding_min_score=args.embedding_min_score,
+        embedding_cjk_min_score=args.embedding_cjk_min_score,
+        embedding_mixed_script_min_score=args.embedding_mixed_script_min_score,
+        embedding_max_sources=args.embedding_max_sources,
+        embedding_max_targets_per_source=args.embedding_max_targets_per_source,
+        embedding_filter_near_synonym=args.embedding_filter_near_synonym,
+        embedding_filter_doc_cooccurrence=args.embedding_filter_doc_cooccurrence,
+        embedding_bridge_promotion_enabled=args.embedding_bridge_promotion,
+        embedding_bridge_min_weight=args.embedding_bridge_min_weight,
+        embedding_bridge_max_sources=args.embedding_bridge_max_sources,
+        embedding_bridge_max_targets_per_source=args.embedding_bridge_max_targets_per_source,
+        embedding_bridge_scorer=args.embedding_bridge_scorer,
+        embedding_bridge_lsh_bits=args.embedding_bridge_lsh_bits,
     )
     print(json.dumps(stats, ensure_ascii=False, indent=2))
 
@@ -225,9 +241,66 @@ def build_parser() -> argparse.ArgumentParser:
     merge_parser.add_argument("--negative-samples-per-doc", type=int, default=0)
     merge_parser.add_argument("--min-score", type=float, default=0.28)
     merge_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Write merged TSV files to this directory instead of <version>/merged",
+    )
+    merge_parser.add_argument(
         "--keep-merge-db",
         action="store_true",
         help="Keep the intermediate SQLite merge database for debugging",
+    )
+    merge_parser.add_argument(
+        "--embedding-filter",
+        action="store_true",
+        help="Use TEI similarity to filter generated semantic TSV mappings",
+    )
+    merge_parser.add_argument(
+        "--embedding-endpoints",
+        help="Comma-separated or JSON-list TEI endpoints; defaults to SEMANTICS_TEI_ENDPOINTS",
+    )
+    merge_parser.add_argument("--embedding-min-score", type=float, default=0.52)
+    merge_parser.add_argument("--embedding-cjk-min-score", type=float, default=0.58)
+    merge_parser.add_argument(
+        "--embedding-mixed-script-min-score", type=float, default=0.62
+    )
+    merge_parser.add_argument("--embedding-max-sources", type=int, default=20000)
+    merge_parser.add_argument("--embedding-max-targets-per-source", type=int, default=24)
+    merge_parser.add_argument(
+        "--no-embedding-filter-near-synonym",
+        dest="embedding_filter_near_synonym",
+        action="store_false",
+        help="Skip full near_synonym TEI filtering; useful when only bridge promotion is needed",
+    )
+    merge_parser.set_defaults(embedding_filter_near_synonym=True)
+    merge_parser.add_argument(
+        "--no-embedding-filter-doc-cooccurrence",
+        dest="embedding_filter_doc_cooccurrence",
+        action="store_false",
+        help="Skip full doc_cooccurrence TEI filtering; useful when only bridge promotion is needed",
+    )
+    merge_parser.set_defaults(embedding_filter_doc_cooccurrence=True)
+    merge_parser.add_argument(
+        "--embedding-bridge-promotion",
+        action="store_true",
+        help="Promote high-confidence TEI-verified co-occurrence pairs into synonym.tsv",
+    )
+    merge_parser.add_argument("--embedding-bridge-min-weight", type=float, default=0.72)
+    merge_parser.add_argument("--embedding-bridge-max-sources", type=int, default=1200)
+    merge_parser.add_argument(
+        "--embedding-bridge-max-targets-per-source", type=int, default=8
+    )
+    merge_parser.add_argument(
+        "--embedding-bridge-scorer",
+        choices=["embed", "lsh"],
+        default="embed",
+        help="Use full embedding dot product or TEI LSH hash similarity for bridge promotion",
+    )
+    merge_parser.add_argument(
+        "--embedding-bridge-lsh-bits",
+        type=int,
+        default=2048,
+        help="Number of LSH bits when --embedding-bridge-scorer=lsh",
     )
     merge_parser.set_defaults(func=merge_command)
 

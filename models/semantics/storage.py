@@ -13,6 +13,13 @@ from itertools import combinations
 from pathlib import Path
 
 from models.semantics.graph import ExtractedDoc, TermRecord, TermRole
+from models.semantics.embedding_filter import (
+    TeiEmbeddingSimilarityScorer,
+    TeiLshSimilarityScorer,
+    TeiSimilarityScorer,
+    filter_mapping_by_similarity,
+    min_similarity_for_pair,
+)
 from models.semantics.vocab import collapse_text, normalize_surface
 
 
@@ -98,6 +105,7 @@ def write_doc_term_segment(
 
 
 DocTermRecord = tuple[str, int, float]
+TermProfile = tuple[int, int, int]
 
 
 def parse_doc_identity_row(line: str) -> tuple[str, str] | None:
@@ -415,9 +423,10 @@ def _add_rule(
     target = normalize_surface(target)
     if not source or not target or source == target:
         return
-    current = mapping[source].get(target)
+    expansions = mapping.setdefault(source, {})
+    current = expansions.get(target)
     if current is None or current < weight:
-        mapping[source][target] = weight
+        expansions[target] = weight
 
 
 def _merge_mapping(
@@ -520,6 +529,14 @@ def _has_ascii_letter(value: str) -> bool:
     return any(char.isascii() and char.isalpha() for char in value)
 
 
+def _has_cjk_text(value: str) -> bool:
+    return any(_is_cjk(char) for char in value)
+
+
+def _has_digit(value: str) -> bool:
+    return any(char.isdigit() for char in value)
+
+
 def _digit_signature(value: str) -> tuple[str, ...]:
     sequences: list[str] = []
     current: list[str] = []
@@ -600,8 +617,7 @@ def _push_top_candidate(
         heapreplace(heap, item)
 
 
-def _write_doc_cooccurrence_mapping(
-    path: Path,
+def _build_doc_cooccurrence_mapping(
     edge_rows: dict[int, list[float]],
     *,
     doc_count: int,
@@ -610,7 +626,7 @@ def _write_doc_cooccurrence_mapping(
     min_cooc: int,
     top_k: int,
     min_score: float,
-) -> int:
+) -> dict[str, dict[str, float]]:
     heaps_by_source: dict[
         str, list[tuple[tuple[float, int, tuple[int, ...]], str, float, int]]
     ] = defaultdict(list)
@@ -643,21 +659,15 @@ def _write_doc_cooccurrence_mapping(
             top_k=top_k,
         )
 
-    row_count = 0
-    with path.open("w", encoding="utf-8") as handle:
-        for source in sorted(heaps_by_source):
-            ranked = sorted(
-                heaps_by_source[source],
-                key=lambda item: (-item[2], -item[3], item[1]),
-            )
-            if not ranked:
-                continue
-            cells = [encode_normalized_term(source)]
-            for _rank, target, weight, _cooc in ranked:
-                cells.extend([encode_normalized_term(target), format_weight(weight)])
-            handle.write("\t".join(cells) + "\n")
-            row_count += 1
-    return row_count
+    mapping: dict[str, dict[str, float]] = defaultdict(dict)
+    for source in sorted(heaps_by_source):
+        ranked = sorted(
+            heaps_by_source[source],
+            key=lambda item: (-item[2], -item[3], item[1]),
+        )
+        for _rank, target, weight, _cooc in ranked:
+            _add_rule(mapping, source, target, weight)
+    return mapping
 
 
 def _write_compact_mapping(path: Path, mapping: dict[str, dict[str, float]]) -> int:
@@ -675,6 +685,174 @@ def _write_compact_mapping(path: Path, mapping: dict[str, dict[str, float]]) -> 
             handle.write("\t".join(cells) + "\n")
             row_count += 1
     return row_count
+
+
+def _bridge_profile_ok(profile: TermProfile | None) -> bool:
+    if profile is None:
+        return True
+    _df, title_df, tag_df = profile
+    if tag_df < 8:
+        return False
+    if tag_df >= title_df:
+        return True
+    return (float(tag_df) / max(float(title_df), 1.0)) >= 0.25
+
+
+def _bridge_profile_score(profile: TermProfile | None) -> float:
+    if profile is None:
+        return 1.0
+    df, title_df, tag_df = profile
+    tag_ratio = float(tag_df) / max(float(title_df), 1.0)
+    tag_bias = min(4.0, tag_ratio)
+    return (1.0 + tag_bias) * (math.log1p(tag_df) / max(math.log1p(df), 1.0))
+
+
+def _load_term_profiles(
+    connection: sqlite3.Connection, allowed: set[str]
+) -> dict[str, TermProfile]:
+    profiles: dict[str, TermProfile] = {}
+    for surface, df, title_df, tag_df in connection.execute(
+        "SELECT surface, df, title_df, tag_df FROM term_stats"
+    ):
+        if surface not in allowed:
+            continue
+        profiles[str(surface)] = (int(df), int(title_df), int(tag_df))
+    return profiles
+
+
+def _can_consider_semantic_bridge(
+    source: str,
+    target: str,
+    term_profiles: dict[str, TermProfile] | None = None,
+) -> bool:
+    if source == target:
+        return False
+    source_key = _semantic_variant_key(source)
+    target_key = _semantic_variant_key(target)
+    if len(source_key) < 2 or len(target_key) < 2:
+        return False
+    if len(source_key) > 24 or len(target_key) > 24:
+        return False
+    if _is_semantic_fragment(source_key) or _is_semantic_fragment(target_key):
+        return False
+    if _has_digit(source_key) or _has_digit(target_key):
+        return False
+    if term_profiles is not None and (
+        not _bridge_profile_ok(term_profiles.get(source))
+        or not _bridge_profile_ok(term_profiles.get(target))
+    ):
+        return False
+
+    source_has_cjk = _has_cjk_text(source_key)
+    target_has_cjk = _has_cjk_text(target_key)
+    source_has_ascii = _has_ascii_letter(source_key)
+    target_has_ascii = _has_ascii_letter(target_key)
+    if source_has_cjk != target_has_cjk and (source_has_ascii or target_has_ascii):
+        return True
+    return source_has_cjk and target_has_cjk
+
+
+def _promote_embedding_semantic_bridges(
+    synonym_mapping: dict[str, dict[str, float]],
+    doc_cooccurrence_mapping: dict[str, dict[str, float]],
+    similarity_fn,
+    *,
+    min_weight: float,
+    min_score: float,
+    cjk_min_score: float,
+    mixed_script_min_score: float,
+    max_sources: int,
+    max_targets_per_source: int,
+    term_profiles: dict[str, TermProfile] | None = None,
+) -> dict[str, int | float]:
+    stats: dict[str, int | float] = {
+        "sources_seen": 0,
+        "sources_scored": 0,
+        "targets_seen": 0,
+        "targets_scored": 0,
+        "targets_promoted": 0,
+        "targets_rejected_by_similarity": 0,
+        "min_weight": round(float(min_weight), 4),
+    }
+    ranked_sources = sorted(
+        doc_cooccurrence_mapping,
+        key=lambda source: (
+            -_bridge_profile_score(
+                term_profiles.get(source) if term_profiles is not None else None
+            ),
+            -max(
+                (
+                    float(weight)
+                    for target, weight in doc_cooccurrence_mapping[source].items()
+                    if _can_consider_semantic_bridge(source, target, term_profiles)
+                ),
+                default=0.0,
+            ),
+            -len(doc_cooccurrence_mapping[source]),
+            normalize_surface(source),
+        ),
+    )
+    source_candidates: list[tuple[str, list[tuple[str, float]]]] = []
+    for source in ranked_sources:
+        if max_sources > 0 and len(source_candidates) >= max_sources:
+            break
+        candidates = [
+            (target, float(weight))
+            for target, weight in doc_cooccurrence_mapping[source].items()
+            if float(weight) >= min_weight
+            and _can_consider_semantic_bridge(source, target, term_profiles)
+        ]
+        stats["targets_seen"] = int(stats["targets_seen"]) + len(candidates)
+        if not candidates:
+            continue
+        candidates.sort(key=lambda item: (-item[1], item[0]))
+        if max_targets_per_source > 0:
+            candidates = candidates[:max_targets_per_source]
+        source_candidates.append((source, candidates))
+
+    preload_terms = getattr(similarity_fn, "preload_terms", None)
+    if callable(preload_terms):
+        terms: set[str] = set()
+        for source, candidates in source_candidates:
+            terms.add(source)
+            terms.update(target for target, _weight in candidates)
+        preload_terms(terms)
+
+    for source, candidates in source_candidates:
+
+        stats["sources_seen"] = int(stats["sources_seen"]) + 1
+        targets = [target for target, _weight in candidates]
+        similarities = getattr(similarity_fn, "similarities", None)
+        scores = (
+            similarities(source, targets)
+            if callable(similarities)
+            else similarity_fn(source, targets)
+        )
+        if len(scores) != len(targets):
+            continue
+        stats["sources_scored"] = int(stats["sources_scored"]) + 1
+        stats["targets_scored"] = int(stats["targets_scored"]) + len(targets)
+
+        for (target, weight), score in zip(candidates, scores):
+            threshold = min_similarity_for_pair(
+                source,
+                target,
+                min_score=min_score,
+                cjk_min_score=cjk_min_score,
+                mixed_script_min_score=mixed_script_min_score,
+            )
+            if float(score) < threshold:
+                stats["targets_rejected_by_similarity"] = (
+                    int(stats["targets_rejected_by_similarity"]) + 1
+                )
+                continue
+            promoted_weight = round(
+                min(0.94, max(0.0, float(weight)) * (0.7 + 0.3 * float(score))),
+                4,
+            )
+            _add_rule(synonym_mapping, source, target, promoted_weight)
+            stats["targets_promoted"] = int(stats["targets_promoted"]) + 1
+    return stats
 
 
 def _write_nodes(path: Path, connection: sqlite3.Connection, allowed: set[str]) -> int:
@@ -744,6 +922,21 @@ def merge_groups(
     negative_samples_per_doc: int = 0,
     min_score: float = 0.28,
     keep_merge_db: bool = False,
+    embedding_filter_enabled: bool = False,
+    embedding_endpoints: str | list[str] | None = None,
+    embedding_min_score: float = 0.52,
+    embedding_cjk_min_score: float = 0.58,
+    embedding_mixed_script_min_score: float = 0.62,
+    embedding_max_sources: int = 20000,
+    embedding_max_targets_per_source: int = 24,
+    embedding_filter_near_synonym: bool = True,
+    embedding_filter_doc_cooccurrence: bool = True,
+    embedding_bridge_promotion_enabled: bool = False,
+    embedding_bridge_min_weight: float = 0.72,
+    embedding_bridge_max_sources: int = 1200,
+    embedding_bridge_max_targets_per_source: int = 8,
+    embedding_bridge_scorer: str = "embed",
+    embedding_bridge_lsh_bits: int = 2048,
 ) -> dict[str, int | float | str]:
     version_root = Path(version_root)
     output_dir = Path(output_dir) if output_dir else version_root / "merged"
@@ -768,6 +961,7 @@ def merge_groups(
             min_df=min_df,
             max_df_ratio=max_df_ratio,
         )
+        term_profiles = _load_term_profiles(connection, set(allowed))
         edge_stats, edge_rows, negative_rows, terms_by_id = _collect_edges(
             version_root,
             allowed=allowed,
@@ -780,6 +974,7 @@ def merge_groups(
         rewrite_mapping: dict[str, dict[str, float]] = defaultdict(dict)
         synonym_mapping: dict[str, dict[str, float]] = defaultdict(dict)
         near_synonym_mapping: dict[str, dict[str, float]] = defaultdict(dict)
+        embedding_filter_stats: dict[str, dict] = {}
         _merge_mapping(
             near_synonym_mapping,
             _load_derived_near_synonym_mapping(
@@ -792,6 +987,123 @@ def merge_groups(
                 min_score=min_score,
             ),
         )
+        doc_cooccurrence_mapping = _build_doc_cooccurrence_mapping(
+            edge_rows,
+            doc_count=doc_count,
+            allowed=allowed,
+            terms_by_id=terms_by_id,
+            min_cooc=min_cooc,
+            top_k=top_k,
+            min_score=min_score,
+        )
+        if embedding_filter_enabled:
+            needs_rerank_filter = (
+                embedding_filter_near_synonym or embedding_filter_doc_cooccurrence
+            )
+            scorer = (
+                TeiSimilarityScorer(embedding_endpoints)
+                if needs_rerank_filter
+                else None
+            )
+            if scorer is not None and scorer.is_available():
+                if embedding_filter_near_synonym:
+                    near_synonym_mapping, stats = filter_mapping_by_similarity(
+                        near_synonym_mapping,
+                        scorer.similarities,
+                        min_score=embedding_min_score,
+                        cjk_min_score=embedding_cjk_min_score,
+                        mixed_script_min_score=embedding_mixed_script_min_score,
+                        max_sources=embedding_max_sources,
+                        max_targets_per_source=embedding_max_targets_per_source,
+                        reweight=True,
+                    )
+                    embedding_filter_stats["near_synonym"] = stats.to_dict()
+                else:
+                    embedding_filter_stats["near_synonym"] = {
+                        "enabled": False,
+                        "reason": "disabled_by_merge_option",
+                    }
+                if embedding_filter_doc_cooccurrence:
+                    doc_cooccurrence_mapping, stats = filter_mapping_by_similarity(
+                        doc_cooccurrence_mapping,
+                        scorer.similarities,
+                        min_score=embedding_min_score,
+                        cjk_min_score=embedding_cjk_min_score,
+                        mixed_script_min_score=embedding_mixed_script_min_score,
+                        max_sources=embedding_max_sources,
+                        max_targets_per_source=embedding_max_targets_per_source,
+                        reweight=True,
+                    )
+                    embedding_filter_stats["doc_cooccurrence"] = stats.to_dict()
+                else:
+                    embedding_filter_stats["doc_cooccurrence"] = {
+                        "enabled": False,
+                        "reason": "disabled_by_merge_option",
+                    }
+            elif needs_rerank_filter:
+                embedding_filter_stats["skipped"] = {
+                    "enabled": True,
+                    "reason": "tei_unavailable",
+                }
+            if embedding_bridge_promotion_enabled:
+                if embedding_bridge_scorer == "lsh":
+                    bridge_scorer = TeiLshSimilarityScorer(
+                        embedding_endpoints,
+                        bitn=embedding_bridge_lsh_bits,
+                    )
+                    bridge_min_score = max(embedding_min_score, 0.68)
+                    bridge_cjk_min_score = max(embedding_cjk_min_score, 0.72)
+                    bridge_mixed_script_min_score = max(
+                        embedding_mixed_script_min_score,
+                        0.70,
+                    )
+                else:
+                    bridge_scorer = TeiEmbeddingSimilarityScorer(embedding_endpoints)
+                    bridge_min_score = embedding_min_score
+                    bridge_cjk_min_score = embedding_cjk_min_score
+                    bridge_mixed_script_min_score = embedding_mixed_script_min_score
+                if bridge_scorer.is_available():
+                    embedding_filter_stats["semantic_bridge"] = (
+                        _promote_embedding_semantic_bridges(
+                            synonym_mapping,
+                            doc_cooccurrence_mapping,
+                            bridge_scorer,
+                            min_weight=embedding_bridge_min_weight,
+                            min_score=bridge_min_score,
+                            cjk_min_score=bridge_cjk_min_score,
+                            mixed_script_min_score=bridge_mixed_script_min_score,
+                            max_sources=embedding_bridge_max_sources,
+                            max_targets_per_source=(
+                                embedding_bridge_max_targets_per_source
+                            ),
+                            term_profiles=term_profiles,
+                        )
+                    )
+                    embedding_filter_stats["semantic_bridge"][
+                        "scorer"
+                    ] = embedding_bridge_scorer
+                    embedding_filter_stats["semantic_bridge"][
+                        "lsh_bits"
+                    ] = (
+                        embedding_bridge_lsh_bits
+                        if embedding_bridge_scorer == "lsh"
+                        else 0
+                    )
+                    embedding_filter_stats["semantic_bridge"]["min_score"] = (
+                        bridge_min_score
+                    )
+                    embedding_filter_stats["semantic_bridge"]["cjk_min_score"] = (
+                        bridge_cjk_min_score
+                    )
+                    embedding_filter_stats["semantic_bridge"][
+                        "mixed_script_min_score"
+                    ] = bridge_mixed_script_min_score
+                else:
+                    embedding_filter_stats["semantic_bridge"] = {
+                        "enabled": True,
+                        "reason": "tei_unavailable",
+                        "scorer": embedding_bridge_scorer,
+                    }
         relation_rows = {
             "node_rows": _write_nodes(
                 output_dir / "nodes.tsv", connection, set(allowed)
@@ -808,15 +1120,9 @@ def merge_groups(
             "near_synonym_rows": _write_compact_mapping(
                 output_dir / "near_synonym.tsv", near_synonym_mapping
             ),
-            "doc_cooccurrence_rows": _write_doc_cooccurrence_mapping(
+            "doc_cooccurrence_rows": _write_compact_mapping(
                 output_dir / "doc_cooccurrence.tsv",
-                edge_rows,
-                doc_count=doc_count,
-                allowed=allowed,
-                terms_by_id=terms_by_id,
-                min_cooc=min_cooc,
-                top_k=top_k,
-                min_score=min_score,
+                doc_cooccurrence_mapping,
             ),
         }
         total_terms_row = connection.execute(
@@ -834,6 +1140,14 @@ def merge_groups(
             "max_pairs_per_doc": max_pairs_per_doc,
             "min_score": min_score,
             "merge_db_kept": keep_merge_db,
+            "embedding_filter_enabled": embedding_filter_enabled,
+            "embedding_filter_near_synonym": embedding_filter_near_synonym,
+            "embedding_filter_doc_cooccurrence": embedding_filter_doc_cooccurrence,
+            "embedding_bridge_promotion_enabled": embedding_bridge_promotion_enabled,
+            "embedding_bridge_min_weight": embedding_bridge_min_weight,
+            "embedding_bridge_scorer": embedding_bridge_scorer,
+            "embedding_bridge_lsh_bits": embedding_bridge_lsh_bits,
+            "embedding_filter": embedding_filter_stats,
             "current_doc_filter_enabled": filter_current_docs,
             **current_doc_stats,
             **read_stats,

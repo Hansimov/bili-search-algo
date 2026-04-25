@@ -5,7 +5,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from models.semantics.pipeline import SemanticPipeline
-from models.semantics.storage import _can_promote_near_synonym, merge_groups
+from models.semantics.embedding_filter import filter_mapping_by_similarity, hash_similarity
+from models.semantics.storage import (
+    _can_promote_near_synonym,
+    _promote_embedding_semantic_bridges,
+    merge_groups,
+)
 
 
 class SemanticsPipelineTests(unittest.TestCase):
@@ -171,6 +176,71 @@ class SemanticsPipelineTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(path.read_text(encoding="utf-8").count("\n"), 1)
+
+    def test_embedding_filter_removes_low_similarity_cooccurrence(self):
+        mapping = {
+            "显卡": {"gpu": 0.9, "洗地机": 0.8, "硬件": 0.7},
+            "价格": {"价格曲线": 0.9},
+        }
+
+        def similarity(source: str, targets: list[str]) -> list[float]:
+            scores = {
+                ("显卡", "gpu"): 0.72,
+                ("显卡", "洗地机"): 0.31,
+                ("显卡", "硬件"): 0.60,
+                ("价格", "价格曲线"): 0.75,
+            }
+            return [scores.get((source, target), 0.0) for target in targets]
+
+        filtered, stats = filter_mapping_by_similarity(
+            mapping,
+            similarity,
+            min_score=0.52,
+            cjk_min_score=0.72,
+            mixed_script_min_score=0.62,
+        )
+
+        self.assertEqual(set(filtered["显卡"]), {"gpu"})
+        self.assertEqual(set(filtered["价格"]), {"价格曲线"})
+        self.assertEqual(stats.targets_seen, 4)
+        self.assertEqual(stats.targets_removed, 2)
+
+    def test_embedding_bridge_promotion_adds_only_verified_semantic_pairs(self):
+        synonyms = {}
+        cooccurrence = {
+            "显卡": {"gpu": 0.92, "硬件": 0.88, "h20": 0.95},
+            "价格": {"价格曲线": 0.9},
+        }
+
+        def similarity(source: str, targets: list[str]) -> list[float]:
+            scores = {
+                ("显卡", "gpu"): 0.73,
+                ("显卡", "硬件"): 0.61,
+                ("价格", "价格曲线"): 0.76,
+            }
+            return [scores.get((source, target), 0.0) for target in targets]
+
+        stats = _promote_embedding_semantic_bridges(
+            synonyms,
+            cooccurrence,
+            similarity,
+            min_weight=0.72,
+            min_score=0.52,
+            cjk_min_score=0.72,
+            mixed_script_min_score=0.62,
+            max_sources=0,
+            max_targets_per_source=8,
+        )
+
+        self.assertEqual(set(synonyms["显卡"]), {"gpu"})
+        self.assertEqual(set(synonyms["价格"]), {"价格曲线"})
+        self.assertNotIn("h20", synonyms["显卡"])
+        self.assertEqual(stats["targets_promoted"], 2)
+
+    def test_hash_similarity_uses_normalized_hamming_similarity(self):
+        self.assertEqual(hash_similarity("ff", "ff"), 1.0)
+        self.assertEqual(hash_similarity("00", "ff"), 0.0)
+        self.assertEqual(hash_similarity("f0", "ff"), 0.5)
 
 
 if __name__ == "__main__":
