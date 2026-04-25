@@ -5,10 +5,18 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from models.semantics.pipeline import SemanticPipeline
-from models.semantics.storage import merge_groups
+from models.semantics.storage import _can_promote_near_synonym, merge_groups
 
 
 class SemanticsPipelineTests(unittest.TestCase):
+    def test_near_synonym_promotion_requires_surface_variant(self):
+        self.assertTrue(_can_promote_near_synonym("comfyui", "comfyu"))
+        self.assertTrue(_can_promote_near_synonym("055大", "055大驱"))
+        self.assertFalse(_can_promote_near_synonym("00后", "90后"))
+        self.assertFalse(_can_promote_near_synonym("0分", "10分钟"))
+        self.assertFalse(_can_promote_near_synonym("15分钟", "5分钟"))
+        self.assertFalse(_can_promote_near_synonym("教程", "入门"))
+
     def test_build_merge_and_incremental_skip(self):
         docs = [
             {

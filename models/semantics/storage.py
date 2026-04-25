@@ -4,6 +4,7 @@ import json
 import math
 import sqlite3
 import time
+import unicodedata
 
 from collections import defaultdict
 from collections.abc import Iterable
@@ -19,37 +20,6 @@ TSV_SPACE_MASK = "▂"
 TITLE_ROLE = int(TermRole.TITLE)
 TAG_ROLE = int(TermRole.TAG)
 OWNER_ROLE = int(TermRole.OWNER)
-DEFAULT_REWRITE_RULES: dict[str, tuple[str, ...]] = {
-    "专访": ("采访", "访谈"),
-    "访谈": ("采访", "专访"),
-    "评测": ("测评",),
-    "测评": ("评测",),
-    "攻略": ("教程", "指南"),
-    "指南": ("教程", "攻略"),
-    "解析": ("解读",),
-    "解读": ("解析",),
-    "中字": ("中文字幕",),
-    "熟肉": ("中文字幕",),
-    "康夫 ui": ("comfyui",),
-}
-DEFAULT_SYNONYM_GROUPS: tuple[tuple[str, ...], ...] = (
-    ("采访", "访谈", "专访"),
-    ("教程", "教学", "讲解", "攻略", "指南"),
-    ("评测", "测评"),
-    ("解析", "解读"),
-    ("中字", "中文字幕", "熟肉"),
-    ("混剪", "剪辑", "mad"),
-    ("直播录像", "录播", "切片"),
-)
-DEFAULT_NEAR_SYNONYM_GROUPS: tuple[tuple[float, tuple[str, ...]], ...] = (
-    (0.82, ("开箱", "上手", "体验")),
-    (0.78, ("解析", "解读", "盘点")),
-    (0.74, ("整活", "搞笑", "沙雕")),
-    (0.74, ("实况", "流程", "通关")),
-    (0.72, ("翻唱", "cover", "remix")),
-    (0.72, ("预告", "pv", "宣传片")),
-    (0.70, ("排行", "榜单", "盘点")),
-)
 MERGED_OUTPUT_FILES = {
     ".merge.sqlite",
     "nodes.tsv",
@@ -450,36 +420,6 @@ def _add_rule(
         mapping[source][target] = weight
 
 
-def _seed_rewrite_mapping() -> dict[str, dict[str, float]]:
-    mapping: dict[str, dict[str, float]] = defaultdict(dict)
-    for source, targets in DEFAULT_REWRITE_RULES.items():
-        for target in targets:
-            _add_rule(mapping, source, target, 1.0)
-    return mapping
-
-
-def _seed_group_mapping(
-    groups: tuple[tuple[str, ...], ...], weight: float
-) -> dict[str, dict[str, float]]:
-    mapping: dict[str, dict[str, float]] = defaultdict(dict)
-    for terms in groups:
-        for source in terms:
-            for target in terms:
-                _add_rule(mapping, source, target, weight)
-    return mapping
-
-
-def _seed_weighted_group_mapping(
-    groups: tuple[tuple[float, tuple[str, ...]], ...]
-) -> dict[str, dict[str, float]]:
-    mapping: dict[str, dict[str, float]] = defaultdict(dict)
-    for weight, terms in groups:
-        for source in terms:
-            for target in terms:
-                _add_rule(mapping, source, target, weight)
-    return mapping
-
-
 def _merge_mapping(
     target: dict[str, dict[str, float]], source: dict[str, dict[str, float]]
 ) -> dict[str, dict[str, float]]:
@@ -548,17 +488,89 @@ def _load_derived_near_synonym_mapping(
 def _can_promote_near_synonym(source: str, target: str) -> bool:
     if source == target:
         return False
-    source_len = len(source.replace(" ", ""))
-    target_len = len(target.replace(" ", ""))
+    source_compact = _semantic_variant_key(source)
+    target_compact = _semantic_variant_key(target)
+    source_len = len(source_compact)
+    target_len = len(target_compact)
     if source_len < 2 or target_len < 2:
         return False
     if source_len > 16 or target_len > 16:
         return False
     if abs(source_len - target_len) > 8:
         return False
-    if source in target or target in source:
+    if _is_semantic_fragment(source_compact) or _is_semantic_fragment(target_compact):
+        return False
+    if source_compact in target_compact or target_compact in source_compact:
+        if min(source_len, target_len) <= 2:
+            return False
+        if _digit_signature(source_compact) != _digit_signature(target_compact):
+            return False
         return abs(source_len - target_len) <= 4
-    return True
+    if _has_ascii_letter(source_compact) and _has_ascii_letter(target_compact):
+        return _limited_edit_distance(source_compact, target_compact, 2) <= 2
+    return False
+
+
+def _semantic_variant_key(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return "".join(char for char in normalized if not char.isspace())
+
+
+def _has_ascii_letter(value: str) -> bool:
+    return any(char.isascii() and char.isalpha() for char in value)
+
+
+def _digit_signature(value: str) -> tuple[str, ...]:
+    sequences: list[str] = []
+    current: list[str] = []
+    for char in value:
+        if char.isdigit():
+            current.append(char)
+        elif current:
+            sequences.append("".join(current))
+            current.clear()
+    if current:
+        sequences.append("".join(current))
+    return tuple(sequences)
+
+
+def _is_cjk(char: str) -> bool:
+    return "\u4e00" <= char <= "\u9fff"
+
+
+def _is_semantic_fragment(value: str) -> bool:
+    if not value:
+        return True
+    alnum_or_cjk = [char for char in value if char.isalnum() or _is_cjk(char)]
+    if len(alnum_or_cjk) < 2:
+        return True
+    if all(char.isdigit() for char in alnum_or_cjk):
+        return True
+    if len(alnum_or_cjk) <= 3 and sum(char.isdigit() for char in alnum_or_cjk) >= 2:
+        return True
+    return False
+
+
+def _limited_edit_distance(left: str, right: str, limit: int) -> int:
+    if abs(len(left) - len(right)) > limit:
+        return limit + 1
+    previous = list(range(len(right) + 1))
+    for left_index, left_char in enumerate(left, start=1):
+        current = [left_index]
+        row_min = current[0]
+        for right_index, right_char in enumerate(right, start=1):
+            cost = 0 if left_char == right_char else 1
+            value = min(
+                previous[right_index] + 1,
+                current[right_index - 1] + 1,
+                previous[right_index - 1] + cost,
+            )
+            current.append(value)
+            row_min = min(row_min, value)
+        if row_min > limit:
+            return limit + 1
+        previous = current
+    return previous[-1]
 
 
 def _lex_rank(value: str) -> tuple[int, ...]:
@@ -765,9 +777,9 @@ def merge_groups(
             max_pairs_per_doc=max_pairs_per_doc,
             negative_samples_per_doc=negative_samples_per_doc,
         )
-        rewrite_mapping = _seed_rewrite_mapping()
-        synonym_mapping = _seed_group_mapping(DEFAULT_SYNONYM_GROUPS, 0.92)
-        near_synonym_mapping = _seed_weighted_group_mapping(DEFAULT_NEAR_SYNONYM_GROUPS)
+        rewrite_mapping: dict[str, dict[str, float]] = defaultdict(dict)
+        synonym_mapping: dict[str, dict[str, float]] = defaultdict(dict)
+        near_synonym_mapping: dict[str, dict[str, float]] = defaultdict(dict)
         _merge_mapping(
             near_synonym_mapping,
             _load_derived_near_synonym_mapping(

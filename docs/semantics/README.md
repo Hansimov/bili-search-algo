@@ -98,7 +98,7 @@ segment 文件是追加写入的；如果同一个 `doc_key` 的内容发生变�
 - 第一遍统计扫描用 SQLite 汇总 term DF 和字段角色 DF。
 - `min_df` 过滤过稀有词，`max_df_ratio` 过滤过泛词。
 - 第二遍只在 allowed terms 内生成 doc co-occurrence pair，并受 `max_terms_per_doc`、`max_pairs_per_doc` 和 `top_k` 限制；pair 聚合使用内存中的 int-key 结构，避免 SQLite 高频 upsert。
-- `rewrite / synonym` 包含一小组确定性高置信规则，`near_synonym` 会在这些兜底规则之外，从高支持度、高 lift 的真实共现边中动态提炼候选；`doc_cooccurrence` 则保留更宽的真实文档共现关系。
+- `rewrite / synonym` 默认不再注入手工挑选规则；`near_synonym` 只从高支持度、高 lift 的真实共现边中提炼“同一词/实体的表面变体”，并额外要求包含关系、数字签名一致，或 ASCII 型号/英文词轻微拼写差异；`doc_cooccurrence` 保留更宽的真实文档共现关系。
 - 合并输出会清理旧 `edges.tsv`，避免 Java 侧或人工排查时误读旧格式。
 
 ## 性能策略
@@ -109,6 +109,7 @@ segment 文件是追加写入的；如果同一个 `doc_key` 的内容发生变�
 - 抽取阶段只保留有限数量的 title/tag/owner 词，控制单文档候选词数量。
 - 默认只加载 `vocabs.txt` 前 80 万个词；需要完整词表时可传 `--vocab-limit 0`。
 - merge 默认关闭 negative samples。它们只供训练型模型使用，不进入 es-tok 查询扩展；关闭后可以避免无用的大文件复制和排序开销。
+- 查询期语义 bundle 产物必须由数据集统计生成。不要在 `models.semantics` 中加入针对单个 query 或产品名的 seed rule；需要 A/B 的人工配置应放在上游配置 JSON 中，并默认可关闭。
 
 ## Live 验证结果
 
@@ -123,9 +124,10 @@ segment 文件是追加写入的；如果同一个 `doc_key` 的内容发生变�
 200k merge: 199999 docs, 2034940 term rows, 2055333 unique edge pairs,
             24484 doc_cooccurrence rows, 18.92s elapsed, 578MB max RSS
 1M merge:   999993 docs, 9955276 term rows, 8604590 unique edge pairs,
-            21633 doc_cooccurrence rows, 93.36s elapsed, 2041MB max RSS
+            2336 near_synonym rows, 21633 doc_cooccurrence rows,
+            88.41s elapsed, 2029MB max RSS
 ```
 
 此前 1M merge 的 SQLite edge upsert 路径在 4 分钟后仍未完成；当前实现可以稳定完成 1M 真实样本合并。
 
-插件集成也已做 live reload：`es_tok 1.0.0` 在 dev ES 9.2.4 上加载成功，cluster health 为 green。`semantic_docs_merged_real.jsonl` probe 在收口 composable 关系后结果为 `28 docs -> 67 terms -> 57 non-empty`；`康夫 ui` live 请求返回 `comfyui`，验证了 TSV 空格掩码和 Java 解码链路。
+插件集成也已做 live reload：`es_tok 1.0.0` 在 dev ES 9.2.4 上加载成功。`b200 价格` live 搜索已从严格 `+b200 +价格` 的 1 条结果，回退为普通 `b200 价格` 查询并返回 20 条页面结果；这类召回修复在 `bili-search` 中通过可关闭的低召回 retry 完成。语义 TSV 中不再保留 `康夫 ui -> comfyui` 这类手工 case rule，后续别名质量应通过数据集生成的 alias mining 阶段提升，而不是写入模型代码。
